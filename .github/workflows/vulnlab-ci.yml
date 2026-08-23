@@ -1,0 +1,163 @@
+name: VulnLab CI
+
+on:
+  push:
+    paths:
+      - ".github/workflows/vulnlab-ci.yml"
+      - "src/VulnLab/**"
+      - "script/check_vulnlab_node.mjs"
+      - "script/smoke_vulnlab.mjs"
+      - "script/smoke_vulnlab_native_php.mjs"
+      - "script/smoke_vulnlab_native_php_mysql.mjs"
+      - "script/smoke_vulnlab_vulnhub.mjs"
+      - "script/smoke_vulnlab_vulnhub_api.mjs"
+      - "script/smoke_vulnlab_import_api.mjs"
+      - "script/smoke_vulnlab_vm_download_api.mjs"
+      - "script/test_vulnlab_importer.mjs"
+      - "script/test_vulnlab_vm_download.mjs"
+      - "script/test_vulnlab_database.mjs"
+      - "script/test_vulnlab_expiration.mjs"
+      - "script/test_vulnlab_provider.mjs"
+      - "script/test_vulnlab_mysql.mjs"
+      - "script/smoke_vulnlab_operational.mjs"
+      - "script/browser_check_vulnlab.py"
+      - "script/run_vulnlab.ps1"
+      - "script/run_vulnlab.sh"
+      - "operations/deploy/vulnlab/**"
+  pull_request:
+    paths:
+      - ".github/workflows/vulnlab-ci.yml"
+      - "src/VulnLab/**"
+      - "script/check_vulnlab_node.mjs"
+      - "script/smoke_vulnlab.mjs"
+      - "script/smoke_vulnlab_native_php.mjs"
+      - "script/smoke_vulnlab_native_php_mysql.mjs"
+      - "script/smoke_vulnlab_vulnhub.mjs"
+      - "script/smoke_vulnlab_vulnhub_api.mjs"
+      - "script/smoke_vulnlab_import_api.mjs"
+      - "script/smoke_vulnlab_vm_download_api.mjs"
+      - "script/test_vulnlab_vm_download.mjs"
+      - "script/test_vulnlab_database.mjs"
+      - "script/test_vulnlab_expiration.mjs"
+      - "script/test_vulnlab_importer.mjs"
+      - "script/test_vulnlab_provider.mjs"
+      - "script/test_vulnlab_mysql.mjs"
+      - "script/smoke_vulnlab_operational.mjs"
+      - "script/browser_check_vulnlab.py"
+      - "script/run_vulnlab.ps1"
+      - "script/run_vulnlab.sh"
+      - "operations/deploy/vulnlab/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vulnlab-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-app:
+    name: Node.js app and native deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/VulnLab/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/VulnLab
+        run: npm ci
+
+      - name: Audit production dependencies
+        working-directory: src/VulnLab
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Type check
+        working-directory: src/VulnLab
+        run: npm run check
+
+      - name: Build Node app
+        working-directory: src/VulnLab
+        run: npm run build
+
+      - name: Test importer and Provider fixtures
+        working-directory: src/VulnLab
+        run: npm test
+
+      - name: Check structure and scripts
+        run: |
+          node --check src/VulnLab/public/app.js
+          node --check script/check_vulnlab_node.mjs
+          node --check script/smoke_vulnlab.mjs
+          node --check script/smoke_vulnlab_native_php.mjs
+          node --check script/smoke_vulnlab_native_php_mysql.mjs
+          node --check script/smoke_vulnlab_vulnhub.mjs
+          node --check script/smoke_vulnlab_vulnhub_api.mjs
+          node --check script/smoke_vulnlab_import_api.mjs
+          node --check script/smoke_vulnlab_vm_download_api.mjs
+          node --check script/test_vulnlab_importer.mjs
+          node --check script/test_vulnlab_vm_download.mjs
+          node --check script/test_vulnlab_database.mjs
+          node --check script/test_vulnlab_expiration.mjs
+          node --check script/test_vulnlab_provider.mjs
+          node --check script/test_vulnlab_mysql.mjs
+          node --check script/smoke_vulnlab_operational.mjs
+          node script/check_vulnlab_node.mjs
+          bash -n script/run_vulnlab.sh
+          bash -n operations/deploy/vulnlab/native/install.sh
+          bash -n operations/deploy/vulnlab/native/backup.sh
+          bash -n operations/deploy/vulnlab/native/restore.sh
+
+      - name: Start VulnLab
+        env:
+          VULNLAB_PORT: 6710
+          VULNLAB_DATA_DIR: ${{ runner.temp }}/vulnlab-data
+        run: |
+          node src/VulnLab/dist/server.js > "$RUNNER_TEMP/vulnlab.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/vulnlab.pid"
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:6710/healthz > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/vulnlab.log"
+          exit 1
+
+      - name: Run API smoke test
+        env:
+          VULNLAB_BASE_URL: http://127.0.0.1:6710
+        run: node script/smoke_vulnlab.mjs
+
+      - name: Run operational smoke test
+        run: node script/smoke_vulnlab_operational.mjs
+
+      - name: Install browser smoke dependencies
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run browser and responsive smoke test
+        env:
+          VULNLAB_BASE_URL: http://127.0.0.1:6710
+          VULNLAB_SCREENSHOT_DIR: ${{ runner.temp }}/vulnlab-browser
+        run: python script/browser_check_vulnlab.py
+
+      - name: Stop VulnLab
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/vulnlab.pid" ]; then kill "$(cat "$RUNNER_TEMP/vulnlab.pid")" || true; fi
+          if [ -f "$RUNNER_TEMP/vulnlab.log" ]; then cat "$RUNNER_TEMP/vulnlab.log"; fi
+
+      - name: Upload browser evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnlab-browser-evidence
+          path: ${{ runner.temp }}/vulnlab-browser
