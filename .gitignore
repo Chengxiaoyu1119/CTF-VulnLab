@@ -1,0 +1,44 @@
+# Dependencies and build output
+**/node_modules/
+src/VulnLab/dist/
+
+# Runtime state and downloaded artifacts
+src/VulnLab/data/
+operations/deploy/backups/
+
+# Local environment and secrets
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+**/*.pem
+**/*.crt
+**/*.key
+
+# Test, browser and coverage output
+/output/
+/coverage/
+/.playwright-mcp/
+/.playwright-cli/
+*.log
+*.tmp
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Local agent and editor instructions
+AGENTS.md
+CLAUDE.md
+.codex/
+.agents/
+.idea/
+.vscode/
+
+# Operating-system and editor metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.user
+*.suo
+*.swp
+*~
