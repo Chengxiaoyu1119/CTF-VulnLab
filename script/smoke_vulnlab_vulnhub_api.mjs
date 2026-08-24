@@ -24,13 +24,14 @@ csrfToken = session.csrfToken
 const labs = await request('/api/labs')
 const vulnhub = labs.find(lab => lab.slug === 'vulnhub')
 assert.ok(vulnhub, 'VulnHub seed is missing')
-const queued = await request(`/api/labs/${vulnhub.id}/import`, { method: 'POST' })
-await request(`/api/import-jobs/${queued.job.id}/run`, { method: 'POST' })
-
-let completed = null
-for (let attempt = 0; attempt < 60; attempt += 1) {
+const installation = vulnhub.status === 'ready' ? null : await request(`/api/labs/${vulnhub.id}/install`, { method: 'POST' })
+const matchingCompletedJob = jobs => jobs.find(job => job.labId === vulnhub.id
+  && job.status === 'completed'
+  && (!vulnhub.localPath || job.manifest?.localPath === vulnhub.localPath)) ?? null
+let completed = installation ? null : matchingCompletedJob(await request('/api/import-jobs'))
+for (let attempt = 0; !completed && attempt < 60; attempt += 1) {
   const jobs = await request('/api/import-jobs')
-  const current = jobs.find(job => job.id === queued.job.id)
+  const current = installation ? jobs.find(job => job.id === installation.job.id) : matchingCompletedJob(jobs)
   if (current?.status === 'completed' || current?.status === 'error') { completed = current; break }
   await pause(1000)
 }
@@ -40,24 +41,22 @@ assert.equal(completed.status, 'completed', completed.error ?? completed.message
 assert.equal(completed.manifest?.adapterId, 'vulnhub-catalog')
 assert.ok(completed.manifest?.fileCount > 0)
 assert.ok(completed.manifest?.localPath.endsWith('catalog.json'))
+assert.match(completed.manifest.localPath.replaceAll('\\', '/'), /\/labs\/vulnhub\/catalog-v1\/catalog\.json$/)
 const importedLab = (await request('/api/labs')).find(lab => lab.id === vulnhub.id)
 assert.equal(importedLab.status, 'ready')
 const catalog = await request(`/api/labs/${vulnhub.id}/catalog`)
 assert.equal(catalog.labId, vulnhub.id)
 assert.equal(catalog.entries.length, completed.manifest.fileCount)
 assert.ok(catalog.entries[0]?.url.startsWith('https://www.vulnhub.com/entry/'))
+assert.ok(catalog.entries.every(entry => entry.title !== 'Details'))
 assert.ok(catalog.entries[0]?.downloadUrls.every(url => url.startsWith('https://download.vulnhub.com/')))
+assert.ok(catalog.entries.every(entry => entry.downloadUrls.every(url => !url.endsWith('/checksum.txt'))))
 const vmDownloads = await request('/api/vm-downloads')
 assert.ok(Array.isArray(vmDownloads))
 
-const originalSettings = await request('/api/settings')
-try {
-  await request('/api/settings', { method: 'PUT', body: JSON.stringify({ provider: 'qemu-vm' }) })
-  const blockedVmStart = await fetch(`${baseUrl}/api/labs/${vulnhub.id}/instances`, { method: 'POST', headers: { cookie, 'x-csrf-token': csrfToken } })
-  assert.equal(blockedVmStart.status, 409)
-  assert.equal((await blockedVmStart.json()).code, 'VM_IMAGE_NOT_READY')
-} finally {
-  await request('/api/settings', { method: 'PUT', body: JSON.stringify({ provider: originalSettings.provider }) })
-}
+const blockedVmStart = await fetch(`${baseUrl}/api/labs/${vulnhub.id}/instances`, { method: 'POST', headers: { cookie, 'x-csrf-token': csrfToken } })
+assert.equal(blockedVmStart.status, 409)
+const blockedVmPayload = await blockedVmStart.json()
+assert.equal(blockedVmPayload.code, vmDownloads.some(download => download.labId === vulnhub.id && download.status === 'completed') ? 'RUNTIME_DEPENDENCY_MISSING' : 'VM_IMAGE_NOT_READY')
 
 console.log(`VulnLab VulnHub API smoke passed: ${catalog.entries.length} machines readable, ${completed.manifest.archiveSha256}.`)

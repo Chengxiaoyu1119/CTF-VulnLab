@@ -16,6 +16,7 @@ const startServer = async ({ port, dataDir, nodeEnv = 'test', host = '127.0.0.1'
     VULNLAB_PORT: String(port),
     VULNLAB_DATA_DIR: dataDir,
     VULNLAB_PUBLIC_URL: publicUrl,
+    VULNLAB_AUTO_INSTALL_BUILTINS: '0',
   }
   if (production) {
     env.VULNLAB_COOKIE_SECRET = '0123456789abcdef0123456789abcdef'
@@ -86,13 +87,11 @@ try {
   server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com' })
   const endpointSession = await login(server.baseUrl)
   const labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
-  const previewLab = labs.find(lab => lab.runtimeKind === 'container' && lab.status === 'cataloged')
-  const blockedStart = await fetch(`${server.baseUrl}/api/labs/${previewLab.id}/instances`, { method: 'POST', headers: { cookie: endpointSession.cookie, 'x-csrf-token': endpointSession.csrfToken } })
+  const dvwa = labs.find(lab => lab.slug === 'dvwa')
+  assert.ok(dvwa)
+  const blockedStart = await fetch(`${server.baseUrl}/api/labs/${dvwa.id}/instances`, { method: 'POST', headers: { cookie: endpointSession.cookie, 'x-csrf-token': endpointSession.csrfToken } })
   assert.equal(blockedStart.status, 409)
   assert.equal((await blockedStart.json()).code, 'LAB_NOT_READY')
-  const preview = await fetch(`${server.baseUrl}/lab-preview/${previewLab.slug}`)
-  assert.equal(preview.status, 200)
-  assert.match(await preview.text(), new RegExp(previewLab.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   await stopServer(server.child)
 
   const productionDir = join(root, 'production')

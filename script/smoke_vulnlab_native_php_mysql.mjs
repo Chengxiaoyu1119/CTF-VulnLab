@@ -13,6 +13,7 @@ const required = (name) => {
 const dvwaSource = resolve(required('VULNLAB_DVWA_SOURCE'))
 const pikachuSource = resolve(required('VULNLAB_PIKACHU_SOURCE'))
 const sqliLabsSource = resolve(required('VULNLAB_SQLI_SOURCE'))
+const mutillidaeSource = resolve(required('VULNLAB_MUTILLIDAE_SOURCE'))
 const phpIni = resolve(required('VULNLAB_PHP_INI'))
 const mysqlPort = Number(process.env.VULNLAB_MYSQL_PORT ?? 3306)
 const config = {
@@ -95,10 +96,12 @@ try {
   const dvwaPath = await copySource(dvwaSource, 'dvwa')
   const pikachuPath = await copySource(pikachuSource, 'pikachu')
   const sqliLabsPath = await copySource(sqliLabsSource, 'sqli-labs')
+  const mutillidaePath = await copySource(mutillidaeSource, 'mutillidae')
   const results = []
   results.push(await runLab(provider, baseLab('dvwa', 'DVWA', 'https://github.com/digininja/DVWA', dvwaPath), dvwaPath, 'login.php', /DVWA/i))
   results.push(await runLab(provider, baseLab('pikachu', 'Pikachu', 'https://github.com/zhuifengshaonianhanlu/pikachu', pikachuPath), pikachuPath, 'index.php', /pikachu|皮卡丘/i))
   results.push(await runLab(provider, baseLab('sqli-labs', 'SQLi-Labs', 'https://github.com/Audi-1/sqli-labs', sqliLabsPath), sqliLabsPath, 'Less-1/index.php?id=1', /Dumb|Login name/i))
+  results.push(await runLab(provider, baseLab('mutillidae', 'OWASP Mutillidae II', 'https://github.com/webpwnized/mutillidae', mutillidaePath), mutillidaePath, 'index.php', /Mutillidae/i))
   console.log(`VulnLab native PHP + MySQL smoke passed: ${results.map(item => `${item.slug}=${item.endpoint}`).join(', ')}`)
 } finally {
   await provider.shutdown()

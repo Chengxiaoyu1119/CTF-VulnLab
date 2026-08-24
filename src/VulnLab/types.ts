@@ -4,7 +4,7 @@ export type LabStatus = 'cataloged' | 'queued' | 'importing' | 'ready' | 'error'
 
 export type SourceType = 'git' | 'archive' | 'vm' | 'catalog'
 
-export type RuntimeKind = 'simulated' | 'native-php' | 'container' | 'vm'
+export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python' | 'vm'
 
 export type Difficulty = '入门' | '简单' | '中等' | '困难'
 
@@ -19,6 +19,9 @@ export interface Lab {
   sourceRef: string
   license: string
   runtimeKind: RuntimeKind
+  providerId: string
+  builtin: boolean
+  version: string
   status: LabStatus
   summary: string
   tags: string[]
@@ -105,7 +108,6 @@ export interface SessionView {
 }
 
 export interface AppSettings {
-  provider: string
   bindHost: string
   port: string
   maxInstances: string

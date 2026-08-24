@@ -113,17 +113,40 @@ const unique = (values: string[]) => [...new Set(values)]
 
 const parseCatalogLinks = (sourceUrl: string, html: string) => {
   const entries = new Map<string, string>()
+  const cardTitlePattern = /<div\b[^>]*class\s*=\s*["'][^"']*\bcard-title\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi
+  for (const cardTitle of html.matchAll(cardTitlePattern)) {
+    const link = cardTitle[1].match(/<a\b[^>]*href\s*=\s*["'](\/entry\/[^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/i)
+    if (!link) continue
+    const title = htmlText(link[2])
+    if (title) entries.set(absoluteUrl(sourceUrl, link[1]), title)
+  }
+  if (entries.size) return [...entries.entries()].slice(0, MAX_ENTRIES).map(([url, title]) => ({ url, title }))
+
   const pattern = /<a\b[^>]*href\s*=\s*["'](\/entry\/[^"'#?]+)["'][^>]*>([\s\S]*?)<\/a>/gi
   for (const match of html.matchAll(pattern)) {
     const url = absoluteUrl(sourceUrl, match[1])
     const title = htmlText(match[2])
-    if (title) entries.set(url, title)
+    if (!title || /^(details?|download)$/i.test(title) || /^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}$/.test(title)) continue
+    entries.set(url, title)
   }
   return [...entries.entries()].slice(0, MAX_ENTRIES).map(([url, title]) => ({ url, title }))
 }
 
+const MACHINE_ARCHIVE_EXTENSIONS = new Set(['.7z', '.gz', '.iso', '.ova', '.ovf', '.qcow2', '.rar', '.tar', '.tgz', '.vdi', '.vmdk', '.xz', '.zip'])
+
+const isMachineArchiveUrl = (value: string) => {
+  try {
+    const path = new URL(value).pathname.toLowerCase()
+    return [...MACHINE_ARCHIVE_EXTENSIONS].some(extension => path.endsWith(extension))
+  } catch {
+    return false
+  }
+}
+
 const parseDetail = (html: string): Omit<VulnHubCatalogEntry, 'title' | 'url'> => {
-  const downloadUrls = unique([...html.matchAll(/href\s*=\s*["'](https?:\/\/download\.vulnhub\.com\/[^"']+)["']/gi)].map(match => decodeHtml(match[1])))
+  const downloadUrls = unique([...html.matchAll(/href\s*=\s*["'](https?:\/\/download\.vulnhub\.com\/[^"']+)["']/gi)]
+    .map(match => decodeHtml(match[1]))
+    .filter(isMachineArchiveUrl))
   const author = htmlText(html.match(/<li[^>]*>\s*<b>Author<\/b>:\s*([\s\S]*?)<\/li>/i)?.[1] ?? '') || null
   const difficulty = htmlText(html.match(/Difficulty:\s*([^<]+)/i)?.[1] ?? '') || null
   const filename = htmlText(html.match(/<li>\s*<b>Filename<\/b>:\s*([^<]+)<\/li>/i)?.[1] ?? '') || null
@@ -158,6 +181,7 @@ const catalogDownloadUrl = (value: unknown) => {
   if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'download.vulnhub.com') {
     throw new VulnHubImporterError('VulnHub catalog.json 包含非官方镜像地址。')
   }
+  if (!isMachineArchiveUrl(parsed.toString())) throw new VulnHubImporterError('VulnHub catalog.json 包含非机器镜像地址。')
   return parsed.toString()
 }
 

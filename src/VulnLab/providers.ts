@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { cp, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, open, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createConnection, createServer, type AddressInfo } from 'node:net'
-import { extname, join, resolve, sep } from 'node:path'
+import { basename, extname, join, resolve, sep } from 'node:path'
 import { CliMySqlManager, mysqlRuntimeConfigFromEnv, type MySqlManager, type MySqlResource, type MySqlRuntimeConfig } from './mysql.js'
 import type { Lab, LabInstance, RuntimeKind } from './types.js'
 
@@ -12,6 +12,9 @@ export interface NativeRuntimeConfig {
   publicOriginTemplate?: string
   phpBinary: string
   phpIni?: string
+  nodeBinary: string
+  javaBinary: string
+  pythonBinary: string
   mysql?: MySqlRuntimeConfig
 }
 
@@ -111,37 +114,6 @@ const lease = (lifetimeMinutes: number) => {
   }
 }
 
-export class SimulatedProvider implements LabProvider {
-  readonly id = 'simulated'
-  // A simulated entry is an explicit framework preview. It must not stand in
-  // for a container or VM provider after an import has completed.
-  readonly supportedRuntimeKinds: readonly RuntimeKind[] = ['simulated']
-
-  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
-    const timestamps = lease(input.lifetimeMinutes)
-    const origin = input.publicOrigin.replace(/\/+$/, '')
-    const endpoint = `${origin}/lab-preview/${encodeURIComponent(input.lab.slug)}`
-    return {
-      ...timestamps,
-      endpoint,
-      logs: [
-        `${timestamps.createdAt} 申请模拟运行实例`,
-        `${timestamps.createdAt} Provider=simulated`,
-        `${timestamps.createdAt} 入口已准备`,
-      ],
-    }
-  }
-
-  async renew(input: ProviderRenewInput): Promise<ProviderRenewResult> {
-    const { expiresAt } = lease(input.lifetimeMinutes)
-    return { expiresAt, log: `${new Date().toISOString()} 运行实例续期` }
-  }
-
-  async stop(_input: ProviderStopInput): Promise<ProviderStopResult> {
-    return { log: `${new Date().toISOString()} 运行实例结束` }
-  }
-}
-
 type SpawnFunction = typeof spawn
 type PortAllocator = (host: string, start: number, end: number) => Promise<number>
 
@@ -204,7 +176,7 @@ const waitForHttp = async (host: string, port: number, child: ChildProcess) => {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new ProviderError('NATIVE_PHP_PROCESS_EXITED', 'PHP 进程在启动检查期间退出。', 503)
     try {
-      const response = await fetch(`http://${probeHost}:${port}/__vulnlab_startup_probe__`, { signal: AbortSignal.timeout(5_000) })
+      const response = await fetch(`http://${probeHost}:${port}/__vulnlab_startup_probe__`, { redirect: 'manual', signal: AbortSignal.timeout(5_000) })
       await response.body?.cancel().catch(() => undefined)
       return
     } catch {
@@ -291,12 +263,13 @@ const removeTree = async (root: string) => {
   await rm(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 150 }).catch(() => undefined)
 }
 
-type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs'
+type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs' | 'mutillidae'
 
 const databaseProfile = (lab: Lab): DatabaseLabProfile | null => {
   if (lab.slug === 'dvwa') return 'dvwa'
   if (lab.slug === 'pikachu') return 'pikachu'
   if (lab.slug === 'sqli-labs') return 'sqli-labs'
+  if (lab.slug === 'mutillidae') return 'mutillidae'
   return null
 }
 
@@ -463,6 +436,32 @@ const configureDvwaInstallerCompatibility = async (root: string) => {
   await writeFile(installerPath, contents, 'utf8')
 }
 
+const configureMutillidae = async (root: string) => {
+  const sourceRoot = join(root, 'src')
+  const configPath = join(sourceRoot, 'includes', 'database-config.inc')
+  const setupPath = join(sourceRoot, 'set-up-database.php')
+  if (!(await stat(configPath).catch(() => null))?.isFile() || !(await stat(setupPath).catch(() => null))?.isFile()) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'Mutillidae 缺少数据库配置或初始化文件。', 409)
+  }
+  const config = `<?php
+define('DB_HOST', getenv('DB_SERVER') ?: '127.0.0.1');
+define('DB_USERNAME', getenv('DB_USER') ?: 'vulnlab');
+define('DB_PASSWORD', getenv('DB_PASSWORD') ?: '');
+define('DB_NAME', getenv('DB_DATABASE') ?: 'vulnlab');
+define('DB_PORT', (int)(getenv('DB_PORT') ?: 3306));
+?>\n`
+  await writeFile(configPath, config, 'utf8')
+  let setup = await readFile(setupPath, 'utf8')
+  setup = setup.replace(/\$lQueryString\s*=\s*"DROP DATABASE IF EXISTS[^;]*;/i, '$lQueryString = "SELECT 1";')
+  setup = setup.replace(/\$lQueryString\s*=\s*"CREATE DATABASE[^;]*;/i, '$lQueryString = "SELECT 1";')
+  setup = setup.replaceAll('" with result ".$lQueryResult', '" with result ".($lQueryResult ? "success" : "failure")')
+  if (/\$lQueryString\s*=\s*"(?:DROP DATABASE IF EXISTS|CREATE DATABASE)/i.test(setup)) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Mutillidae 初始化脚本仍要求管理级数据库权限。', 409)
+  }
+  await writeFile(setupPath, setup, 'utf8')
+  return sourceRoot
+}
+
 const configureDvwaExistingDatabase = async (root: string) => {
   const installerPath = join(root, 'dvwa', 'includes', 'DBMS', 'MySQL.php')
   let contents = await readFile(installerPath, 'utf8').catch(() => {
@@ -608,10 +607,11 @@ export class NativePhpProvider implements LabProvider {
         await configurePikachu(bootstrapRoot)
         await configurePikachuInstallerPort(bootstrapRoot)
       }
+      const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(bootstrapRoot) : null
       const phpInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(bootstrapRoot) }
         : input
-      processInfo = await this.startPhpProcess(bootstrapRoot, phpInput, this.databaseEnvironment(profile, resource))
+      processInfo = await this.startPhpProcess(mutillidaeRoot ?? bootstrapRoot, phpInput, this.databaseEnvironment(profile, resource))
       if (profile === 'dvwa') {
         const setupResponse = await fetch(this.runtimeUrl(input, processInfo.port, '/setup.php'))
         const setupHtml = await setupResponse.text()
@@ -641,11 +641,19 @@ export class NativePhpProvider implements LabProvider {
         if (!result.ok || !/好了，可以开搞了|进入首页|数据库连接成功/.test(resultHtml) || /数据连接失败|数据库创建失败/.test(resultHtml)) {
           throw new ProviderError('NATIVE_PHP_DB_INIT_FAILED', 'Pikachu 数据库初始化没有完成。', 503)
         }
-      } else {
+      } else if (profile === 'sqli-labs') {
         const result = await fetch(this.runtimeUrl(input, processInfo.port, '/sql-connections/setup-db.php'))
         const resultHtml = await result.text()
         if (!result.ok || !/Inserted data correctly|Creating New Table/i.test(resultHtml) || /Could not connect|Failed to connect|Error creating|Unable to connect/i.test(resultHtml)) {
           throw new ProviderError('NATIVE_PHP_DB_INIT_FAILED', 'SQLi-Labs 数据库初始化没有完成。', 503)
+        }
+      } else {
+        const result = await fetch(this.runtimeUrl(input, processInfo.port, '/set-up-database.php'))
+        const resultHtml = await result.text()
+        if (!result.ok || !/Database reset successful/i.test(resultHtml) || /database-failure-message/.test(resultHtml)) {
+          const resultText = resultHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+          const detail = resultText.length > 720 ? `${resultText.slice(0, 240)} … ${resultText.slice(-480)}` : resultText
+          throw new ProviderError('NATIVE_PHP_DB_INIT_FAILED', `Mutillidae 数据库初始化没有完成（${detail || '未返回初始化结果'}）。`, 503)
         }
       }
       await this.mysqlManager.verify(resource)
@@ -680,12 +688,14 @@ export class NativePhpProvider implements LabProvider {
       await cp(sourcePath, runtimeRoot, { recursive: true, force: true })
       if (profile === 'dvwa') await configureDvwa(runtimeRoot)
       if (profile === 'pikachu') await configurePikachu(runtimeRoot)
+      const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(runtimeRoot) : null
       const runtimeInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(runtimeRoot) }
         : input
-      processInfo = await this.startPhpProcess(runtimeRoot, runtimeInput, profile && database ? this.databaseEnvironment(profile, database) : {})
+      processInfo = await this.startPhpProcess(mutillidaeRoot ?? runtimeRoot, runtimeInput, profile && database ? this.databaseEnvironment(profile, database) : {})
       const runtime: NativeRuntime = { child: processInfo.child, root: runtimeRoot, port: processInfo.port, bindHost: input.runtime.bindHost, database }
       this.runtimes.set(input.instanceId, runtime)
+      if (processInfo.child.pid) await writeFile(join(runtimeRoot, 'vulnlab-runtime.json'), JSON.stringify({ pid: processInfo.child.pid, port: processInfo.port, provider: this.id }), 'utf8')
       processInfo.child.once('exit', () => {
         if (this.runtimes.get(input.instanceId)?.child === processInfo?.child) this.runtimes.delete(input.instanceId)
         this.reservedPorts.delete(processInfo?.port as number)
@@ -746,6 +756,12 @@ export class NativePhpProvider implements LabProvider {
   }
 
   async recover(input: ProviderRecoverInput): Promise<void> {
+    if (input.dataDir) {
+      const root = join(resolve(input.dataDir), 'runtime', input.instance.id)
+      const state = await readFile(join(root, 'vulnlab-runtime.json'), 'utf8').then(value => JSON.parse(value) as { pid?: unknown }).catch(() => null)
+      if (state && Number.isInteger(state.pid) && Number(state.pid) > 0) await terminatePid(Number(state.pid))
+      await removeTree(root)
+    }
     if (!databaseProfile(input.lab)) return
     const mysql = input.runtime?.mysql ?? mysqlRuntimeConfigFromEnv()
     if (mysql) await this.mysqlManager.destroyForInstance({ labSlug: input.lab.slug, instanceId: input.instance.id, config: mysql })
@@ -760,6 +776,316 @@ export class NativePhpProvider implements LabProvider {
       await this.stopPhpProcess({ child: runtime.child, port: runtime.port })
       await removeTree(runtime.root)
       if (database) await this.mysqlManager.destroy(database).catch(() => undefined)
+    }))
+  }
+}
+
+interface NativeProcessRuntime {
+  child: ChildProcess
+  root: string
+  port: number
+  bindHost: string
+  auxiliaryPort?: number
+}
+
+type NativeProcessKind = 'native-node' | 'native-java' | 'native-python'
+
+const processLabels: Record<NativeProcessKind, string> = {
+  'native-node': 'Node.js',
+  'native-java': 'Java',
+  'native-python': 'Python',
+}
+
+const processErrorPrefix: Record<NativeProcessKind, string> = {
+  'native-node': 'NATIVE_NODE',
+  'native-java': 'NATIVE_JAVA',
+  'native-python': 'NATIVE_PYTHON',
+}
+
+const waitForNativeHttp = async (host: string, port: number, child: ChildProcess, kind: NativeProcessKind) => {
+  const probeHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
+  const deadline = Date.now() + (kind === 'native-python' ? 45_000 : 120_000)
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new ProviderError(`${processErrorPrefix[kind]}_PROCESS_EXITED`, `${processLabels[kind]} 进程在启动检查期间退出。`, 503)
+    try {
+      const response = await fetch(`http://${probeHost}:${port}/`, { redirect: 'manual', signal: AbortSignal.timeout(5_000) })
+      await response.body?.cancel().catch(() => undefined)
+      return
+    } catch {
+      await sleep(100)
+    }
+  }
+  throw new ProviderError(`${processErrorPrefix[kind]}_START_TIMEOUT`, `${processLabels[kind]} 靶场启动超时。`, 503)
+}
+
+const findExistingFile = async (root: string, candidates: readonly string[]) => {
+  for (const candidate of candidates) {
+    const path = resolve(root, candidate)
+    const info = await stat(path).catch(() => null)
+    if (info?.isFile()) return path
+  }
+  return null
+}
+
+export interface NativeProcessProviderOptions {
+  spawnImpl?: SpawnFunction
+  allocatePort?: PortAllocator
+}
+
+export class NativeProcessProvider implements LabProvider {
+  readonly id: NativeProcessKind
+  readonly supportedRuntimeKinds: readonly RuntimeKind[]
+  private readonly spawnImpl: SpawnFunction
+  private readonly allocatePortImpl: PortAllocator
+  private readonly runtimes = new Map<string, NativeProcessRuntime>()
+  private readonly reservedPorts = new Set<number>()
+  private portAllocation = Promise.resolve()
+
+  constructor(kind: NativeProcessKind, options: NativeProcessProviderOptions = {}) {
+    this.id = kind
+    this.supportedRuntimeKinds = [kind]
+    this.spawnImpl = options.spawnImpl ?? spawn
+    this.allocatePortImpl = options.allocatePort ?? allocatePort
+  }
+
+  private async claimPort(config: NativeRuntimeConfig): Promise<number> {
+    let release!: () => void
+    const turn = new Promise<void>(resolveTurn => { release = resolveTurn })
+    const previous = this.portAllocation
+    this.portAllocation = previous.then(() => turn)
+    await previous
+    try {
+      for (let attempt = 0; attempt <= config.portEnd - config.portStart; attempt += 1) {
+        const port = await this.allocatePortImpl(config.bindHost, config.portStart, config.portEnd)
+        if (!this.reservedPorts.has(port)) {
+          this.reservedPorts.add(port)
+          return port
+        }
+      }
+      throw new ProviderError(`${processErrorPrefix[this.id]}_PORT_EXHAUSTED`, `${processLabels[this.id]} 运行端口已用尽。`, 409)
+    } finally {
+      release()
+    }
+  }
+
+  private async command(input: ProviderStartInput, root: string, port: number, auxiliaryPort?: number) {
+    if (this.id === 'native-node') {
+      const entry = await findExistingFile(root, ['build/app.js', 'dist/app.js', 'app.js', 'server.js'])
+      if (!entry) throw new ProviderError('NATIVE_NODE_ENTRY_NOT_FOUND', 'Juice Shop 发行包缺少 Node.js 启动入口。', 409)
+      return {
+        binary: input.runtime.nodeBinary,
+        args: [entry],
+        cwd: root,
+        environment: { PORT: String(port), HOST: input.runtime.bindHost, NODE_ENV: 'production' },
+        endpointSuffix: '',
+      }
+    }
+    if (this.id === 'native-java') {
+      if (!auxiliaryPort) throw new ProviderError('NATIVE_JAVA_AUX_PORT_REQUIRED', 'WebGoat 缺少 WebWolf 运行端口。', 500)
+      const jar = input.lab.localPath && (await stat(input.lab.localPath).catch(() => null))?.isFile()
+        ? resolve(input.lab.localPath)
+        : await findExistingFile(root, ['webgoat.jar', `webgoat-${input.lab.version}.jar`])
+      if (!jar) throw new ProviderError('NATIVE_JAVA_JAR_NOT_FOUND', 'WebGoat 发行包缺少可运行 JAR。', 409)
+      return {
+        binary: input.runtime.javaBinary,
+        args: ['-Dfile.encoding=UTF-8', '-jar', jar, `--server.address=${input.runtime.bindHost}`, `--webgoat.port=${port}`, `--webwolf.port=${auxiliaryPort}`],
+        cwd: root,
+        environment: { HOME: root, USERPROFILE: root, WEBGOAT_PORT: String(port), WEBWOLF_PORT: String(auxiliaryPort) },
+        endpointSuffix: 'WebGoat/',
+      }
+    }
+    const manage = await findExistingFile(root, ['manage.py'])
+    if (!manage) throw new ProviderError('NATIVE_PYTHON_ENTRY_NOT_FOUND', 'PyGoat 源码缺少 manage.py。', 409)
+    const venvPython = process.platform === 'win32'
+      ? await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/Scripts/python.exe'])
+      : await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/bin/python'])
+    const settingsPath = join(root, 'pygoat', 'settings.py')
+    let settings = await readFile(settingsPath, 'utf8').catch(() => '')
+    if (!settings) throw new ProviderError('NATIVE_PYTHON_SETTINGS_NOT_FOUND', 'PyGoat 缺少 Django 设置文件。', 409)
+    settings = settings
+      .replace(/^import django_heroku\s*$/m, '')
+      .replace(/^django_heroku\.settings\(locals\(\)\)\s*$/m, '')
+    const trustedOrigin = new URL(input.publicOrigin).origin
+    settings += `\nALLOWED_HOSTS = ['*']\nCSRF_TRUSTED_ORIGINS = [${JSON.stringify(trustedOrigin)}]\n`
+    await writeFile(settingsPath, settings, 'utf8')
+    const binary = venvPython ?? input.runtime.pythonBinary
+    const prefix = !venvPython && process.platform === 'win32' && basename(input.runtime.pythonBinary).toLowerCase() === 'py' ? ['-3'] : []
+    await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root)
+    return {
+      binary,
+      args: [...prefix, manage, 'runserver', `${input.runtime.bindHost}:${port}`, '--noreload'],
+      cwd: root,
+      environment: { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'pygoat.settings' },
+      endpointSuffix: '',
+    }
+  }
+
+  private async runCommand(binary: string, args: string[], cwd: string) {
+    await new Promise<void>((resolveRun, rejectRun) => {
+      const child = this.spawnImpl(binary, args, { cwd, env: process.env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false })
+      let tail = ''
+      child.stderr?.setEncoding('utf8')
+      child.stderr?.on('data', chunk => { tail = `${tail}${String(chunk)}`.slice(-4_000) })
+      child.once('error', rejectRun)
+      child.once('exit', code => code === 0 ? resolveRun() : rejectRun(new ProviderError(`${processErrorPrefix[this.id]}_PREPARE_FAILED`, `${processLabels[this.id]} 运行副本准备失败：${tail.replace(/\s+/g, ' ').trim()}`, 503)))
+    })
+  }
+
+  private async copyRuntimeSource(sourcePath: string, runtimeRoot: string) {
+    if (this.id === 'native-python') {
+      const venvRoot = resolve(sourcePath, '.vulnlab-venv')
+      const venvPrefix = `${venvRoot}${sep}`
+      await cp(sourcePath, runtimeRoot, { recursive: true, force: true, filter: path => {
+        const candidate = resolve(path)
+        return candidate !== venvRoot && !candidate.startsWith(venvPrefix)
+      } })
+      return
+    }
+    if (this.id !== 'native-node') {
+      await cp(sourcePath, runtimeRoot, { recursive: true, force: true })
+      return
+    }
+    const modulesRoot = resolve(sourcePath, 'node_modules')
+    const modulesPrefix = `${modulesRoot}${sep}`
+    await cp(sourcePath, runtimeRoot, {
+      recursive: true,
+      force: true,
+      filter: path => {
+        const candidate = resolve(path)
+        return candidate !== modulesRoot && !candidate.startsWith(modulesPrefix)
+      },
+    })
+    if ((await stat(modulesRoot).catch(() => null))?.isDirectory()) {
+      await symlink(modulesRoot, join(runtimeRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+    }
+  }
+
+  private async claimFollowingPort(config: NativeRuntimeConfig, port: number) {
+    const ranges: Array<[number, number]> = []
+    if (port < config.portEnd) ranges.push([port + 1, config.portEnd])
+    if (port > config.portStart) ranges.push([config.portStart, port - 1])
+    for (const [start, end] of ranges) {
+      try {
+        const candidate = await this.allocatePortImpl(config.bindHost, start, end)
+        if (!this.reservedPorts.has(candidate)) {
+          this.reservedPorts.add(candidate)
+          return candidate
+        }
+      } catch { /* try wrapped range */ }
+    }
+    throw new ProviderError('NATIVE_JAVA_AUX_PORT_EXHAUSTED', 'WebGoat 的 WebWolf 端口已用尽。', 409)
+  }
+
+  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
+    const sourceRoot = input.lab.localPath
+    if (!sourceRoot) throw new ProviderError(`${processErrorPrefix[this.id]}_SOURCE_NOT_READY`, '靶场资源尚未安装。', 409)
+    if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError(`${processErrorPrefix[this.id]}_INSTANCE_ID_INVALID`, '运行实例 ID 格式无效。', 400)
+    const dataRoot = resolve(input.dataDir)
+    const sourcePath = resolve(sourceRoot)
+    const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
+    if (sourcePath !== dataRoot && !sourcePath.startsWith(dataPrefix)) throw new ProviderError(`${processErrorPrefix[this.id]}_SOURCE_OUTSIDE_DATA`, '靶场资源必须位于 VulnLab 数据目录内。', 409)
+    const runtimeRoot = join(dataRoot, 'runtime', input.instanceId)
+    const port = await this.claimPort(input.runtime)
+    const auxiliaryPort = this.id === 'native-java' ? await this.claimFollowingPort(input.runtime, port) : undefined
+    let child: ChildProcess | null = null
+    let stderrTail = ''
+    try {
+      await mkdir(resolve(dataRoot, 'runtime'), { recursive: true })
+      await rm(runtimeRoot, { recursive: true, force: true })
+      await mkdir(runtimeRoot, { recursive: true })
+      const sourceInfo = await stat(sourcePath)
+      if (sourceInfo.isDirectory()) await this.copyRuntimeSource(sourcePath, runtimeRoot)
+      const command = await this.command(input, runtimeRoot, port, auxiliaryPort)
+      child = this.spawnImpl(command.binary, command.args, {
+        cwd: command.cwd,
+        env: { ...process.env, ...command.environment },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        shell: false,
+      })
+      await new Promise<void>((resolveSpawn, rejectSpawn) => {
+        child?.once('spawn', resolveSpawn)
+        child?.once('error', rejectSpawn)
+      })
+      child.stdout?.resume()
+      child.stderr?.setEncoding('utf8')
+      child.stderr?.on('data', chunk => { stderrTail = `${stderrTail}${String(chunk)}`.slice(-4_000) })
+      await waitForNativeHttp(input.runtime.bindHost, port, child, this.id)
+      const runtime: NativeProcessRuntime = { child, root: runtimeRoot, port, bindHost: input.runtime.bindHost, auxiliaryPort }
+      this.runtimes.set(input.instanceId, runtime)
+      if (child.pid) await writeFile(join(runtimeRoot, 'vulnlab-runtime.json'), JSON.stringify({ pid: child.pid, port, auxiliaryPort, provider: this.id }), 'utf8')
+      child.once('exit', () => {
+        if (this.runtimes.get(input.instanceId)?.child === child) this.runtimes.delete(input.instanceId)
+        this.reservedPorts.delete(port)
+        if (auxiliaryPort) this.reservedPorts.delete(auxiliaryPort)
+        void removeTree(runtimeRoot)
+      })
+      const timestamps = lease(input.lifetimeMinutes)
+      return {
+        ...timestamps,
+        endpoint: `${input.proxyEndpoint ?? `${runtimeOrigin(input.publicOrigin, port, input.runtime.publicOriginTemplate)}/`}${command.endpointSuffix}`,
+        logs: [
+          `${timestamps.createdAt} 启动原生 ${processLabels[this.id]} 实例`,
+          `${timestamps.createdAt} 运行端口=${port}`,
+          ...(auxiliaryPort ? [`${timestamps.createdAt} WebWolf 端口=${auxiliaryPort}`] : []),
+          `${timestamps.createdAt} 入口已准备`,
+        ],
+      }
+    } catch (error) {
+      this.reservedPorts.delete(port)
+      if (auxiliaryPort) this.reservedPorts.delete(auxiliaryPort)
+      if (child) await waitForExit(child)
+      await removeTree(runtimeRoot)
+      if (error instanceof ProviderError) {
+        const detail = stderrTail.replace(/\s+/g, ' ').trim()
+        throw detail ? new ProviderError(error.code, `${error.message} ${detail}`, error.statusCode) : error
+      }
+      const code = (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? `${processErrorPrefix[this.id]}_BINARY_NOT_FOUND` : `${processErrorPrefix[this.id]}_START_FAILED`
+      throw new ProviderError(code, error instanceof Error ? error.message : `${processLabels[this.id]} 靶场启动失败。`, 503)
+    }
+  }
+
+  async renew(input: ProviderRenewInput): Promise<ProviderRenewResult> {
+    if (!this.runtimes.has(input.instance.id)) throw new ProviderError(`${processErrorPrefix[this.id]}_PROCESS_MISSING`, `${processLabels[this.id]} 进程已退出。`, 409)
+    const { expiresAt } = lease(input.lifetimeMinutes)
+    return { expiresAt, log: `${new Date().toISOString()} 原生 ${processLabels[this.id]} 实例续期` }
+  }
+
+  getProxyTarget(instanceId: string): string | null {
+    const runtime = this.runtimes.get(instanceId)
+    if (!runtime) return null
+    const host = runtime.bindHost === '0.0.0.0' || runtime.bindHost === '::' ? '127.0.0.1' : runtime.bindHost
+    return `http://${host}:${runtime.port}`
+  }
+
+  async stop(input: ProviderStopInput): Promise<ProviderStopResult> {
+    const runtime = this.runtimes.get(input.instance.id)
+    if (runtime) {
+      this.runtimes.delete(input.instance.id)
+      this.reservedPorts.delete(runtime.port)
+      if (runtime.auxiliaryPort) this.reservedPorts.delete(runtime.auxiliaryPort)
+      await waitForExit(runtime.child)
+      await removeTree(runtime.root)
+    }
+    return { log: `${new Date().toISOString()} 原生 ${processLabels[this.id]} 实例结束` }
+  }
+
+  async recover(input: ProviderRecoverInput): Promise<void> {
+    if (!input.dataDir) return
+    const root = join(resolve(input.dataDir), 'runtime', input.instance.id)
+    const state = await readFile(join(root, 'vulnlab-runtime.json'), 'utf8').then(value => JSON.parse(value) as { pid?: unknown }).catch(() => null)
+    if (state && Number.isInteger(state.pid) && Number(state.pid) > 0) await terminatePid(Number(state.pid))
+    await removeTree(root)
+  }
+
+  async shutdown(): Promise<void> {
+    const runtimes = [...this.runtimes.values()]
+    this.runtimes.clear()
+    await Promise.all(runtimes.map(async runtime => {
+      this.reservedPorts.delete(runtime.port)
+      if (runtime.auxiliaryPort) this.reservedPorts.delete(runtime.auxiliaryPort)
+      await waitForExit(runtime.child)
+      await removeTree(runtime.root)
     }))
   }
 }
@@ -1164,21 +1490,15 @@ export class ProviderRegistry {
     return provider
   }
 
-  resolveForLab(preferredId: string, runtimeKind: RuntimeKind): LabProvider {
-    // native-php is selected by the lab's runtime declaration. A simulated
-    // setting may still preview an explicitly simulated lab, but it must not
-    // silently downgrade container/vm entries to a fake runtime.
-    const providerId = runtimeKind === 'native-php'
-      ? 'native-php'
-      : runtimeKind === 'simulated' && preferredId === 'native-php'
-        ? 'simulated'
-        : preferredId
-    return this.resolve(providerId, runtimeKind)
-  }
-
   async shutdown(): Promise<void> {
     await Promise.allSettled([...this.providers.values()].map(provider => provider.shutdown?.()))
   }
 }
 
-export const providerRegistry = new ProviderRegistry([new NativePhpProvider(), new QemuVmProvider(), new SimulatedProvider()])
+export const providerRegistry = new ProviderRegistry([
+  new NativePhpProvider(),
+  new NativeProcessProvider('native-node'),
+  new NativeProcessProvider('native-java'),
+  new NativeProcessProvider('native-python'),
+  new QemuVmProvider(),
+])

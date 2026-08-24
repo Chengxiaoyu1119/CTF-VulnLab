@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NativePhpProvider, ProviderError, ProviderRegistry, QemuVmProvider, SimulatedProvider } from '../src/VulnLab/dist/providers.js'
+import { NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry, QemuVmProvider } from '../src/VulnLab/dist/providers.js'
 
 const lab = {
   id: 'lab-dvwa',
@@ -15,7 +16,10 @@ const lab = {
   sourceUrl: 'https://github.com/digininja/DVWA',
   sourceRef: 'digininja/DVWA@master',
   license: 'GPL-3.0',
-  runtimeKind: 'container',
+  runtimeKind: 'native-php',
+  providerId: 'native-php',
+  builtin: true,
+  version: 'fixture',
   status: 'cataloged',
   summary: 'fixture',
   tags: ['Web'],
@@ -25,38 +29,26 @@ const lab = {
   updatedAt: '2026-01-01T00:00:00.000Z',
 }
 
-const provider = new SimulatedProvider()
 const native = new NativePhpProvider()
 const qemuRegistryProvider = new QemuVmProvider()
-const registry = new ProviderRegistry([native, qemuRegistryProvider, provider])
-assert.equal(registry.get('simulated'), provider)
-assert.throws(() => registry.resolve('simulated', 'container'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
-assert.throws(() => registry.resolve('simulated', 'vm'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
-assert.equal(registry.resolveForLab('simulated', 'native-php'), native)
-assert.equal(registry.resolveForLab('native-php', 'simulated'), provider)
-assert.equal(registry.resolveForLab('qemu-vm', 'vm').id, 'qemu-vm')
-assert.throws(() => registry.resolveForLab('native-php', 'container'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
-assert.throws(() => registry.resolveForLab('simulated', 'container'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
-assert.throws(() => registry.resolve('missing', 'container'), error => error instanceof ProviderError && error.code === 'PROVIDER_NOT_FOUND')
-assert.throws(() => new ProviderRegistry([provider, provider]), /Provider ID 重复/)
+const nativeNode = new NativeProcessProvider('native-node')
+const nativeJava = new NativeProcessProvider('native-java')
+const nativePython = new NativeProcessProvider('native-python')
+const registry = new ProviderRegistry([native, nativeNode, nativeJava, nativePython, qemuRegistryProvider])
+assert.equal(registry.get('native-php'), native)
+assert.equal(registry.resolve('native-php', 'native-php'), native)
+assert.equal(registry.resolve('native-node', 'native-node'), nativeNode)
+assert.equal(registry.resolve('native-java', 'native-java'), nativeJava)
+assert.equal(registry.resolve('native-python', 'native-python'), nativePython)
+assert.equal(registry.resolve('qemu-vm', 'vm'), qemuRegistryProvider)
+assert.throws(() => registry.resolve('native-php', 'vm'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
+assert.throws(() => registry.resolve('missing', 'native-php'), error => error instanceof ProviderError && error.code === 'PROVIDER_NOT_FOUND')
+assert.throws(() => new ProviderRegistry([native, native]), /Provider ID 重复/)
 
-const started = await provider.start({
-  instanceId: 'instance-1',
-  lab,
-  publicOrigin: 'https://lab.example.com/',
-  lifetimeMinutes: 60,
-})
-assert.equal(started.endpoint, 'https://lab.example.com/lab-preview/dvwa')
-assert.equal(started.logs.length, 3)
-assert.ok(Date.parse(started.expiresAt) > Date.parse(started.createdAt))
-
-const instance = { id: 'instance-1', labId: lab.id, labTitle: lab.title, provider: provider.id, endpoint: started.endpoint, status: 'running', createdAt: started.createdAt, expiresAt: started.expiresAt, logs: started.logs }
-const renewed = await provider.renew({ lab, instance, lifetimeMinutes: 60 })
-assert.ok(Date.parse(renewed.expiresAt) > Date.now())
-assert.match(renewed.log, /运行实例续期/)
-
-const stopped = await provider.stop({ lab, instance })
-assert.match(stopped.log, /运行实例结束/)
+const instance = {
+  id: 'instance-1', labId: lab.id, labTitle: lab.title, provider: 'native-php', endpoint: 'http://127.0.0.1:6800/', status: 'running',
+  createdAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), logs: [],
+}
 
 const vmDataDir = await mkdtemp(join(tmpdir(), 'vulnlab-qemu-provider-'))
 try {
@@ -165,9 +157,28 @@ assert.equal(recoveries.length, 1)
 assert.equal(recoveries[0].labSlug, 'dvwa')
 assert.equal(recoveries[0].instanceId, instance.id)
 
-await assert.rejects(
-  provider.start({ instanceId: 'instance-invalid', lab, publicOrigin: 'https://lab.example.com', lifetimeMinutes: 0 }),
-  error => error instanceof ProviderError && error.code === 'PROVIDER_LIFETIME_INVALID',
-)
+const nativeRecoveryRoot = await mkdtemp(join(tmpdir(), 'vulnlab-native-recovery-'))
+try {
+  const recoveryId = 'native-recovery'
+  const runtimeRoot = join(nativeRecoveryRoot, 'runtime', recoveryId)
+  await mkdir(runtimeRoot, { recursive: true })
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true })
+  await new Promise((resolveSpawn, rejectSpawn) => {
+    child.once('spawn', resolveSpawn)
+    child.once('error', rejectSpawn)
+  })
+  assert.ok(child.pid)
+  await writeFile(join(runtimeRoot, 'vulnlab-runtime.json'), JSON.stringify({ pid: child.pid, provider: 'native-node' }))
+  const exited = new Promise(resolveExit => child.once('exit', resolveExit))
+  await nativeNode.recover({
+    lab: { ...lab, runtimeKind: 'native-node', providerId: 'native-node' },
+    instance: { ...instance, id: recoveryId, provider: 'native-node' },
+    dataDir: nativeRecoveryRoot,
+  })
+  await Promise.race([exited, new Promise((_, rejectTimeout) => setTimeout(() => rejectTimeout(new Error('recovered process did not exit')), 5_000))])
+  await assert.rejects(stat(runtimeRoot))
+} finally {
+  await rm(nativeRecoveryRoot, { recursive: true, force: true })
+}
 
-console.log('VulnLab provider test passed: registry resolution, simulated lifecycle and QEMU command/lifecycle contract.')
+console.log('VulnLab provider test passed: declared runtime resolution, native recovery and QEMU command/lifecycle contract.')

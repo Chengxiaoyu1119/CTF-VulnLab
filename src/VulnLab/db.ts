@@ -21,6 +21,15 @@ const now = () => new Date().toISOString()
 
 const asString = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
 
+const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
+  if (runtimeKind === 'native-php') return 'native-php'
+  if (runtimeKind === 'native-node') return 'native-node'
+  if (runtimeKind === 'native-java') return 'native-java'
+  if (runtimeKind === 'native-python') return 'native-python'
+  if (runtimeKind === 'vm') return 'qemu-vm'
+  return runtimeKind
+}
+
 const parseLab = (row: Row): Lab => ({
   id: asString(row.id),
   slug: asString(row.slug),
@@ -32,6 +41,9 @@ const parseLab = (row: Row): Lab => ({
   sourceRef: asString(row.source_ref),
   license: asString(row.license),
   runtimeKind: asString(row.runtime_kind) as Lab['runtimeKind'],
+  providerId: asString(row.provider_id) || providerForRuntime(asString(row.runtime_kind) as Lab['runtimeKind']),
+  builtin: Number(row.builtin ?? 0) === 1,
+  version: asString(row.version, 'unversioned'),
   status: asString(row.status) as LabStatus,
   summary: asString(row.summary),
   tags: JSON.parse(asString(row.tags_json, '[]')) as string[],
@@ -104,7 +116,6 @@ export class VulnLabDatabase {
 
   constructor(dataDir: string, runtimeDefaults: Partial<AppSettings> = {}) {
     this.runtimeDefaults = {
-      provider: 'simulated',
       bindHost: '127.0.0.1',
       port: '6710',
       maxInstances: '8',
@@ -140,6 +151,9 @@ export class VulnLabDatabase {
         source_ref TEXT NOT NULL,
         license TEXT NOT NULL,
         runtime_kind TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT '',
+        builtin INTEGER NOT NULL DEFAULT 0,
+        version TEXT NOT NULL DEFAULT 'unversioned',
         status TEXT NOT NULL,
         summary TEXT NOT NULL,
         tags_json TEXT NOT NULL,
@@ -237,6 +251,9 @@ export class VulnLabDatabase {
     `)
     this.ensureColumn('import_jobs', 'requested_by', "TEXT NOT NULL DEFAULT 'system'")
     this.ensureColumn('import_jobs', 'manifest_json', 'TEXT')
+    this.ensureColumn('labs', 'provider_id', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('labs', 'builtin', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('labs', 'version', "TEXT NOT NULL DEFAULT 'unversioned'")
     this.ensureColumn('vm_downloads', 'actual_md5', 'TEXT')
     this.ensureColumn('vm_downloads', 'actual_sha1', 'TEXT')
     this.ensureColumn('vm_downloads', 'checksum_verified', 'INTEGER NOT NULL DEFAULT 0')
@@ -262,12 +279,20 @@ export class VulnLabDatabase {
   private seed() {
     const insert = this.db.prepare(`
       INSERT OR IGNORE INTO labs
-        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, status, summary, tags_json, created_at, updated_at)
-      VALUES (@id, @slug, @title, @category, @difficulty, @sourceType, @sourceUrl, @sourceRef, @license, @runtimeKind, 'cataloged', @summary, @tagsJson, @createdAt, @updatedAt)
+        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, provider_id, builtin, version, status, summary, tags_json, created_at, updated_at)
+      VALUES (@id, @slug, @title, @category, @difficulty, @sourceType, @sourceUrl, @sourceRef, @license, @runtimeKind, @providerId, 1, @version, 'cataloged', @summary, @tagsJson, @createdAt, @updatedAt)
     `)
-    const refreshSeedRuntime = this.db.prepare(`
-      UPDATE labs SET runtime_kind = @runtimeKind, updated_at = @updatedAt
-      WHERE slug = @slug AND source_url = @sourceUrl
+    const refreshSeed = this.db.prepare(`
+      UPDATE labs SET title = @title, category = @category, difficulty = @difficulty,
+        source_type = @sourceType, source_url = @sourceUrl, source_ref = @sourceRef,
+        license = @license, runtime_kind = @runtimeKind, provider_id = @providerId,
+        builtin = 1,
+        status = CASE WHEN version <> @version THEN 'cataloged' ELSE status END,
+        local_path = CASE WHEN version <> @version THEN NULL ELSE local_path END,
+        imported_at = CASE WHEN version <> @version THEN NULL ELSE imported_at END,
+        version = @version, summary = @summary, tags_json = @tagsJson,
+        updated_at = @updatedAt
+      WHERE slug = @slug
     `)
     const transaction = this.db.transaction((items: SeedLab[]) => {
       for (const item of items) {
@@ -283,12 +308,33 @@ export class VulnLabDatabase {
           sourceRef: item.sourceRef,
           license: item.license,
           runtimeKind: item.runtimeKind,
+          providerId: item.providerId,
+          version: item.version,
           summary: item.summary,
           tagsJson: JSON.stringify(item.tags),
           createdAt: timestamp,
           updatedAt: timestamp,
         })
-        refreshSeedRuntime.run({ slug: item.slug, sourceUrl: item.sourceUrl, runtimeKind: item.runtimeKind, updatedAt: timestamp })
+        refreshSeed.run({
+          slug: item.slug,
+          title: item.title,
+          category: item.category,
+          difficulty: item.difficulty,
+          sourceType: item.sourceType,
+          sourceUrl: item.sourceUrl,
+          sourceRef: item.sourceRef,
+          license: item.license,
+          runtimeKind: item.runtimeKind,
+          providerId: item.providerId,
+          version: item.version,
+          summary: item.summary,
+          tagsJson: JSON.stringify(item.tags),
+          updatedAt: timestamp,
+        })
+      }
+      const activeSlugs = new Set(items.map(item => item.slug))
+      for (const slug of ['vulhub', 'crapi']) {
+        if (!activeSlugs.has(slug)) this.db.prepare("UPDATE labs SET status = 'disabled', updated_at = ? WHERE slug = ?").run(now(), slug)
       }
     })
     transaction(seedLabs)
@@ -296,7 +342,7 @@ export class VulnLabDatabase {
 
   listLabs(): Lab[] {
     const seedOrder = new Map(seedLabs.map((item, index) => [item.slug, index]))
-    return this.db.prepare('SELECT * FROM labs').all()
+    return this.db.prepare("SELECT * FROM labs WHERE builtin = 1 AND status != 'disabled'").all()
       .map(row => parseLab(row as Row))
       .sort((left, right) => {
         const leftOrder = seedOrder.get(left.slug) ?? Number.MAX_SAFE_INTEGER
@@ -316,14 +362,14 @@ export class VulnLabDatabase {
     return row ? parseLab(row) : null
   }
 
-  createLab(input: Omit<Lab, 'id' | 'createdAt' | 'updatedAt' | 'importedAt' | 'localPath' | 'status'> & { status?: LabStatus }): Lab {
+  createLab(input: Omit<Lab, 'id' | 'createdAt' | 'updatedAt' | 'importedAt' | 'localPath' | 'status' | 'providerId' | 'builtin' | 'version'> & { status?: LabStatus; providerId?: string; builtin?: boolean; version?: string }): Lab {
     const timestamp = now()
     const id = randomUUID()
     this.db.prepare(`
       INSERT INTO labs
-        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, status, summary, tags_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.slug, input.title, input.category, input.difficulty, input.sourceType, input.sourceUrl, input.sourceRef, input.license, input.runtimeKind, input.status ?? 'queued', input.summary, JSON.stringify(input.tags), timestamp, timestamp)
+        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, provider_id, builtin, version, status, summary, tags_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.slug, input.title, input.category, input.difficulty, input.sourceType, input.sourceUrl, input.sourceRef, input.license, input.runtimeKind, input.providerId ?? providerForRuntime(input.runtimeKind), input.builtin ? 1 : 0, input.version ?? 'custom', input.status ?? 'queued', input.summary, JSON.stringify(input.tags), timestamp, timestamp)
     return this.getLab(id) as Lab
   }
 
@@ -658,8 +704,8 @@ export class VulnLabDatabase {
     const count = (sql: string) => Number((this.db.prepare(sql).get() as { count: number }).count)
     const settings = this.getSettings()
     return {
-      labCount: count('SELECT COUNT(*) AS count FROM labs'),
-      readyCount: count("SELECT COUNT(*) AS count FROM labs WHERE status = 'ready'"),
+      labCount: count("SELECT COUNT(*) AS count FROM labs WHERE builtin = 1 AND status != 'disabled'"),
+      readyCount: count("SELECT COUNT(*) AS count FROM labs WHERE builtin = 1 AND status = 'ready'"),
       queuedImportCount: count("SELECT COUNT(*) AS count FROM import_jobs WHERE status IN ('queued', 'importing')"),
       runningInstanceCount: count("SELECT COUNT(*) AS count FROM instances WHERE status = 'running'"),
       maxInstances: Number(settings.maxInstances),

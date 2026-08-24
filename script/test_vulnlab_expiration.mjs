@@ -22,7 +22,7 @@ try {
     sourceUrl: 'https://github.com/fixture/expiration',
     sourceRef: 'fixture/expiration@main',
     license: 'MIT',
-    runtimeKind: 'simulated',
+    runtimeKind: 'native-php',
     summary: 'Lifecycle test fixture.',
     tags: ['fixture'],
     status: 'ready',
@@ -33,16 +33,17 @@ try {
   const cookieHeader = login.headers['set-cookie']
   const cookie = (Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader)?.split(';', 1)[0]
   assert.ok(cookie)
-  const csrfToken = login.json().csrfToken
-
-  const started = await app.inject({
-    method: 'POST',
-    url: `/api/labs/${lab.id}/instances`,
-    headers: { cookie, 'x-csrf-token': csrfToken },
+  const instanceId = 'expired-native-instance'
+  const started = database.createInstance({
+    id: instanceId,
+    lab,
+    provider: 'native-php',
+    endpoint: 'http://127.0.0.1:6998/',
+    createdAt: new Date(Date.now() - 120_000).toISOString(),
+    expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    logs: ['fixture started'],
   })
-  assert.equal(started.statusCode, 201)
-  const instanceId = started.json().id
-  await new Promise(resolve => setTimeout(resolve, 1_000))
+  assert.equal(started?.status, 'running')
 
   const instances = await app.inject({ method: 'GET', url: '/api/instances', headers: { cookie } })
   assert.equal(instances.statusCode, 200)

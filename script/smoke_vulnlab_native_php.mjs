@@ -25,17 +25,18 @@ const uploadLabs = labs.find(lab => lab.slug === 'upload-labs')
 assert.ok(uploadLabs, 'Upload-Labs seed is missing')
 assert.equal(uploadLabs.runtimeKind, 'native-php')
 
-const queued = await request(`/api/labs/${uploadLabs.id}/import`, { method: 'POST' })
-await request(`/api/import-jobs/${queued.job.id}/run`, { method: 'POST' })
-let completed = null
-for (let attempt = 0; attempt < 120; attempt += 1) {
-  const jobs = await request('/api/import-jobs')
-  const current = jobs.find(job => job.id === queued.job.id)
-  if (current?.status === 'completed' || current?.status === 'error') { completed = current; break }
-  await wait(500)
+if (uploadLabs.status !== 'ready') {
+  const installation = await request(`/api/labs/${uploadLabs.id}/install`, { method: 'POST' })
+  let completed = null
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const jobs = await request('/api/import-jobs')
+    const current = jobs.find(job => job.id === installation.job?.id)
+    if (current?.status === 'completed' || current?.status === 'error') { completed = current; break }
+    await wait(500)
+  }
+  assert.ok(completed, 'Upload-Labs installation did not finish within 60 seconds')
+  assert.equal(completed.status, 'completed', completed.error ?? completed.message)
 }
-assert.ok(completed, 'Upload-Labs import did not finish within 60 seconds')
-assert.equal(completed.status, 'completed', completed.error ?? completed.message)
 
 const readyLab = (await request('/api/labs')).find(lab => lab.id === uploadLabs.id)
 assert.equal(readyLab.status, 'ready')
@@ -60,4 +61,4 @@ assert.equal(destroyed.status, 'destroyed')
 const stopped = await fetch(instance.endpoint)
 assert.equal(stopped.status, 404, 'native PHP endpoint should stop after instance destruction')
 
-console.log(`VulnLab native PHP smoke passed: Upload-Labs imported, served at ${instance.endpoint}, renewed and stopped.`)
+console.log(`VulnLab native PHP smoke passed: Upload-Labs installed, served at ${instance.endpoint}, renewed and stopped.`)

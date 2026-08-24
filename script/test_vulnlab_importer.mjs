@@ -85,10 +85,14 @@ try {
   assert.throws(() => importerInternals.assertPortablePaths(['CON.txt']), /Windows 不可用文件名/)
   assert.throws(() => importerInternals.assertPortablePaths(['report.txt:secret']), /Windows 不可用文件名/)
 
-  const vulnhubCatalogHtml = '<a href="/entry/earth,755/">The Planets: Earth</a><a href="/entry/earth,755/">The Planets: Earth</a>'
-  const vulnhubDetailHtml = '<li><b>Author</b>: <a>SirFlash</a></li><p>Difficulty: Easy</p><li><b>Filename</b>: Earth.ova</li><li><b>File size</b>: 2.0 GB</li><li><b>MD5</b>: 7577F9CB54D024FD2283C998BCC8C173</li><li><b>SHA1</b>: 6476ACC056C32E09377B5403126FB0B34DBEA0A7</li><a href="https://download.vulnhub.com/theplanets/Earth.ova">Mirror</a>'
-  assert.equal(vulnhubInternals.parseCatalogLinks('https://www.vulnhub.com/', vulnhubCatalogHtml).length, 1)
-  assert.equal(vulnhubInternals.parseDetail(vulnhubDetailHtml).md5, '7577F9CB54D024FD2283C998BCC8C173')
+  const vulnhubCatalogHtml = '<a href="/entry/earth,755/"><div class="card-teaser">Earth fixture</div></a><div class="card-title"><a href="/entry/earth,755/">The Planets: Earth</a></div><a href="/entry/earth,755/">2 Nov 2021</a><a href="/entry/earth,755/" class="card-option-link">Details</a>'
+  const vulnhubDetailHtml = '<li><b>Author</b>: <a>SirFlash</a></li><p>Difficulty: Easy</p><li><b>Filename</b>: Earth.ova</li><li><b>File size</b>: 2.0 GB</li><li><b>MD5</b>: 7577F9CB54D024FD2283C998BCC8C173</li><li><b>SHA1</b>: 6476ACC056C32E09377B5403126FB0B34DBEA0A7</li><a href="https://download.vulnhub.com/theplanets/Earth.ova">Mirror</a><a href="https://download.vulnhub.com/checksum.txt">Checksums</a>'
+  const vulnhubLinks = vulnhubInternals.parseCatalogLinks('https://www.vulnhub.com/', vulnhubCatalogHtml)
+  assert.equal(vulnhubLinks.length, 1)
+  assert.equal(vulnhubLinks[0].title, 'The Planets: Earth')
+  const vulnhubDetail = vulnhubInternals.parseDetail(vulnhubDetailHtml)
+  assert.equal(vulnhubDetail.md5, '7577F9CB54D024FD2283C998BCC8C173')
+  assert.deepEqual(vulnhubDetail.downloadUrls, ['https://download.vulnhub.com/theplanets/Earth.ova'])
   let vulnhubBodyCancelled = false
   const oversizedVulnHubPage = new Response(new ReadableStream({
     start(controller) { controller.enqueue(new Uint8Array(vulnhubInternals.MAX_PAGE_BYTES + 1)) },
@@ -111,7 +115,9 @@ try {
     assert.ok(vulnhubManifest.archiveSha256.match(/^[a-f0-9]{64}$/))
     const catalog = await readVulnHubCatalog(vulnhubManifest.localPath, vulnhubManifest.archiveSha256)
     assert.equal(catalog.entries[0].title, 'The Planets: Earth')
+    assert.notEqual(catalog.entries[0].title, 'Details')
     assert.equal(catalog.entries[0].downloadUrls[0], 'https://download.vulnhub.com/theplanets/Earth.ova')
+    assert.ok(catalog.entries[0].downloadUrls.every(url => !url.endsWith('/checksum.txt')))
     await assert.rejects(
       readVulnHubCatalog(vulnhubManifest.localPath, '0'.repeat(64)),
       /校验值不匹配/,
@@ -185,6 +191,29 @@ try {
     assert.ok(fallbackCalls.some(url => url.includes('/zip/refs/heads/main')))
   } finally {
     await rm(fallbackDir, { recursive: true, force: true })
+  }
+
+  const pinnedSha = 'e'.repeat(40)
+  const pinnedFallbackCalls = []
+  const pinnedFallbackDir = await mkdtemp(join(tmpdir(), 'vulnlab-import-pinned-fallback-'))
+  try {
+    const pinnedManifest = await importGitHubRepository({
+      sourceUrl: 'https://github.com/digininja/DVWA',
+      sourceRef: `digininja/DVWA@${pinnedSha}`,
+      jobId: 'pinned-fallback-job',
+      dataDir: pinnedFallbackDir,
+      fetchImpl: async url => {
+        pinnedFallbackCalls.push(url)
+        if (url.endsWith('/repos/digininja/DVWA')) return new Response('{}', { status: 403 })
+        if (url.includes(`/zip/${pinnedSha}`)) return new Response(archive, { status: 200, headers: { 'content-length': String(archive.byteLength) } })
+        throw new Error(`unexpected pinned fallback URL: ${url}`)
+      },
+    })
+    assert.equal(pinnedManifest.resolvedRef, `${pinnedSha}@archive-sha256:${pinnedManifest.archiveSha256}`)
+    assert.ok(pinnedFallbackCalls.some(url => url.endsWith(`/zip/${pinnedSha}`)))
+    assert.ok(!pinnedFallbackCalls.some(url => url.includes('/refs/heads/')))
+  } finally {
+    await rm(pinnedFallbackDir, { recursive: true, force: true })
   }
 
   const branchFallbackCalls = []

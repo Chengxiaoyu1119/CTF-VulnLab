@@ -336,7 +336,8 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
     let archiveResponse: Response | null = null
     let archiveBranch = branch
     for (const [index, candidate] of archiveBranches.entries()) {
-      const archiveRef = revision || `refs/heads/${encodeURIComponent(candidate)}`
+      const pinnedCommit = /^[a-f0-9]{40}$/i.test(requestedRef) ? requestedRef : ''
+      const archiveRef = revision || pinnedCommit || `refs/heads/${encodeURIComponent(candidate)}`
       const archiveUrl = `https://codeload.github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/zip/${archiveRef}`
       report(input, 28, 'download', apiFallback ? `下载 ${candidate} 分支并用压缩包哈希固定内容。` : `下载固定版本 ${revision.slice(0, 12)}。`)
       const response = await fetchWithTimeout(fetchImpl, archiveUrl, { headers: { accept: 'application/zip', 'user-agent': USER_AGENT } }, input.signal)

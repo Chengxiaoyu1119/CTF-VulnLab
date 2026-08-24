@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 — 内置靶场与真实运行
+
+- 固定 3×3 九靶场工作区：DVWA、Pikachu、SQLi-Labs、Upload-Labs、VulnHub、Juice Shop、WebGoat、Mutillidae、PyGoat；
+- 接入 Juice Shop 与 WebGoat 官方发行包安装器，增加 MD5/SHA-256、下载上限、ZIP/TAR.GZ 安全解包和缓存回收；
+- 把四个 PHP 靶场、Mutillidae 和 PyGoat 固定到官方 commit，并在首次启动时自动准备；
+- 增加 `native-node`、`native-java`、`native-python` Provider，真实启动 Juice Shop、WebGoat 和 PyGoat；
+- 增加 PyGoat 私有 Python 环境、依赖安装、Django 设置适配和启动迁移；
+- 增加 Mutillidae 每实例 MySQL 配置与初始化适配；
+- 靶场按自身 `providerId` 自动选择运行实现；
+- 增加 PHP、mysqli、MySQL、Node.js、Java、Python、QEMU 自动检测和按靶场启动条件；
+- 一级工作区聚焦靶场、运行和环境三个入口，安装进度直接呈现在靶场卡片；
+- 卡片操作统一为安装、启动环境、打开页面和停止；
+- 使用上游封面或项目内真实资源补齐九个靶场封面，桌面保持 3×3，移动端保持双列；
+- 增加固定版本发行包、依赖判断与多 Provider 回归测试，完成 PHP/MySQL 四靶场和 Node/Java/Python 靶场真实启动验证；
+- 增加原生进程 PID 状态、服务重启资源回收、旧版本目录清理和 PHP 重定向启动探测；
+- WebGoat 固定为 Java 17/21 兼容的 `2023.8`，Juice Shop 固定为 `20.2.0`，两者均使用固定哈希校验。
+
 ## 0.2.0 — Node 单机框架
 
 - 后端迁移为 Node.js 22 + TypeScript + Fastify；
@@ -27,9 +44,5 @@
 - 修正 GitLab 归档下载在 Node/undici 请求下可能返回 HTTP 406 的兼容问题，默认使用内置 HTTPS 传输并保留可注入的测试请求实现。
 - 加强导入、VulnHub 页面和虚拟机下载的响应流回收，超过大小上限或请求失败时主动取消读取，避免无效下载继续占用资源。
 - 收紧来源登记边界：未匹配 Source Adapter 的 GitLab 压缩包或直接虚拟机地址会在登记阶段明确返回适配器错误；过期实例缺少 Provider 时保留运行记录，等待恢复处理。
-
-## 当前边界
-
-当前版本登记来源并排队导入，默认 Provider 提供模拟运行入口，Upload-Labs、DVWA、Pikachu 和 SQLi-Labs 已可通过原生 PHP Provider 运行。GitHub/GitLab 公共仓库已经可以真实下载、版本校验和安全解包；VulnHub 已支持目录元数据导入、管理员显式镜像下载和可选 QEMU Provider 运行已校验磁盘镜像，真实容器运行时和更强隔离运行仍按 Provider 逐个接入。
 
 详细说明见 [`README.md`](./README.md) 和 [`src/VulnLab/README.md`](./src/VulnLab/README.md)。
