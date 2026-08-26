@@ -133,7 +133,13 @@ def main() -> None:
         assert screen_box and abs(screen_box["width"] - 1404) <= 1 and abs(screen_box["height"] - 864) <= 1, screen_box
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
-        page.get_by_role("button", name="查看机器", exact=True).click()
+        vulnhub_button = page.get_by_role("button", name="查看机器", exact=True)
+        if vulnhub_button.count() == 0:
+            load_catalog_button = page.get_by_role("button", name="加载目录", exact=True)
+            expect(load_catalog_button).to_be_visible()
+            load_catalog_button.click()
+            expect(vulnhub_button).to_be_visible(timeout=120_000)
+        vulnhub_button.click()
         expect(page.get_by_role("dialog", name="VulnHub 机器目录")).to_be_visible()
         expect(page.locator(".catalog-entry")).to_have_count(12)
         expect(page.locator(".catalog-entry").first).to_contain_text("Matrix-Breakout: 2 Morpheus")
