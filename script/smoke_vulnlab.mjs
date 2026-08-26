@@ -22,7 +22,7 @@ assert.equal(health.product, 'VulnLab')
 assert.equal(health.runtime, 'node-fastify')
 assert.equal(await request('/api/auth/session'), null)
 
-const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' }) })
+const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }) })
 csrfToken = session.csrfToken
 assert.equal(session.role, 'admin')
 assert.match(cookie, /^vulnlab_session=[^;]+\.[^;]+$/, 'session cookie should be signed')
@@ -48,21 +48,13 @@ assert.equal(restoredSettings.maxInstances, settings.maxInstances)
 
 const audit = await request('/api/audit')
 assert.ok(audit.length >= 3, 'audit trail is incomplete')
-const learnerLogin = await fetch(`${baseUrl}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab-learner', password: 'VulnLabLearner123!' }) })
-assert.equal(learnerLogin.status, 200)
-const learnerCookie = learnerLogin.headers.getSetCookie()[0].split(';', 1)[0]
-const learnerSession = await learnerLogin.json()
-const learnerLabs = await (await fetch(`${baseUrl}/api/labs`, { headers: { cookie: learnerCookie } })).json()
-assert.ok(learnerLabs.every(lab => lab.localPath === null))
-const learnerJobs = await (await fetch(`${baseUrl}/api/import-jobs`, { headers: { cookie: learnerCookie } })).json()
-assert.ok(learnerJobs.every(job => !job.manifest || job.manifest.localPath === ''))
-const learnerSettingsRead = await fetch(`${baseUrl}/api/settings`, { headers: { cookie: learnerCookie } })
-assert.equal(learnerSettingsRead.status, 200)
-assert.equal((await learnerSettingsRead.json()).dataDir, '—')
-const learnerSettingsWrite = await fetch(`${baseUrl}/api/settings`, { method: 'PUT', headers: { cookie: learnerCookie, 'x-csrf-token': learnerSession.csrfToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ maxInstances: '2' }) })
-assert.equal(learnerSettingsWrite.status, 403)
-const learnerAuditRead = await fetch(`${baseUrl}/api/audit`, { headers: { cookie: learnerCookie } })
-assert.equal(learnerAuditRead.status, 403)
+for (const credentials of [
+  { userName: 'legacy-admin', password: 'legacy-admin' },
+  { userName: 'student', password: 'student' },
+]) {
+  const retiredLogin = await fetch(`${baseUrl}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credentials) })
+  assert.equal(retiredLogin.status, 401)
+}
 assert.deepEqual(await request('/api/auth/logout', { method: 'POST' }), { ok: true })
 assert.equal(await request('/api/auth/session'), null)
 

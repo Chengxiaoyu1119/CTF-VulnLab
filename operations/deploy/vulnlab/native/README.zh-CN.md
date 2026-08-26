@@ -1,17 +1,17 @@
 # VulnLab 原生单机部署
 
-这套入口使用 Node.js 22+、Fastify 和 SQLite，内置 PHP、Node.js、Java、Python、QEMU 五类 Provider，适合本地电脑或单台 Linux 云服务器。默认服务不依赖 Docker。
+这套入口使用 Node.js 22+、Fastify 和 SQLite，内置 PHP、Node.js、Java、Python、QEMU 五类 Provider，适合本地电脑或单台 Linux 云服务器。默认服务不依赖 Docker。主服务安装脚本会先在数据目录准备固定版本的项目内 Node.js，再用它构建和启动 VulnLab。
 
 ## Linux 单服务器
 
-准备 Node.js 22+、npm、systemd 和可选的 Caddy。复制并填写配置：
+准备 Linux x86_64、systemd、`tar`、`curl` 或 `wget`、`sha256sum` 或 `shasum`、PHP 8.3（启用 `mysqli`）和可选的 Caddy。安装脚本会从 Node.js 官方源下载固定版本 Node.js 22.23.1；Java、Python、MariaDB 由项目按需准备。复制并填写配置：
 
 ```bash
 cp operations/deploy/vulnlab/native/.env.example \
   operations/deploy/vulnlab/native/.env
 ```
 
-至少修改两个密码和 Cookie secret。按需要安装 PHP、MySQL/MariaDB、Java、Python 或 QEMU；Juice Shop 直接使用主服务的 Node.js。DVWA、Pikachu、SQLi-Labs、Mutillidae 需要 PHP `mysqli` 和可通过 TCP 访问的 MySQL 管理账号，然后安装：
+至少修改管理员密码和 Cookie secret；如果启用外部 MySQL，再填写对应的数据库管理密码。QEMU 只在 VulnHub 机器需要；Juice Shop 直接使用主服务的 Node.js。安装服务：
 
 ```bash
 sudo bash operations/deploy/vulnlab/native/install.sh \
@@ -20,7 +20,9 @@ sudo bash operations/deploy/vulnlab/native/install.sh \
 
 通过域名或 Caddy 访问时，把 `VULNLAB_PUBLIC_URL` 填成完整的 HTTPS 地址，例如 `https://lab.example.com`，这样运行实例返回的入口会使用远程可访问地址。
 
-服务安装到 `/opt/vulnlab/app`，数据位于 `/opt/vulnlab/data`，配置位于 `/etc/vulnlab/vulnlab.env`。安装过程会执行 `npm ci`、TypeScript 构建和生产依赖裁剪。
+服务安装到 `/opt/vulnlab/app`，数据位于 `/opt/vulnlab/data`，配置位于 `/etc/vulnlab/vulnlab.env`。安装过程会校验 Node.js 归档 SHA-256，执行项目内 `npm ci`、TypeScript 构建和生产依赖裁剪；服务单元直接调用项目内 Node.js。
+
+首次登录后进入“环境”，点击“下载并准备环境”。Linux x64 会下载固定版本 MariaDB、Eclipse Temurin JRE 和 Python standalone，执行 SHA-256 校验和受限解压，然后统一放在 `/opt/vulnlab/data/runtime`；项目内 Node.js 已由安装脚本准备好。MariaDB 只监听 `127.0.0.1`；运行时不会进入应用源码或 Git，下载失败时页面保留原因，可以直接重试。
 
 原生 PHP 推荐配置：
 
@@ -31,25 +33,25 @@ VULNLAB_RUNTIME_PORT_START=6800
 VULNLAB_RUNTIME_PORT_END=6899
 ```
 
-WebGoat 与 PyGoat 使用以下可选路径，未配置时从系统 `PATH` 查找：
+WebGoat 与 PyGoat 默认使用项目下载的 Java/Python；以下路径只在需要覆盖项目运行时时设置：
 
 ```text
 VULNLAB_JAVA_BIN=/usr/bin/java
 VULNLAB_PYTHON_BIN=/usr/bin/python3
 ```
 
-DVWA、Pikachu、SQLi-Labs、Mutillidae 的 MySQL 配置示例：
+默认项目内 MariaDB 已满足 DVWA、Pikachu、SQLi-Labs、Mutillidae。已有独立数据库服务时，也可以用以下配置覆盖项目实例：
 
 ```text
 VULNLAB_MYSQL_BIN=/usr/bin/mysql
 VULNLAB_MYSQL_HOST=127.0.0.1
 VULNLAB_MYSQL_PORT=3306
-VULNLAB_MYSQL_ADMIN_USER=vulnlab-admin
+VULNLAB_MYSQL_ADMIN_USER=替换为 MySQL 管理账号
 VULNLAB_MYSQL_ADMIN_PASSWORD=替换为真实密码
 VULNLAB_MYSQL_APP_HOST=127.0.0.1
 ```
 
-管理账号只用于创建和清理每实例数据库、账号及授权；靶场 PHP 进程使用 Provider 生成的独立应用账号。PHP 配置至少应启用 `mysqli`、`pdo_mysql` 和 `mbstring`。Windows 大小写不敏感文件系统上的路径冲突会在导入阶段被拒绝。
+外部管理账号只用于创建和清理每实例数据库、账号及授权；靶场 PHP 进程使用 Provider 生成的独立应用账号。项目内 MariaDB 和外部连接不会同时启用。PHP 配置至少应启用 `mysqli`、`pdo_mysql` 和 `mbstring`。Windows 大小写不敏感文件系统上的路径冲突会在导入阶段被拒绝。
 
 PHP 与 QEMU 入口通过 VulnLab 的 `/lab-runtime/<实例 ID>/` 路径转发。Juice Shop、WebGoat、PyGoat 使用直接运行端口；远程访问时把 `VULNLAB_RUNTIME_HOST` 设置为服务器监听地址，并配置 `VULNLAB_RUNTIME_PUBLIC_ORIGIN=http://SERVER_IP:{port}`，只向可信来源开放 `6800-6899`。原生进程与 VulnLab 使用同一个系统账号，适合单用户或可信小团队；需要更强操作系统隔离时优先选择 QEMU。
 
@@ -81,7 +83,7 @@ Linux/macOS：
 bash script/run_vulnlab.sh
 ```
 
-打开 `http://127.0.0.1:6710/`，开发账号为 `vulnlab-admin / VulnLabAdmin123!`。
+打开 `http://127.0.0.1:6710/`，本地默认管理员账号为 `vulnlab / vulnlab`；生产服务使用 `.env` 中设置的 `VULNLAB_ADMIN_PASSWORD`。
 
 ## 备份和恢复
 

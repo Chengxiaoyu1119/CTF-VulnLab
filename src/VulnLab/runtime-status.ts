@@ -5,11 +5,15 @@ import { stat } from 'node:fs/promises'
 import type { MySqlRuntimeConfig } from './mysql.js'
 import type { Lab } from './types.js'
 
+export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
+
 export interface RuntimeDependencyStatus {
   id: 'php' | 'php-mysqli' | 'mysql' | 'node' | 'java' | 'python' | 'qemu'
   label: string
   available: boolean
   detail: string
+  source?: RuntimeSource
+  action?: 'ready' | 'prepare' | 'configure'
 }
 
 const command = (binary: string, args: string[]) => new Promise<{ available: boolean; output: string }>(resolveCommand => {
@@ -44,6 +48,7 @@ export const inspectRuntimeDependencies = async (input: {
   pythonBinary: string
   qemuBinary: string
   mysql?: MySqlRuntimeConfig
+  sources?: Partial<Record<RuntimeDependencyStatus['id'], { source?: RuntimeSource; action?: RuntimeDependencyStatus['action'] }>>
 }): Promise<RuntimeDependencyStatus[]> => {
   const [php, node, java, python, qemu, mysqlReachable] = await Promise.all([
     command(input.phpBinary, [...(input.phpIni ? ['-c', input.phpIni] : []), '-r', 'echo PHP_VERSION."|".(extension_loaded("mysqli")?"mysqli":"no-mysqli");']),
@@ -59,14 +64,15 @@ export const inspectRuntimeDependencies = async (input: {
   const javaReady = java.available && majorVersion(java.output) >= 17
   const pythonMajorMinor = firstVersion(python.output).split('.').slice(0, 2).join('.')
   const pythonReady = python.available && ['3.10', '3.11'].includes(pythonMajorMinor)
+  const withSource = (id: RuntimeDependencyStatus['id'], item: Omit<RuntimeDependencyStatus, 'id' | 'source' | 'action'>): RuntimeDependencyStatus => ({ id, ...item, ...input.sources?.[id] })
   return [
-    { id: 'php', label: 'PHP', available: php.available, detail: php.available ? (phpParts[0] || firstVersion(php.output)) : '未检测到' },
-    { id: 'php-mysqli', label: 'PHP mysqli', available: mysqliReady, detail: mysqliReady ? '扩展已启用' : '扩展未启用' },
-    { id: 'mysql', label: 'MySQL / MariaDB', available: Boolean(input.mysql && mysqlReachable), detail: !input.mysql ? '未配置连接' : mysqlReachable ? `${input.mysql.host}:${input.mysql.port}` : `${input.mysql.host}:${input.mysql.port} 未连接` },
-    { id: 'node', label: 'Node.js', available: nodeReady, detail: node.available ? `${firstVersion(node.output)}${nodeReady ? '' : ' · 需要 22+'}` : '未检测到' },
-    { id: 'java', label: 'Java', available: javaReady, detail: java.available ? `${firstVersion(java.output)}${javaReady ? '' : ' · 需要 17+'}` : '未检测到' },
-    { id: 'python', label: 'Python', available: pythonReady, detail: python.available ? `${firstVersion(python.output)}${pythonReady ? '' : ' · 需要 3.10/3.11'}` : '未检测到' },
-    { id: 'qemu', label: 'QEMU', available: qemu.available, detail: qemu.available ? firstVersion(qemu.output) : '未检测到' },
+    withSource('php', { label: 'PHP', available: php.available, detail: php.available ? (phpParts[0] || firstVersion(php.output)) : '未检测到' }),
+    withSource('php-mysqli', { label: 'PHP mysqli', available: mysqliReady, detail: mysqliReady ? '扩展已启用' : '扩展未启用' }),
+    withSource('mysql', { label: 'MySQL / MariaDB', available: Boolean(input.mysql && mysqlReachable), detail: !input.mysql ? '未配置连接' : mysqlReachable ? `${input.mysql.host}:${input.mysql.port}` : `${input.mysql.host}:${input.mysql.port} 未连接` }),
+    withSource('node', { label: 'Node.js', available: nodeReady, detail: node.available ? `${firstVersion(node.output)}${nodeReady ? '' : ' · 需要 22+'}` : '未检测到' }),
+    withSource('java', { label: 'Java', available: javaReady, detail: java.available ? `${firstVersion(java.output)}${javaReady ? '' : ' · 需要 17+'}` : '未检测到' }),
+    withSource('python', { label: 'Python', available: pythonReady, detail: python.available ? `${firstVersion(python.output)}${pythonReady ? '' : ' · 需要 3.10/3.11'}` : '未检测到' }),
+    withSource('qemu', { label: 'QEMU', available: qemu.available, detail: qemu.available ? firstVersion(qemu.output) : '未检测到' }),
   ]
 }
 

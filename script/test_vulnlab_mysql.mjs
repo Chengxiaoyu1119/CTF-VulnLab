@@ -8,7 +8,7 @@ const calls = []
 const config = {
   host: '127.0.0.1',
   port: 3307,
-  adminUser: 'vulnlab-admin',
+  adminUser: 'fixture-db-admin',
   adminPassword: 'admin-secret',
   appHost: '127.0.0.1',
   mysqlBinary: 'mysql-fixture',

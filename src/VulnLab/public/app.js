@@ -1,6 +1,11 @@
 const app = document.querySelector('#app')
 let importPollTimer = null
 let catalogPollTimer = null
+let modalReturnFocus = null
+let loginNoticeTimer = null
+let loginSuccessNoticeTimer = null
+
+const LOGIN_NOTICE_DURATION = 4200
 
 const state = {
   session: null,
@@ -15,6 +20,8 @@ const state = {
   loading: true,
   busy: false,
   error: '',
+  loginErrorFields: [],
+  successNotice: null,
   toast: null,
   confirm: null,
   catalog: null,
@@ -25,7 +32,15 @@ const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
 }[character]))
 
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
+const bytes = value => {
+  const size = Number(value ?? 0)
+  if (!Number.isFinite(size) || size <= 0) return '—'
+  if (size >= 1024 ** 3) return `${(size / 1024 ** 3).toFixed(1)} GiB`
+  if (size >= 1024 ** 2) return `${Math.round(size / 1024 ** 2)} MiB`
+  return `${Math.round(size / 1024)} KiB`
+}
 const instanceLabel = value => ({ running: '运行中', expired: '已过期', destroyed: '已结束' }[value] ?? value)
+const runtimeSourceLabel = value => ({ project: '项目内', system: '系统', external: '外部配置', missing: '未检测到' }[value] ?? '待检查')
 const currentView = () => {
   const value = location.hash.slice(1)
   return ['labs', 'instances', 'settings'].includes(value) ? value : 'labs'
@@ -92,6 +107,44 @@ function setToast(message, type = 'success') {
   }, 3600)
 }
 
+function clearLoginNoticeTimer() {
+  if (loginNoticeTimer) { window.clearTimeout(loginNoticeTimer); loginNoticeTimer = null }
+}
+
+function scheduleLoginNoticeDismiss() {
+  clearLoginNoticeTimer()
+  if (!state.error || state.session) return
+  loginNoticeTimer = window.setTimeout(() => {
+    loginNoticeTimer = null
+    if (!state.session && state.error) {
+      state.error = ''
+      state.loginErrorFields = []
+      render()
+    }
+  }, LOGIN_NOTICE_DURATION)
+}
+
+function clearLoginSuccessNoticeTimer() {
+  if (loginSuccessNoticeTimer) { window.clearTimeout(loginSuccessNoticeTimer); loginSuccessNoticeTimer = null }
+}
+
+function scheduleLoginSuccessNoticeDismiss() {
+  if (!state.successNotice || !state.session) { clearLoginSuccessNoticeTimer(); return }
+  if (loginSuccessNoticeTimer) return
+  loginSuccessNoticeTimer = window.setTimeout(() => {
+    loginSuccessNoticeTimer = null
+    if (state.successNotice) {
+      state.successNotice = null
+      render()
+    }
+  }, LOGIN_NOTICE_DURATION)
+}
+
+function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
+  const isSuccess = kind === 'success'
+  return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-icon" aria-hidden="true">${isSuccess ? '✓' : '!'}</span><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
+}
+
 function catalogDialog() {
   const catalog = state.catalog
   if (!catalog) return ''
@@ -124,7 +177,8 @@ function catalogDialog() {
 }
 
 function overlays() {
-  return `${state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : ''}
+  const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
+  return `${successNotice}${state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : ''}
     ${state.confirm ? `<div class="dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : ''}
     ${catalogDialog()}`
 }
@@ -217,7 +271,7 @@ function labCard(lab) {
       : queued
         ? '<span class="card-primary-button is-disabled">等待安装</span>'
         : ready && missing.length
-          ? `<span class="card-primary-button is-disabled">${esc(missingLabel)}</span>`
+          ? `<button class="card-primary-button" type="button" data-action="nav" data-view="settings">${esc(missingLabel.includes('数据库') ? '查看配置' : missingLabel)}</button>`
         : admin
           ? `<button class="card-primary-button${failed ? ' is-retry' : ''}" type="button" data-action="install-lab" data-id="${esc(lab.id)}">${failed ? '重试安装' : lab.slug === 'vulnhub' ? '加载目录' : '安装'}</button>`
           : '<span class="card-primary-button is-disabled">等待安装</span>'
@@ -244,12 +298,29 @@ function settingsPage() {
   const settings = state.settings ?? {}
   const admin = state.session.role === 'admin'
   const dependencies = state.runtimeStatus?.dependencies ?? []
+  const project = state.runtimeStatus?.project ?? {}
+  const projectRows = [
+    ['PHP', project.php],
+    ['MySQL / MariaDB', project.mysql],
+    ['Node.js', project.node],
+    ['Java', project.java],
+    ['Python', project.python],
+  ]
+  const toolchains = project.toolchains ?? []
+  const packagesReady = toolchains.length > 0 && toolchains.every(item => item.state === 'ready')
+  const toolchainList = toolchains.length
+    ? `<div class="runtime-package-list">${toolchains.map(item => `<div class="runtime-package-row"><i class="${item.state === 'ready' ? 'is-ready' : item.state === 'error' ? 'is-error' : ''}"></i><span><strong>${esc(item.label)} ${esc(item.version)}</strong><small>${esc(item.detail)}</small></span><em>${item.state === 'ready' ? bytes(item.installedBytes) : item.state === 'error' ? '失败' : '待下载'}</em><a class="runtime-package-source" href="${esc(item.sourceUrl)}" target="_blank" rel="noreferrer" aria-label="打开 ${esc(item.label)} 官方源">官方源 ↗</a></div>`).join('')}</div>`
+    : '<div class="runtime-package-empty">当前平台没有可下载的内置运行时包，继续使用系统运行环境。</div>'
   return `${pageHeader('环境', '本机运行能力与服务参数。', '<span class="page-note">参数保存后重启生效</span>')}
-    <form class="settings-layout" id="settings-form"><section class="settings-surface"><div class="form-heading"><h2>服务</h2><span>单机运行</span></div><div class="form-row"><label>监听地址<input name="bindHost" value="${esc(settings.bindHost)}" ${admin ? '' : 'disabled'}></label><label>端口<input name="port" type="number" min="1024" max="65535" value="${esc(settings.port)}" ${admin ? '' : 'disabled'}></label></div><label>最大并发环境<input name="maxInstances" type="number" min="1" max="99" value="${esc(settings.maxInstances)}" ${admin ? '' : 'disabled'}></label><label class="toggle-line"><input name="autoCleanup" type="checkbox" ${settings.autoCleanup === 'true' ? 'checked' : ''} ${admin ? '' : 'disabled'}><span>到期后自动停止环境</span></label><label>数据目录<input value="${esc(settings.dataDir)}" readonly aria-readonly="true"></label></section><section class="settings-surface settings-readout"><div class="form-heading"><h2>运行依赖</h2><span>自动检测</span></div><div class="dependency-list">${dependencies.map(item => `<div class="dependency-row"><i class="${item.available ? 'is-ready' : ''}"></i><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span><em>${item.available ? '可用' : '待配置'}</em></div>`).join('')}</div></section>${admin ? '<button class="button button-primary settings-save" type="submit">保存设置</button>' : ''}</form>`
+    <form class="settings-layout" id="settings-form"><section class="settings-surface"><div class="form-heading"><h2>服务</h2><span>单机运行</span></div><div class="form-row"><label>监听地址<input name="bindHost" value="${esc(settings.bindHost)}" ${admin ? '' : 'disabled'}></label><label>端口<input name="port" type="number" min="1024" max="65535" value="${esc(settings.port)}" ${admin ? '' : 'disabled'}></label></div><label>最大并发环境<input name="maxInstances" type="number" min="1" max="99" value="${esc(settings.maxInstances)}" ${admin ? '' : 'disabled'}></label><label class="toggle-line"><input name="autoCleanup" type="checkbox" ${settings.autoCleanup === 'true' ? 'checked' : ''} ${admin ? '' : 'disabled'}><span>到期后自动停止环境</span></label><label>数据目录<input value="${esc(settings.dataDir)}" readonly aria-readonly="true"></label></section><section class="settings-surface settings-readout"><div class="form-heading"><h2>运行依赖</h2><span>自动检测</span></div><div class="dependency-list">${dependencies.map(item => `<div class="dependency-row"><i class="${item.available ? 'is-ready' : ''}"></i><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span><em>${item.available ? '可用' : '待配置'}</em></div>`).join('')}</div></section><section class="settings-surface project-runtime-surface"><div class="form-heading"><div><h2>项目运行环境</h2><p class="surface-caption">运行时、配置、数据库和日志都放在项目数据目录。</p></div><span>${esc(project.platform ?? '待检查')}</span></div><div class="project-runtime-path"><span>运行目录</span><code>${esc(project.runtimeDir ?? '—')}</code></div>${toolchainList}<div class="dependency-list project-runtime-list">${projectRows.map(([label, item]) => `<div class="dependency-row"><i class="${item?.available ? 'is-ready' : ''}"></i><span><strong>${esc(label)}</strong><small>${esc(item?.detail ?? '尚未准备')}</small></span><em>${runtimeSourceLabel(item?.source)}</em></div>`).join('')}</div><div class="project-runtime-actions">${admin && toolchains.length ? `<button class="button button-outline" type="button" data-action="prepare-runtime">${packagesReady ? '重新校验环境' : '下载并准备环境'}</button>` : ''}<button class="button button-quiet" type="button" data-action="refresh-runtime">重新检查</button></div></section>${admin ? '<button class="button button-primary settings-save" type="submit">保存设置</button>' : ''}</form>`
 }
 
 function loginPage() {
-  return `<div class="login-page"><div class="login-mark"><img src="/favicon.svg" alt=""><span>VulnLab</span></div><form class="login-form" id="login-form"><h1>进入工作台</h1><p>安装、启动和管理本机靶场。</p><label>账号<input name="userName" autocomplete="username" required placeholder="vulnlab-admin"></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label>${state.error ? `<div class="form-error" role="alert">${esc(state.error)}</div>` : ''}<button class="button button-primary" type="submit">登录</button></form></div>`
+  const userNameInvalid = state.loginErrorFields.includes('userName')
+  const passwordInvalid = state.loginErrorFields.includes('password')
+  const notice = state.error ? loginNoticeCard({ id: 'login-notice', title: '登录失败', message: state.error, action: 'dismiss-login-error' }) : ''
+  const describedBy = state.error ? 'aria-describedby="login-notice"' : ''
+  return `<div class="login-page"><div class="login-mark"><img src="/favicon.svg" alt=""><span>VulnLab</span></div><form class="login-form" id="login-form" novalidate><h1>进入靶场</h1><label>账号<input name="userName" autocomplete="username" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label>密码<input name="password" type="password" autocomplete="current-password" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit">登录</button></form>${notice}</div>`
 }
 
 function scheduleImportPolling() {
@@ -280,12 +351,26 @@ function scheduleCatalogPolling() {
 
 function render() {
   if (state.loading) { app.innerHTML = '<div class="loading-screen">正在打开 VulnLab…</div>'; return }
-  if (!state.session) { app.innerHTML = loginPage(); return }
+  if (!state.session) { clearLoginSuccessNoticeTimer(); app.innerHTML = loginPage(); scheduleLoginNoticeDismiss(); return }
+  clearLoginNoticeTimer()
+  scheduleLoginSuccessNoticeDismiss()
   const view = currentView()
   const page = view === 'instances' ? instancesPage() : view === 'settings' ? settingsPage() : labsPage()
   app.innerHTML = labsShell(page)
+  window.queueMicrotask(() => {
+    const dialog = document.querySelector('[role="dialog"]')
+    if (!dialog) return
+    const focusable = dialog.querySelector('button, a[href], input, select, textarea')
+    focusable?.focus()
+  })
   scheduleImportPolling()
   scheduleCatalogPolling()
+}
+
+function restoreModalFocus() {
+  const target = modalReturnFocus
+  modalReturnFocus = null
+  if (target?.isConnected) window.queueMicrotask(() => target.focus())
 }
 
 function openConfirm(title, message, action, confirmLabel = '继续') {
@@ -296,16 +381,34 @@ function openConfirm(title, message, action, confirmLabel = '继续') {
 async function runAction(action, element) {
   if (state.busy) return
   if (action === 'nav') { navigate(element.dataset.view); return }
-  if (action === 'cancel-confirm') { state.confirm = null; render(); return }
+  if (action === 'dismiss-login-error') { clearLoginNoticeTimer(); state.error = ''; state.loginErrorFields = []; render(); return }
+  if (action === 'dismiss-login-success') { clearLoginSuccessNoticeTimer(); state.successNotice = null; render(); return }
+  if (action === 'cancel-confirm') { state.confirm = null; render(); restoreModalFocus(); return }
   if (action === 'confirm-action') {
     const next = state.confirm?.action
     state.confirm = null
+    restoreModalFocus()
     if (next) await runAction(next.action, { dataset: next })
     return
   }
   if (action === 'logout') {
     state.busy = true
-    try { await request('/api/auth/logout', { method: 'POST' }); state.session = null; state.csrfToken = ''; state.overview = null; state.labs = []; state.jobs = []; state.vmDownloads = []; state.instances = []; state.catalog = null; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { state.busy = false; render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.overview = null; state.labs = []; state.jobs = []; state.vmDownloads = []; state.instances = []; state.catalog = null; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { state.busy = false; render() }
+    return
+  }
+  if (action === 'prepare-runtime' || action === 'refresh-runtime') {
+    state.busy = true
+    try {
+      if (action === 'prepare-runtime') {
+        element.disabled = true
+        element.textContent = '正在下载并准备…'
+        const result = await request('/api/runtime/prepare', { method: 'POST' })
+        state.runtimeStatus = { ...state.runtimeStatus, project: result.project }
+        if (!result.ok) throw new ApiError(result.message ?? '项目运行环境准备失败。', 409)
+      }
+      await refresh()
+      setToast(action === 'prepare-runtime' ? '项目运行环境已准备完成。' : '运行环境状态已更新。')
+    } catch (error) { setToast(error.message, 'error') } finally { state.busy = false; render() }
     return
   }
   if (action === 'install-lab') {
@@ -315,6 +418,7 @@ async function runAction(action, element) {
   }
   if (action === 'view-catalog') {
     state.busy = true
+    modalReturnFocus = element
     state.catalog = { loading: true }
     render()
     try {
@@ -331,7 +435,7 @@ async function runAction(action, element) {
   }
   if (action === 'close-catalog') {
     state.catalog = null
-    render()
+    render(); restoreModalFocus()
     return
   }
   if (action === 'select-catalog-entry') {
@@ -386,6 +490,7 @@ async function runAction(action, element) {
     return
   }
   if (action === 'destroy-instance') {
+    modalReturnFocus = element
     openConfirm('停止靶场环境', '停止后会释放运行端口和实例资源，下次启动会创建新的练习副本。', { action: 'confirm-destroy', id: element.dataset.id }, '停止环境')
     return
   }
@@ -408,14 +513,57 @@ app.addEventListener('submit', async event => {
   const form = event.target
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
-    state.busy = true; state.error = ''
-    try { const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) }); state.session = session; state.csrfToken = session.csrfToken; await refresh(); navigate('labs') } catch (error) { state.error = error.message } finally { state.busy = false; render() }
+    state.busy = true; state.error = ''; state.loginErrorFields = []
+    const userName = typeof values.userName === 'string' ? values.userName.trim() : ''
+    const password = typeof values.password === 'string' ? values.password : ''
+    const missingFields = [!userName ? 'userName' : null, !password ? 'password' : null].filter(Boolean)
+    if (missingFields.length) {
+      state.loginErrorFields = missingFields
+      state.error = !userName && !password ? '请输入账号和密码' : !userName ? '请输入账号' : '请输入密码'
+      state.busy = false
+      render()
+      document.querySelector(`[name="${missingFields[0]}"]`)?.focus()
+      return
+    }
+    try { const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) }); state.session = session; state.csrfToken = session.csrfToken; await refresh(); state.successNotice = { title: '登录成功', message: '身份验证通过，正在进入系统' }; navigate('labs') } catch (error) { state.successNotice = null; state.error = error.message } finally { state.busy = false; render() }
     return
   }
   if (form.id === 'settings-form') {
     state.busy = true
     try { const payload = { ...values, autoCleanup: values.autoCleanup === 'on' ? 'true' : 'false' }; await request('/api/settings', { method: 'PUT', body: JSON.stringify(payload) }); await refresh(); setToast('运行环境已保存。') } catch (error) { setToast(error.message, 'error') } finally { state.busy = false; render() }
   }
+})
+
+app.addEventListener('input', event => {
+  const input = event.target
+  if (!input.form || input.form.id !== 'login-form' || !state.error) return
+  clearLoginNoticeTimer()
+  state.error = ''
+  state.loginErrorFields = []
+  document.querySelector('#login-notice')?.remove()
+  input.form.querySelectorAll('input').forEach(field => {
+    field.setAttribute('aria-invalid', 'false')
+    field.removeAttribute('aria-describedby')
+  })
+})
+
+document.addEventListener('keydown', event => {
+  const dialog = document.querySelector('[role="dialog"]')
+  if (!dialog) return
+  if (event.key === 'Escape') {
+    if (state.catalog) state.catalog = null
+    else if (state.confirm) state.confirm = null
+    render()
+    restoreModalFocus()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const focusable = [...dialog.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.offsetParent !== null)
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 })
 
 window.addEventListener('hashchange', render)

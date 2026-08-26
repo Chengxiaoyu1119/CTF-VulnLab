@@ -622,14 +622,18 @@ export class VulnLabDatabase {
   }
 
   getSession(id: string): (SessionView & { expiresAt: number }) | null {
-    const row = this.db.prepare('SELECT user_name AS userName, role, csrf_token AS csrfToken, expires_at AS expiresAt FROM sessions WHERE id = ?').get(id) as { userName: string; role: UserRole; csrfToken: string; expiresAt: string } | undefined
+    const row = this.db.prepare('SELECT user_name AS userName, role, csrf_token AS csrfToken, expires_at AS expiresAt FROM sessions WHERE id = ?').get(id) as { userName: string; role: string; csrfToken: string; expiresAt: string } | undefined
     if (!row) return null
+    if (row.role !== 'admin') {
+      this.deleteSession(id)
+      return null
+    }
     const expiresAt = Date.parse(row.expiresAt)
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       this.deleteSession(id)
       return null
     }
-    return { userName: row.userName, role: row.role, csrfToken: row.csrfToken, expiresAt }
+    return { userName: row.userName, role: 'admin', csrfToken: row.csrfToken, expiresAt }
   }
 
   deleteSession(id: string) {

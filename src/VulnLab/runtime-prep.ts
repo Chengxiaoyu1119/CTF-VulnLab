@@ -44,12 +44,12 @@ const pygoatRequirements = async (root: string) => {
   return path
 }
 
-export const prepareInstalledLab = async (lab: Lab, onProgress: Progress = () => undefined) => {
+export const prepareInstalledLab = async (lab: Lab, onProgress: Progress = () => undefined, pythonBinary?: string) => {
   if (lab.slug !== 'pygoat' || !lab.localPath) return
   const root = lab.localPath
   const readyMarker = join(root, '.vulnlab-python-ready')
   if (await exists(readyMarker)) return
-  const configured = process.env.VULNLAB_PYTHON_BIN?.trim() || (process.platform === 'win32' ? 'py' : 'python3')
+  const configured = pythonBinary?.trim() || process.env.VULNLAB_PYTHON_BIN?.trim() || (process.platform === 'win32' ? 'py' : 'python3')
   const launcherArgs = process.platform === 'win32' && basename(configured).toLowerCase() === 'py' ? ['-3'] : []
   onProgress(91, 'runtime', '正在创建 PyGoat 独立 Python 环境。')
   await run(configured, [...launcherArgs, '-m', 'venv', '.vulnlab-venv'], root)

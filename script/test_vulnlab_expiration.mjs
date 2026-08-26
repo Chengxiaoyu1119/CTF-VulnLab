@@ -28,7 +28,7 @@ try {
     status: 'ready',
   })
 
-  const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' } })
+  const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { userName: 'vulnlab', password: 'vulnlab' } })
   assert.equal(login.statusCode, 200)
   const cookieHeader = login.headers['set-cookie']
   const cookie = (Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader)?.split(';', 1)[0]

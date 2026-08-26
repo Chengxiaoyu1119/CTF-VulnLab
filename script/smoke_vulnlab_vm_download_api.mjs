@@ -19,7 +19,7 @@ async function request(path, options = {}) {
   return payload
 }
 
-const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' }) })
+const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }) })
 csrfToken = session.csrfToken
 const lab = (await request('/api/labs')).find(item => item.slug === 'vulnhub')
 assert.ok(lab, 'VulnHub seed is missing')

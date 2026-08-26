@@ -19,7 +19,7 @@ async function request(path, options = {}) {
   return payload
 }
 
-const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' }) })
+const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }) })
 csrfToken = session.csrfToken
 const labs = await request('/api/labs')
 const vulnhub = labs.find(lab => lab.slug === 'vulnhub')

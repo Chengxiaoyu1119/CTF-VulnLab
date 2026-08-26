@@ -14,6 +14,7 @@ import { importGitHubRepository, importGitLabRepository, ImporterError } from '.
 import { adapterFor } from './importers.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig, type VmRuntimeConfig } from './providers.js'
+import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
 import { prepareInstalledLab } from './runtime-prep.js'
 import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
@@ -43,7 +44,7 @@ const runtimePortEnd = Number(process.env.VULNLAB_RUNTIME_PORT_END ?? 6899)
 const runtimePhpBinary = process.env.VULNLAB_PHP_BIN ?? 'php'
 const runtimePhpIni = process.env.VULNLAB_PHP_INI?.trim() || undefined
 const runtimePublicOrigin = process.env.VULNLAB_RUNTIME_PUBLIC_ORIGIN?.trim() || undefined
-const runtimeMySql = mysqlRuntimeConfigFromEnv()
+let runtimeMySql = mysqlRuntimeConfigFromEnv()
 if (runtimeHost !== 'localhost' && isIP(runtimeHost) === 0) throw new Error('VULNLAB_RUNTIME_HOST 必须是 localhost 或有效 IP 地址。')
 if (!Number.isInteger(runtimePortStart) || !Number.isInteger(runtimePortEnd) || runtimePortStart < 1024 || runtimePortEnd > 65535 || runtimePortStart > runtimePortEnd) throw new Error('VULNLAB_RUNTIME_PORT_START/END 必须是有效端口范围。')
 const nativeRuntime: NativeRuntimeConfig = {
@@ -58,6 +59,7 @@ const nativeRuntime: NativeRuntimeConfig = {
   publicOriginTemplate: runtimePublicOrigin,
   mysql: runtimeMySql,
 }
+const projectEnvironment = projectEnvironmentOptionsFromEnv(dataDir, process.env.VULNLAB_PHP_BIN?.trim(), runtimePhpIni, runtimeMySql, process.env.VULNLAB_NODE_BIN?.trim())
 const vmPortStart = Number(process.env.VULNLAB_VM_PORT_START ?? 6900)
 const vmPortEnd = Number(process.env.VULNLAB_VM_PORT_END ?? 6999)
 const vmGuestPort = Number(process.env.VULNLAB_VM_GUEST_PORT ?? 80)
@@ -81,22 +83,17 @@ if (configuredPublicUrl) {
   }
 }
 
-const defaultAdminPassword = 'VulnLabAdmin123!'
-const defaultLearnerPassword = 'VulnLabLearner123!'
+const defaultAdminUser = 'vulnlab'
+const defaultAdminPassword = 'vulnlab'
 const cookieSecret = process.env.VULNLAB_COOKIE_SECRET ?? (isProduction ? '' : 'vulnlab-development-cookie-secret')
 const adminPassword = process.env.VULNLAB_ADMIN_PASSWORD ?? (isProduction ? '' : defaultAdminPassword)
-const learnerPassword = process.env.VULNLAB_LEARNER_PASSWORD ?? (isProduction ? '' : defaultLearnerPassword)
 
 if (isProduction) {
   if (cookieSecret.length < 32) throw new Error('生产环境必须设置长度至少为 32 的 VULNLAB_COOKIE_SECRET。')
   if (!process.env.VULNLAB_ADMIN_PASSWORD || adminPassword === defaultAdminPassword || adminPassword.length < 12) throw new Error('生产环境必须通过 VULNLAB_ADMIN_PASSWORD 设置至少 12 个字符的管理员密码。')
-  if (!process.env.VULNLAB_LEARNER_PASSWORD || learnerPassword === defaultLearnerPassword || learnerPassword.length < 12) throw new Error('生产环境必须通过 VULNLAB_LEARNER_PASSWORD 设置至少 12 个字符的学员密码。')
 }
 
-const users = [
-  { userName: process.env.VULNLAB_ADMIN_USER ?? 'vulnlab-admin', password: adminPassword, role: 'admin' as const },
-  { userName: process.env.VULNLAB_LEARNER_USER ?? 'vulnlab-learner', password: learnerPassword, role: 'learner' as const },
-]
+const adminAccount = { userName: defaultAdminUser, password: adminPassword, role: 'admin' as const }
 
 const database = new VulnLabDatabase(dataDir, { bindHost: configuredHost, port: String(fallbackPort), dataDir })
 const persistedSettings = database.getSettings()
@@ -120,7 +117,6 @@ const recoverProviderInstances = async () => {
     }
   }
 }
-await recoverProviderInstances()
 const trustProxy = process.env.VULNLAB_TRUST_PROXY === 'true'
 const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 64 * 1024, trustProxy })
 const loginWindowMs = 60_000
@@ -132,9 +128,46 @@ let runtimeStatusCache: { expiresAt: number; value: Awaited<ReturnType<typeof in
 
 const runtimeDependencies = async () => {
   if (runtimeStatusCache && runtimeStatusCache.expiresAt > Date.now()) return runtimeStatusCache.value
-  const value = await inspectRuntimeDependencies({ phpBinary: nativeRuntime.phpBinary, phpIni: nativeRuntime.phpIni, nodeBinary: nativeRuntime.nodeBinary, javaBinary: nativeRuntime.javaBinary, pythonBinary: nativeRuntime.pythonBinary, qemuBinary: vmRuntime.qemuBinary, mysql: nativeRuntime.mysql })
+  const projectStatus = projectEnvironment.getStatus()
+  const value = await inspectRuntimeDependencies({
+    phpBinary: nativeRuntime.phpBinary,
+    phpIni: nativeRuntime.phpIni,
+    nodeBinary: nativeRuntime.nodeBinary,
+    javaBinary: nativeRuntime.javaBinary,
+    pythonBinary: nativeRuntime.pythonBinary,
+    qemuBinary: vmRuntime.qemuBinary,
+    mysql: nativeRuntime.mysql,
+    sources: {
+      php: { source: projectStatus.php.source },
+      'php-mysqli': { source: projectStatus.php.source, action: projectStatus.php.available ? 'ready' : 'configure' },
+      mysql: { source: projectStatus.mysql.source, action: projectStatus.mysql.available ? 'ready' : 'configure' },
+      node: { source: projectStatus.node.source, action: projectStatus.node.available ? 'ready' : 'prepare' },
+      java: { source: projectStatus.java.source, action: projectStatus.java.available ? 'ready' : 'prepare' },
+      python: { source: projectStatus.python.source, action: projectStatus.python.available ? 'ready' : 'prepare' },
+    },
+  })
   runtimeStatusCache = { expiresAt: Date.now() + 15_000, value }
   return value
+}
+
+const prepareProjectEnvironment = async (force = false, installMissing = false) => {
+  try {
+    const prepared = await projectEnvironment.prepare(force, installMissing)
+    nativeRuntime.phpBinary = prepared.phpBinary
+    nativeRuntime.phpIni = prepared.phpIni
+    runtimeMySql = prepared.mysql
+    nativeRuntime.mysql = prepared.mysql
+    nativeRuntime.nodeBinary = prepared.nodeBinary
+    nativeRuntime.javaBinary = prepared.javaBinary
+    nativeRuntime.pythonBinary = prepared.pythonBinary
+    runtimeStatusCache = null
+    app.log.info({ runtimeDir: prepared.status.runtimeDir, php: prepared.status.php.source, mysql: prepared.status.mysql.source, node: prepared.status.node.source }, '项目运行环境已准备。')
+  } catch (error) {
+    runtimeMySql = mysqlRuntimeConfigFromEnv()
+    nativeRuntime.mysql = runtimeMySql
+    app.log.error(error, '项目运行环境准备失败，服务仍会启动并在环境页显示待配置状态。')
+  }
+  return projectEnvironment.getStatus()
 }
 
 const reapExpiredInstances = async () => {
@@ -231,11 +264,6 @@ const requireCsrf = (request: FastifyRequest, reply: FastifyReply, session: Sess
 }
 
 const requestBody = (request: FastifyRequest) => (request.body ?? {}) as Record<string, unknown>
-
-const redactLabForLearner = (lab: Lab): Lab => ({ ...lab, localPath: null })
-const redactJobForLearner = (job: ReturnType<VulnLabDatabase['listJobsParsed']>[number]) => job.manifest
-  ? { ...job, manifest: { ...job.manifest, localPath: '' } }
-  : job
 
 const loadVulnHubCatalog = async (lab: Lab) => {
   const job = database.listJobsParsed().find(item => item.labId === lab.id && item.manifest?.adapterId === 'vulnhub-catalog' && item.manifest.localPath === lab.localPath)
@@ -376,7 +404,7 @@ const runImportJob = (jobId: string, actor: string) => {
           ? await importVulnHubCatalog({ sourceUrl: lab.sourceUrl, sourceRef: lab.sourceRef, jobId, dataDir, signal: controller.signal, onProgress: progress })
           : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
       const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
-      await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress)
+      await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary)
       database.completeJob(jobId, manifest)
       await cleanupOutdatedBuiltinVersions({ ...lab, localPath: manifest.localPath })
       database.addAudit(actor, 'import.completed', lab.title, `${manifest.resolvedRef} · sha256:${manifest.archiveSha256}`)
@@ -419,7 +447,7 @@ const bootstrapBuiltinLabs = async () => {
       if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
     }
     try {
-      await prepareInstalledLab(database.getLab(lab.id) ?? lab)
+      await prepareInstalledLab(database.getLab(lab.id) ?? lab, undefined, nativeRuntime.pythonBinary)
       await cleanupOutdatedBuiltinVersions(database.getLab(lab.id) ?? lab)
     } catch (error) {
       const message = error instanceof Error ? error.message : '运行依赖准备失败。'
@@ -525,7 +553,7 @@ app.post('/api/auth/login', async (request, reply) => {
   const body = requestBody(request)
   const userName = typeof body.userName === 'string' ? body.userName.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
-  const user = users.find(candidate => candidate.userName === userName && sameSecret(candidate.password, password))
+  const user = adminAccount.userName === userName && sameSecret(adminAccount.password, password) ? adminAccount : null
   if (!user) return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码不正确。' })
   const sessionId = randomUUID()
   const csrfToken = randomBytes(24).toString('hex')
@@ -558,7 +586,7 @@ app.get('/api/labs', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
   const labs = database.listLabs()
-  return session.role === 'admin' ? labs : labs.map(redactLabForLearner)
+  return labs
 })
 
 app.get('/api/labs/:id', async (request, reply) => {
@@ -567,7 +595,7 @@ app.get('/api/labs/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
   const lab = database.getLab(id)
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
-  return session.role === 'admin' ? lab : redactLabForLearner(lab)
+  return lab
 })
 
 app.get('/api/vm-downloads', async (request, reply) => {
@@ -631,7 +659,7 @@ app.get('/api/import-jobs', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
   const jobs = database.listJobsParsed()
-  return session.role === 'admin' ? jobs : jobs.map(redactJobForLearner)
+  return jobs
 })
 
 app.post('/api/labs/:id/install', async (request, reply) => {
@@ -737,14 +765,28 @@ app.get('/api/settings', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
   const settings = database.getSettings()
-  if (session.role === 'admin') return settings
-  return { ...settings, dataDir: '—' }
+  return settings
 })
 
 app.get('/api/runtime-status', async (request, reply) => {
-  if (!requireUser(request, reply)) return
+  const session = requireUser(request, reply)
+  if (!session) return
   const dependencies = await runtimeDependencies()
-  return { dependencies, labs: await runtimeReadinessByLab(database.listLabs(), dependencies, dataDir) }
+  const project = projectEnvironment.getStatus()
+  return {
+    dependencies,
+    labs: await runtimeReadinessByLab(database.listLabs(), dependencies, dataDir),
+    project,
+  }
+})
+
+app.post('/api/runtime/prepare', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const project = await prepareProjectEnvironment(true, true)
+  database.addAudit(session.userName, 'runtime.prepare', 'project', projectEnvironment.getStatus().runtimeDir)
+  const failed = project.toolchains.find(item => item.state === 'error')
+  return { ok: !failed, message: failed?.detail, project }
 })
 
 app.put('/api/settings', async (request, reply) => {
@@ -808,6 +850,8 @@ app.setErrorHandler((error, _request, reply) => {
 })
 
 const start = async () => {
+  await prepareProjectEnvironment()
+  await recoverProviderInstances()
   await app.listen({ host, port })
   app.log.info(`VulnLab listening on http://${host}:${port}`)
   void bootstrapBuiltinLabs().catch(error => app.log.error(error, '内置靶场资源整理失败。'))
@@ -825,6 +869,7 @@ const shutdown = async (signal: string) => {
     await Promise.allSettled([...activeImports.values()].map(({ task }) => task))
     await Promise.allSettled([...activeVmDownloads.values()].map(({ task }) => task))
     await Promise.allSettled([providerRegistry.shutdown()])
+    await projectEnvironment.stop()
     for (const providerId of ['native-php', 'native-node', 'native-java', 'native-python', 'qemu-vm']) {
       database.recoverRunningInstances(providerId, '服务关闭，运行进程已回收')
     }

@@ -13,6 +13,7 @@ on:
       - "script/smoke_vulnlab_vulnhub.mjs"
       - "script/smoke_vulnlab_vulnhub_api.mjs"
       - "script/smoke_vulnlab_vm_download_api.mjs"
+      - "script/smoke_vulnlab_project_toolchains.mjs"
       - "script/test_vulnlab_importer.mjs"
       - "script/test_vulnlab_builtin_assets.mjs"
       - "script/test_vulnlab_runtime_status.mjs"
@@ -21,6 +22,9 @@ on:
       - "script/test_vulnlab_expiration.mjs"
       - "script/test_vulnlab_provider.mjs"
       - "script/test_vulnlab_mysql.mjs"
+      - "script/test_vulnlab_runtime_toolchains.mjs"
+      - "script/test_vulnlab_project_environment.mjs"
+      - "script/test_vulnlab_native_deployment.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
       - "script/run_vulnlab.ps1"
@@ -38,6 +42,7 @@ on:
       - "script/smoke_vulnlab_vulnhub.mjs"
       - "script/smoke_vulnlab_vulnhub_api.mjs"
       - "script/smoke_vulnlab_vm_download_api.mjs"
+      - "script/smoke_vulnlab_project_toolchains.mjs"
       - "script/test_vulnlab_vm_download.mjs"
       - "script/test_vulnlab_database.mjs"
       - "script/test_vulnlab_expiration.mjs"
@@ -46,6 +51,9 @@ on:
       - "script/test_vulnlab_runtime_status.mjs"
       - "script/test_vulnlab_provider.mjs"
       - "script/test_vulnlab_mysql.mjs"
+      - "script/test_vulnlab_runtime_toolchains.mjs"
+      - "script/test_vulnlab_project_environment.mjs"
+      - "script/test_vulnlab_native_deployment.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
       - "script/run_vulnlab.ps1"
@@ -107,6 +115,7 @@ jobs:
           node --check script/smoke_vulnlab_vulnhub.mjs
           node --check script/smoke_vulnlab_vulnhub_api.mjs
           node --check script/smoke_vulnlab_vm_download_api.mjs
+          node --check script/smoke_vulnlab_project_toolchains.mjs
           node --check script/test_vulnlab_importer.mjs
           node --check script/test_vulnlab_builtin_assets.mjs
           node --check script/test_vulnlab_runtime_status.mjs
@@ -115,6 +124,9 @@ jobs:
           node --check script/test_vulnlab_expiration.mjs
           node --check script/test_vulnlab_provider.mjs
           node --check script/test_vulnlab_mysql.mjs
+          node --check script/test_vulnlab_runtime_toolchains.mjs
+          node --check script/test_vulnlab_project_environment.mjs
+          node --check script/test_vulnlab_native_deployment.mjs
           node --check script/smoke_vulnlab_operational.mjs
           node script/check_vulnlab_node.mjs
           bash -n script/run_vulnlab.sh

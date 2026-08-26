@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=vulnlab
 Group=vulnlab
-WorkingDirectory=/opt/vulnlab/app
+WorkingDirectory=__VULNLAB_APP_DIR__
 EnvironmentFile=/etc/vulnlab/vulnlab.env
-ExecStart=/usr/bin/node /opt/vulnlab/app/dist/server.js
+Environment=PATH=__VULNLAB_NODE_DIR__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=__VULNLAB_NODE_BIN__ __VULNLAB_APP_DIR__/dist/server.js
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -17,7 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/vulnlab/data
+ReadWritePaths=__VULNLAB_DATA_DIR__
 
 [Install]
 WantedBy=multi-user.target

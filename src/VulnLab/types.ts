@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'learner'
+export type UserRole = 'admin'
 
 export type LabStatus = 'cataloged' | 'queued' | 'importing' | 'ready' | 'error' | 'disabled'
 

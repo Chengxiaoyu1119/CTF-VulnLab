@@ -30,7 +30,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-php',
     providerId: 'native-php',
     version: '5d5c76c',
-    autoInstall: true,
+    autoInstall: false,
     summary: '经典 Web 漏洞练习环境，覆盖常见输入与认证问题。',
     tags: ['PHP', 'Web', '基础'],
   },
@@ -46,7 +46,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-php',
     providerId: 'native-php',
     version: '5e1e8d9',
-    autoInstall: true,
+    autoInstall: false,
     summary: '中文 Web 安全训练平台，按场景练习常见漏洞。',
     tags: ['PHP', 'Web', '中文'],
   },
@@ -62,7 +62,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-php',
     providerId: 'native-php',
     version: 'e96f217',
-    autoInstall: true,
+    autoInstall: false,
     summary: '围绕错误回显、布尔盲注和时间盲注的 SQL 注入练习。',
     tags: ['SQLi', 'PHP', 'MySQL'],
   },
@@ -78,7 +78,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-php',
     providerId: 'native-php',
     version: '3a0ff86',
-    autoInstall: true,
+    autoInstall: false,
     summary: '文件上传校验链路练习，覆盖多种绕过场景。',
     tags: ['Upload', 'PHP', '文件处理'],
   },
@@ -110,7 +110,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-node',
     providerId: 'native-node',
     version: '20.2.0',
-    autoInstall: true,
+    autoInstall: false,
     summary: '现代 Web 应用安全训练环境，题目覆盖面广。',
     tags: ['OWASP', 'Node.js', 'Web'],
   },
@@ -126,7 +126,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-java',
     providerId: 'native-java',
     version: '2023.8',
-    autoInstall: true,
+    autoInstall: false,
     summary: '面向教学的 Web 漏洞课程式训练平台。',
     tags: ['OWASP', 'Java', '课程'],
   },
@@ -142,7 +142,7 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-php',
     providerId: 'native-php',
     version: '84f2c00',
-    autoInstall: true,
+    autoInstall: false,
     summary: '覆盖 OWASP Top 10 的综合 Web 安全训练环境。',
     tags: ['OWASP', 'PHP', 'MySQL'],
   },
@@ -158,11 +158,13 @@ export const seedLabs: SeedLab[] = [
     runtimeKind: 'native-python',
     providerId: 'native-python',
     version: '19d17cc',
-    autoInstall: true,
+    autoInstall: false,
     summary: '基于 Django 的 OWASP Top 10 学习与练习环境。',
     tags: ['OWASP', 'Python', 'Django'],
   },
 ]
 
 export const builtinLabBySlug = new Map(seedLabs.map(lab => [lab.slug, lab]))
-export const autoInstallLabs = seedLabs.filter(lab => lab.autoInstall)
+export const autoInstallLabs = process.env.VULNLAB_AUTO_INSTALL_BUILTINS === '1'
+  ? seedLabs
+  : seedLabs.filter(lab => lab.autoInstall)

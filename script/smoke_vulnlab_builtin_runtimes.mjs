@@ -24,7 +24,7 @@ const probes = {
   pygoat: { path: '', pattern: /pygoat|django/i, redirect: 'follow' },
 }
 
-const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' }) })
+const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }) })
 csrfToken = login.csrfToken
 const labs = await request('/api/labs')
 const results = []

@@ -24,9 +24,72 @@ def main() -> None:
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.goto(BASE_URL, wait_until="networkidle")
-        page.get_by_label("账号").fill("vulnlab-admin")
-        page.get_by_label("密码").fill("VulnLabAdmin123!")
+        expect(page.get_by_role("heading", name="进入靶场", exact=True)).to_be_visible()
+        expect(page.get_by_text("安装、启动和管理本机靶场。", exact=True)).to_have_count(0)
+        expect(page.get_by_label("账号")).to_have_value("")
+        expect(page.get_by_label("密码")).to_have_value("")
         page.get_by_role("button", name="登录").click()
+        expect(page.locator("#login-notice")).to_contain_text("登录失败")
+        expect(page.locator("#login-notice")).to_contain_text("请输入账号和密码")
+        expect(page.get_by_role("button", name="关闭提示")).to_be_visible()
+        notice_style = page.locator("#login-notice").evaluate(
+            "element => ({ position: getComputedStyle(element).position, top: getComputedStyle(element).top, right: getComputedStyle(element).right, width: getComputedStyle(element).width, height: getComputedStyle(element).height, borderRadius: getComputedStyle(element).borderRadius, borderColor: getComputedStyle(element).borderColor, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow })"
+        )
+        assert notice_style["position"] == "fixed", notice_style
+        assert notice_style["top"] in {"24px", "16px"}, notice_style
+        assert float(notice_style["width"].replace("px", "")) <= 320, notice_style
+        assert float(notice_style["height"].replace("px", "")) <= 68, notice_style
+        assert notice_style["borderRadius"] == "12px", notice_style
+        assert notice_style["borderColor"] == "rgb(228, 235, 242)", notice_style
+        assert notice_style["backgroundColor"] == "rgb(255, 255, 255)", notice_style
+        assert notice_style["boxShadow"] != "none", notice_style
+        assert page.locator(".login-form input[aria-invalid='true']").evaluate_all(
+            "elements => elements.every(element => getComputedStyle(element).borderColor !== 'rgb(201, 80, 74)')"
+        )
+        page.screenshot(path=str(OUTPUT_DIR / "login-notice-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("#login-notice")).to_be_visible()
+        notice_box = page.locator("#login-notice").bounding_box()
+        brand_box = page.locator(".login-mark").bounding_box()
+        assert notice_box and brand_box and (
+            notice_box["x"] >= brand_box["x"] + brand_box["width"]
+            or brand_box["x"] >= notice_box["x"] + notice_box["width"]
+            or notice_box["y"] >= brand_box["y"] + brand_box["height"]
+            or brand_box["y"] >= notice_box["y"] + notice_box["height"]
+        ), {"notice": notice_box, "brand": brand_box}
+        page.screenshot(path=str(OUTPUT_DIR / "login-notice-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.get_by_role("button", name="关闭提示").click()
+        expect(page.locator("#login-notice")).to_have_count(0)
+        page.get_by_role("button", name="登录").click()
+        expect(page.locator("#login-notice")).to_be_visible()
+        page.wait_for_timeout(4500)
+        expect(page.locator("#login-notice")).to_have_count(0)
+        page.get_by_role("button", name="登录").click()
+        expect(page.locator("#login-notice")).to_be_visible()
+        page.get_by_label("账号").fill("v")
+        expect(page.locator("#login-notice")).to_have_count(0)
+        expect(page.get_by_role("heading", name="进入靶场", exact=True)).to_be_visible()
+        page.get_by_label("账号").focus()
+        login_input_style = page.get_by_label("账号").evaluate(
+            "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle })"
+        )
+        assert login_input_style["borderColor"] != "rgb(61, 91, 194)", login_input_style
+        assert login_input_style["boxShadow"] == "none", login_input_style
+        assert login_input_style["outline"] == "none", login_input_style
+        page.get_by_label("账号").fill("vulnlab")
+        page.get_by_label("密码").fill("vulnlab")
+        page.get_by_role("button", name="登录").click()
+        expect(page.locator("#login-success-notice")).to_contain_text("登录成功")
+        expect(page.locator("#login-success-notice")).to_contain_text("身份验证通过，正在进入系统")
+        success_notice_style = page.locator("#login-success-notice").evaluate(
+            "element => ({ position: getComputedStyle(element).position, backgroundColor: getComputedStyle(element).backgroundColor, borderRadius: getComputedStyle(element).borderRadius, boxShadow: getComputedStyle(element).boxShadow })"
+        )
+        assert success_notice_style["position"] == "fixed", success_notice_style
+        assert success_notice_style["backgroundColor"] == "rgb(255, 255, 255)", success_notice_style
+        assert success_notice_style["borderRadius"] == "12px", success_notice_style
+        assert success_notice_style["boxShadow"] != "none", success_notice_style
+        page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_role("button", name="靶场", exact=True)).to_be_visible()
         expect(page.get_by_text("DVWA", exact=True)).to_be_visible()
         expect(page.locator(".labs-screen")).to_be_visible()
@@ -34,7 +97,9 @@ def main() -> None:
         expect(page.locator(".labs-screen .main-content")).to_have_count(0)
         expect(page.get_by_role("complementary", name="运行状态")).to_be_visible()
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        expect(page.get_by_role("button", name="退出登录")).to_have_text("vulnlab-admin")
+        page.wait_for_timeout(4500)
+        expect(page.locator("#login-success-notice")).to_have_count(0)
+        expect(page.get_by_role("button", name="退出登录")).to_have_text("vulnlab")
         expect(page.locator(".runtime-ascii")).to_be_visible()
         expect(page.locator(".runtime-ascii")).to_contain_text("____ _")
         expect(page.locator(".runtime-signals")).to_have_count(0)
@@ -84,6 +149,10 @@ def main() -> None:
         page.get_by_role("button", name="环境", exact=True).click()
         expect(page.get_by_role("heading", name="环境", exact=True)).to_be_visible()
         expect(page.get_by_role("heading", name="运行依赖", exact=True)).to_be_visible()
+        expect(page.get_by_role("link", name="打开 Node.js 官方源")).to_be_visible()
+        expect(page.get_by_text("Node.js 22.23.1", exact=True)).to_be_visible()
+        save_color = page.locator(".settings-save").evaluate("element => getComputedStyle(element).backgroundColor")
+        assert save_color == "rgb(46, 127, 146)", save_color
         expect(page.get_by_text("Provider", exact=True)).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "settings-desktop.png"), full_page=True)
 
@@ -116,6 +185,7 @@ def main() -> None:
         assert no_horizontal_overflow
         page.get_by_role("button", name="环境", exact=True).click()
         expect(page.get_by_role("heading", name="运行依赖", exact=True)).to_be_visible()
+        expect(page.get_by_role("link", name="打开 Node.js 官方源")).to_be_visible()
         mobile_settings_columns = page.locator(".settings-layout").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_settings_columns.split()) == 1, mobile_settings_columns
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")

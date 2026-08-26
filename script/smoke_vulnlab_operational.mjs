@@ -17,11 +17,12 @@ const startServer = async ({ port, dataDir, nodeEnv = 'test', host = '127.0.0.1'
     VULNLAB_DATA_DIR: dataDir,
     VULNLAB_PUBLIC_URL: publicUrl,
     VULNLAB_AUTO_INSTALL_BUILTINS: '0',
+    // 该脚本验证服务生命周期；项目 PHP/MySQL 生命周期由独立测试覆盖。
+    VULNLAB_MYSQLD_BIN: 'vulnlab-test-missing-mysqld',
   }
   if (production) {
     env.VULNLAB_COOKIE_SECRET = '0123456789abcdef0123456789abcdef'
     env.VULNLAB_ADMIN_PASSWORD = 'ProductionAdmin-2026!'
-    env.VULNLAB_LEARNER_PASSWORD = 'ProductionLearner-2026!'
   }
   if (usePersistedHostPort) {
     delete env.VULNLAB_HOST
@@ -58,7 +59,7 @@ const login = async baseUrl => {
   const result = await request(baseUrl, '/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userName: 'vulnlab-admin', password: 'VulnLabAdmin123!' }),
+    body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }),
   })
   return { cookie: result.response.headers.getSetCookie()[0].split(';', 1)[0], csrfToken: result.body.csrfToken }
 }
@@ -69,7 +70,7 @@ try {
   let server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)
   const sessionAfterLogin = await fetch(`${server.baseUrl}/api/auth/session`, { headers: { cookie: session.cookie } })
-  assert.equal((await sessionAfterLogin.json()).userName, 'vulnlab-admin')
+  assert.equal((await sessionAfterLogin.json()).userName, 'vulnlab')
   await stopServer(server.child)
   server = await startServer({ port: 6741, dataDir: sessionDir })
   const runtimeSettings = await request(server.baseUrl, '/api/settings', { headers: { cookie: session.cookie } })
@@ -78,7 +79,7 @@ try {
   await stopServer(server.child)
   server = await startServer({ port: 6744, dataDir: sessionDir, usePersistedHostPort: true })
   const sessionAfterRestart = await fetch(`${server.baseUrl}/api/auth/session`, { headers: { cookie: session.cookie } })
-  assert.equal((await sessionAfterRestart.json()).userName, 'vulnlab-admin')
+  assert.equal((await sessionAfterRestart.json()).userName, 'vulnlab')
   const logout = await request(server.baseUrl, '/api/auth/logout', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.deepEqual(logout.body, { ok: true })
   await stopServer(server.child)
@@ -96,16 +97,16 @@ try {
 
   const productionDir = join(root, 'production')
   server = await startServer({ port: 6743, dataDir: productionDir, nodeEnv: 'production', production: true })
-  const productionLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab-admin', password: 'ProductionAdmin-2026!' }) })
+  const productionLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab', password: 'ProductionAdmin-2026!' }) })
   assert.equal(productionLogin.status, 200)
   const cookieHeader = productionLogin.headers.getSetCookie()[0]
   assert.match(cookieHeader, /Secure/)
   assert.match(cookieHeader, /HttpOnly/)
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const failedLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab-admin', password: 'wrong-password' }) })
+    const failedLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab', password: 'wrong-password' }) })
     assert.equal(failedLogin.status, 401)
   }
-  const limitedLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab-admin', password: 'wrong-password' }) })
+  const limitedLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab', password: 'wrong-password' }) })
   assert.equal(limitedLogin.status, 429)
   await stopServer(server.child)
 } finally {
