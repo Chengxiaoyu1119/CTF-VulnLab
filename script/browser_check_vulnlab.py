@@ -31,6 +31,7 @@ def main() -> None:
         page.get_by_role("button", name="登录").click()
         expect(page.locator("#login-notice")).to_contain_text("登录失败")
         expect(page.locator("#login-notice")).to_contain_text("请输入账号和密码")
+        expect(page.locator(".login-notice-icon")).to_have_count(0)
         expect(page.get_by_role("button", name="关闭提示")).to_be_visible()
         notice_style = page.locator("#login-notice").evaluate(
             "element => ({ position: getComputedStyle(element).position, top: getComputedStyle(element).top, right: getComputedStyle(element).right, width: getComputedStyle(element).width, height: getComputedStyle(element).height, borderRadius: getComputedStyle(element).borderRadius, borderColor: getComputedStyle(element).borderColor, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow })"
@@ -93,6 +94,16 @@ def main() -> None:
         expect(page.get_by_role("button", name="靶场", exact=True)).to_be_visible()
         expect(page.get_by_text("DVWA", exact=True)).to_be_visible()
         expect(page.locator(".labs-screen")).to_be_visible()
+        page.set_viewport_size({"width": 390, "height": 844})
+        success_box = page.locator("#login-success-notice").bounding_box()
+        mobile_nav_box = page.locator(".lab-workspace-head").bounding_box()
+        assert success_box and mobile_nav_box and (
+            success_box["x"] >= mobile_nav_box["x"] + mobile_nav_box["width"]
+            or mobile_nav_box["x"] >= success_box["x"] + success_box["width"]
+            or success_box["y"] >= mobile_nav_box["y"] + mobile_nav_box["height"]
+            or mobile_nav_box["y"] >= success_box["y"] + success_box["height"]
+        ), {"notice": success_box, "nav": mobile_nav_box}
+        page.set_viewport_size({"width": 1440, "height": 900})
         expect(page.locator(".labs-screen .topbar")).to_have_count(0)
         expect(page.locator(".labs-screen .main-content")).to_have_count(0)
         expect(page.get_by_role("complementary", name="运行状态")).to_be_visible()
@@ -102,13 +113,16 @@ def main() -> None:
         expect(page.get_by_role("button", name="退出登录")).to_have_text("vulnlab")
         expect(page.locator(".runtime-ascii")).to_be_visible()
         expect(page.locator(".runtime-ascii")).to_contain_text("____ _")
+        assert "9/9" not in page.locator(".runtime-log").inner_text()
         expect(page.locator(".runtime-signals")).to_have_count(0)
         expect(page.locator(".runtime-log-head")).to_have_count(0)
         expect(page.locator(".runtime-heading")).to_have_count(0)
         expect(page.locator(".runtime-meta")).to_have_count(0)
         expect(page.locator(".runtime-capacity")).to_have_count(0)
         expect(page.locator(".lab-card-head small")).to_have_count(0)
-        desktop_titles = page.locator(".lab-card .lab-card-head > span").evaluate_all(
+        expect(page.locator(".lab-card-status")).to_have_count(9)
+        expect(page.locator(".lab-card-title")).to_have_count(9)
+        desktop_titles = page.locator(".lab-card .lab-card-title").evaluate_all(
             "elements => elements.map(element => element.textContent.trim())"
         )
         assert desktop_titles == [
@@ -129,28 +143,48 @@ def main() -> None:
         workspace_columns = page.locator(".labs-screen").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(workspace_columns.split()) == 2, workspace_columns
         screen_box = page.locator(".labs-screen").bounding_box()
-        assert screen_box and abs(screen_box["x"] - 18) <= 1 and abs(screen_box["y"] - 18) <= 1, screen_box
-        assert screen_box and abs(screen_box["width"] - 1404) <= 1 and abs(screen_box["height"] - 864) <= 1, screen_box
+        assert screen_box and abs(screen_box["x"] - 60) <= 1 and abs(screen_box["y"] - 28) <= 1, screen_box
+        assert screen_box and abs(screen_box["width"] - 1320) <= 1 and abs(screen_box["height"] - 844) <= 1, screen_box
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
-        vulnhub_button = page.get_by_role("button", name="查看机器", exact=True)
+        expect(page.get_by_role("button", name="查看机器", exact=True)).to_have_count(0)
+        vulnhub_button = page.get_by_role("button", name="选择机器", exact=True)
         if vulnhub_button.count() == 0:
             load_catalog_button = page.get_by_role("button", name="加载目录", exact=True)
             expect(load_catalog_button).to_be_visible()
             load_catalog_button.click()
             expect(vulnhub_button).to_be_visible(timeout=120_000)
         vulnhub_button.click()
-        expect(page.get_by_role("dialog", name="VulnHub 机器目录")).to_be_visible()
+        expect(page.get_by_role("dialog", name="选择 VulnHub 机器")).to_be_visible()
         expect(page.locator(".catalog-entry")).to_have_count(12)
         expect(page.locator(".catalog-entry").first).to_contain_text("Matrix-Breakout: 2 Morpheus")
         expect(page.get_by_text("Details", exact=True)).to_have_count(0)
         expect(page.locator(".catalog-detail-title .eyebrow")).to_have_count(0)
+        page.screenshot(path=str(OUTPUT_DIR / "catalog-dialog-desktop.png"), full_page=True)
+        page.locator(".catalog-entry").first.focus()
+        page.keyboard.press("ArrowDown")
+        expect(page.locator(".catalog-entry").nth(1)).to_be_focused()
+        expect(page.locator(".catalog-entry").nth(1)).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("End")
+        expect(page.locator(".catalog-entry").last).to_be_focused()
+        page.keyboard.press("Home")
+        expect(page.locator(".catalog-entry").first).to_be_focused()
         page.get_by_role("button", name="关闭目录").click()
+        expect(page.get_by_role("button", name="选择机器", exact=True)).to_be_focused()
         page.screenshot(path=str(OUTPUT_DIR / "labs-desktop.png"), full_page=True)
         if PRIMARY_SCREENSHOT:
             primary = Path(PRIMARY_SCREENSHOT)
             primary.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(primary), full_page=True)
+
+        page.set_viewport_size({"width": 768, "height": 1024})
+        expect(page.locator(".labs-screen")).to_be_visible()
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
+        tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        assert len(tablet_columns.split()) == 2, tablet_columns
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.screenshot(path=str(OUTPUT_DIR / "labs-tablet.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
 
         page.get_by_role("button", name="环境", exact=True).click()
         expect(page.get_by_role("heading", name="环境", exact=True)).to_be_visible()
@@ -158,19 +192,19 @@ def main() -> None:
         expect(page.get_by_role("link", name="打开 Node.js 官方源")).to_be_visible()
         expect(page.get_by_text("Node.js 22.23.1", exact=True)).to_be_visible()
         save_color = page.locator(".settings-save").evaluate("element => getComputedStyle(element).backgroundColor")
-        assert save_color == "rgb(46, 127, 146)", save_color
+        assert save_color == "rgb(22, 127, 140)", save_color
         expect(page.get_by_text("Provider", exact=True)).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "settings-desktop.png"), full_page=True)
 
         page.get_by_role("button", name="运行", exact=True).click()
         expect(page.get_by_role("heading", name="运行", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="实例列表", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="当前环境", exact=True)).to_be_visible()
 
         page.set_viewport_size({"width": 390, "height": 844})
         page.get_by_role("button", name="靶场", exact=True).click()
         expect(page.locator(".lab-grid")).to_be_visible()
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        mobile_titles = page.locator(".lab-card .lab-card-head > span").evaluate_all(
+        mobile_titles = page.locator(".lab-card .lab-card-title").evaluate_all(
             "elements => elements.map(element => element.textContent.trim())"
         )
         assert mobile_titles == desktop_titles, mobile_titles
@@ -178,7 +212,7 @@ def main() -> None:
         runtime_box = page.locator(".runtime-panel").bounding_box()
         workspace_head_box = page.locator(".lab-workspace-head").bounding_box()
         assert runtime_box and 95 <= runtime_box["height"] <= 97, runtime_box
-        assert workspace_head_box and 47 <= workspace_head_box["height"] <= 49, workspace_head_box
+        assert workspace_head_box and 53 <= workspace_head_box["height"] <= 55, workspace_head_box
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
 
         mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
@@ -198,9 +232,26 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "settings-mobile.png"), full_page=True)
 
         page.get_by_role("button", name="运行", exact=True).click()
-        expect(page.get_by_role("heading", name="实例列表", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="当前环境", exact=True)).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "instances-mobile.png"), full_page=True)
+
+        page.set_viewport_size({"width": 320, "height": 844})
+        page.get_by_role("button", name="靶场", exact=True).click()
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
+        compact_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        assert len(compact_columns.split()) == 2, compact_columns
+        compact_button_heights = page.locator(".card-primary-button").evaluate_all(
+            "elements => elements.filter(element => getComputedStyle(element).display !== 'none').map(element => element.getBoundingClientRect().height)"
+        )
+        assert compact_button_heights and min(compact_button_heights) >= 44, compact_button_heights
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.screenshot(path=str(OUTPUT_DIR / "labs-compact.png"), full_page=True)
+        page.emulate_media(reduced_motion="reduce")
+        reduced_motion = page.locator(".lab-card").first.evaluate(
+            "element => ({ transitionDuration: getComputedStyle(element).transitionDuration, hoverTransform: getComputedStyle(element).transform })"
+        )
+        assert float(reduced_motion["transitionDuration"].replace("s", "")) <= 0.001, reduced_motion
         assert not console_errors, console_errors
         browser.close()
     print(f"VulnLab browser check passed; screenshots: {OUTPUT_DIR}")
