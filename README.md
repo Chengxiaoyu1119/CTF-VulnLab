@@ -38,7 +38,7 @@ VulnLab 是面向个人学习和小团队训练的开源靶场工作台。桌面
 ### 1. 准备基础环境
 
 - Windows 启动脚本和 Linux 原生部署会从 Node.js 官方源下载并校验固定版本 Node.js 22.23.1 到项目数据目录，再用它启动或构建 VulnLab；macOS 仍使用系统 Node.js 22+ 启动脚本。
-- Windows x64 可在环境页把固定版本 Node.js 22、PHP 8.3、MariaDB 11.4、Java 21 和 Python 3.11 下载到项目内，不需要单独安装数据库、Java 或 Python。
+- Windows x64 可在对应靶场详情弹窗按需准备固定版本 Node.js 22、PHP 8.3、MariaDB 11.4、Java 21 和 Python 3.11，不需要单独安装数据库、Java 或 Python。
 - Linux x64 可下载项目内 Node.js、MariaDB、Java 和 Python；PHP 仍使用系统安装，并套用项目生成的 `php.ini`。
 - QEMU 仅在运行 VulnHub 虚拟机时需要，继续使用宿主机安装以接入硬件虚拟化能力。
 
@@ -60,7 +60,7 @@ cd CTF-VulnLab
 bash script/run_vulnlab.sh
 ```
 
-打开 `http://127.0.0.1:6710/`。首次启动只检查状态，不会默默下载大文件；进入“环境”点击“下载并准备环境”，再在靶场卡片上按需点击“安装”。
+打开 `http://127.0.0.1:6710/`。首次启动只检查状态，不会默默下载大文件；点击靶场封面进入详情弹窗，按需安装、处理启动条件或启动环境。服务监听地址、端口和并发参数通过部署配置或环境变量维护，不设置独立的环境页面。
 
 ### 3. 登录
 
@@ -86,7 +86,7 @@ bash script/run_vulnlab.sh
 | OWASP Mutillidae II | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
 
-VulnHub 的机器镜像体积差异很大，因此只在用户选择具体机器后下载；其他八个项目也采用页面按需安装。批量准备时可设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1`。
+VulnHub 的机器镜像体积差异很大，因此只在用户选择具体启动环境（机器）后下载；其他八个项目也采用页面按需安装。批量准备时可设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1`。
 
 ## 运行依赖
 
@@ -99,7 +99,7 @@ VulnHub 的机器镜像体积差异很大，因此只在用户选择具体机器
 | Python 3.10 / 3.11 | PyGoat | Windows/Linux x64 下载项目内 Python 3.11，再创建项目私有虚拟环境并执行迁移 |
 | QEMU | VulnHub Machines | 以临时快照启动已校验镜像 |
 
-环境页会显示每项依赖的真实检测结果。靶场声明自己的 Provider，用户不需要理解或选择 Provider。
+详情弹窗只显示当前靶场相关的真实启动条件。靶场声明自己的 Provider，用户不需要理解或选择 Provider。
 
 ## 运行原理
 
@@ -177,7 +177,7 @@ node script/smoke_vulnlab_builtin_runtimes.mjs
 python script/browser_check_vulnlab.py
 ```
 
-运行冒烟会真实启动并停止 Upload-Labs、Juice Shop、WebGoat 和 PyGoat。浏览器回归检查桌面 3×3、移动端双列、九个固定卡片、靶场/运行/环境导航、环境依赖页、触控尺寸、横向溢出和控制台错误。
+运行冒烟会真实启动并停止 Upload-Labs、Juice Shop、WebGoat 和 PyGoat。浏览器回归检查桌面 3×3、移动端双列、九个固定卡片、靶场详情、启动条件上下文弹窗、触控尺寸、横向溢出和控制台错误。
 
 ## 单服务器部署
 

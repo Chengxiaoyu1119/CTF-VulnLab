@@ -16,7 +16,7 @@
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `vulnhub.ts`、`vm-download.ts`：VulnHub 机器目录、镜像下载、磁盘检查和校验。
 - `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
-- `public/`：原生 JavaScript / CSS 工作台；所有页面共用运行状态区和顶部导航。
+- `public/`：原生 JavaScript / CSS 工作台；主界面共用运行状态区，靶场卡片详情承载安装、启动与启动条件检查。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
 
 ## 开发
@@ -32,7 +32,7 @@ npm run dev
 
 ## 安装模型
 
-`seed.ts` 保存九个项目的固定版本声明，管理员从页面按需安装时，安装器把资源下载到 `data/labs/<slug>/<version>`，同时生成 `vulnlab.manifest.json`。安装过程限制下载与解压体积，检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后清理下载缓存。设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以批量准备全部内置靶场。
+`seed.ts` 保存九个项目的固定版本声明，管理员从靶场卡片详情按需安装时，安装器把资源下载到 `data/labs/<slug>/<version>`，同时生成 `vulnlab.manifest.json`。安装过程限制下载与解压体积，检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后清理下载缓存。设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以批量准备全部内置靶场。
 
 Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。
 
@@ -52,11 +52,11 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 ## 项目运行环境
 
-启动时，VulnLab 会在 `data/runtime/` 创建运行状态。管理员点击环境页的“下载并准备环境”后，Windows x64 会下载 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 和 Python 3.11.16；Linux x64 下载 Node.js、MariaDB、Java 和 Python。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，安装通过临时目录原子切换；成功后压缩包立即清理。
+启动时，VulnLab 会在 `data/runtime/` 创建运行状态。管理员从靶场详情中的“查看启动条件”进入准备流程后，Windows x64 会下载 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 和 Python 3.11.16；Linux x64 下载 Node.js、MariaDB、Java 和 Python。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，安装通过临时目录原子切换；成功后压缩包立即清理。
 
 运行时目录结构为 `toolchains/`、`manifests/`、`downloads/`、`php/` 和 `mysql/`。PHP 使用项目生成的 `php.ini`；Windows 会启用发行包内存在的 `mysqli`、`pdo_mysql`、`mbstring`、`gd`、`curl`、`openssl` 扩展。MariaDB 只绑定 `127.0.0.1`，默认端口 `7330`，数据、日志、PID 和随机管理凭据均留在项目数据目录，服务关闭时回收进程。
 
-运行时二进制不提交进 Git。已下载的项目包优先级高于系统 `PATH`；显式环境变量和外部 MySQL 连接仍可覆盖。Juice Shop 使用项目 Node.js，PyGoat 直接用项目 Python 创建 `venv`，WebGoat 直接用项目 JRE 启动。环境页显示平台、版本、来源、官方源入口、SHA-256 结果、磁盘占用和失败原因。
+运行时二进制不提交进 Git。已下载的项目包优先级高于系统 `PATH`；显式环境变量和外部 MySQL 连接仍可覆盖。Juice Shop 使用项目 Node.js，PyGoat 直接用项目 Python 创建 `venv`，WebGoat 直接用项目 JRE 启动。靶场详情中的启动条件弹窗显示当前靶场所需依赖、状态、失败原因，并提供重新检查与准备操作。
 
 ## 外部 MySQL 配置
 
