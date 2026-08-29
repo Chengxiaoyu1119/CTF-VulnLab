@@ -195,7 +195,33 @@ function catalogDialog() {
       ? `<button class="button button-primary is-start" type="button" data-action="start-vm-instance" data-lab-id="${esc(catalog.labId)}" data-download-id="${esc(download.id)}">启动环境</button>`
       : `<button class="button button-quiet" type="button" data-action="open-runtime-dialog" data-id="${esc(catalog.labId)}">查看启动条件</button>`
     : ''
-  return `<div class="dialog-backdrop catalog-backdrop"><section class="dialog catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-dialog-title"><div class="catalog-dialog-head"><div><h2 id="catalog-dialog-title">选择 VulnHub 启动环境</h2><span>${esc(catalog.labTitle)}</span></div><button class="dialog-close" type="button" data-action="close-catalog" aria-label="关闭目录">×</button></div>${entries.length ? `<div class="catalog-layout"><div class="catalog-list" role="listbox" aria-label="可选 VulnHub 启动环境"><div class="catalog-list-scroll">${entries.map((item, index) => `<button id="catalog-option-${index}" class="catalog-entry${index === selectedIndex ? ' is-selected' : ''}" type="button" role="option" aria-label="选择启动环境：${esc(item.title)}" aria-selected="${index === selectedIndex}" data-action="select-catalog-entry" data-index="${index}"><strong>${esc(item.title)}</strong><span>${esc(downloadLabel(downloadFor(index)) ?? value(item.difficulty))}</span></button>`).join('')}</div></div><article class="catalog-detail"><div class="catalog-detail-title"><h3>${esc(entry.title)}</h3></div><div class="catalog-facts"><div><span>作者</span><strong>${esc(value(entry.author))}</strong></div><div><span>难度</span><strong>${esc(value(entry.difficulty))}</strong></div><div><span>文件</span><strong>${esc(value(entry.filename))}</strong></div><div><span>大小</span><strong>${esc(value(entry.fileSize))}</strong></div><div><span>MD5</span><strong class="catalog-hash">${esc(value(entry.md5))}</strong></div><div><span>SHA1</span><strong class="catalog-hash">${esc(value(entry.sha1))}</strong></div></div><div class="catalog-links"><a class="button button-outline" href="${esc(entry.url)}" target="_blank" rel="noreferrer">官方详情 ↗</a>${downloadButtons}${vmStartButton}</div></article></div>` : '<div class="empty-state">没有可选择的启动环境。</div>'}</section></div>`
+  return `<div class="dialog-backdrop catalog-backdrop"><section class="dialog catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-dialog-title"><div class="catalog-dialog-head"><div><h2 id="catalog-dialog-title">选择 VulnHub 启动环境</h2><span>${esc(catalog.labTitle)}</span></div><button class="dialog-close" type="button" data-action="close-catalog" aria-label="关闭目录">×</button></div>${entries.length ? `<div class="catalog-layout"><div class="catalog-list" role="listbox" aria-label="可选 VulnHub 启动环境"><div class="catalog-list-scroll">${entries.map((item, index) => `<button id="catalog-option-${index}" class="catalog-entry${index === selectedIndex ? ' is-selected' : ''}" type="button" role="option" aria-label="选择启动环境：${esc(item.title)}" aria-selected="${index === selectedIndex}" data-action="select-catalog-entry" data-index="${index}"><strong>${esc(item.title)}</strong><span>${esc(downloadLabel(downloadFor(index)) ?? value(item.difficulty))}</span></button>`).join('')}</div></div><article class="catalog-detail" aria-live="polite"><div class="catalog-detail-title"><h3>${esc(entry.title)}</h3></div><div class="catalog-facts"><div><span>作者</span><strong>${esc(value(entry.author))}</strong></div><div><span>难度</span><strong>${esc(value(entry.difficulty))}</strong></div><div><span>文件</span><strong>${esc(value(entry.filename))}</strong></div><div><span>大小</span><strong>${esc(value(entry.fileSize))}</strong></div><div><span>MD5</span><strong class="catalog-hash">${esc(value(entry.md5))}</strong></div><div><span>SHA1</span><strong class="catalog-hash">${esc(value(entry.sha1))}</strong></div></div><div class="catalog-links"><a class="button button-outline" href="${esc(entry.url)}" target="_blank" rel="noreferrer">官方详情 ↗</a>${downloadButtons}${vmStartButton}</div></article></div>` : '<div class="empty-state">没有可选择的启动环境。</div>'}</section></div>`
+}
+
+function updateCatalogSelectionInPlace() {
+  const dialog = document.querySelector('.catalog-dialog')
+  const entries = state.catalog?.entries ?? []
+  const selectedIndex = Number.isInteger(state.catalog?.selectedIndex) ? state.catalog.selectedIndex : 0
+  if (!dialog || !entries.length || selectedIndex < 0 || selectedIndex >= entries.length) {
+    render()
+    return
+  }
+
+  dialog.querySelectorAll('.catalog-entry').forEach((candidate, index) => {
+    const selected = index === selectedIndex
+    candidate.classList.toggle('is-selected', selected)
+    candidate.setAttribute('aria-selected', String(selected))
+  })
+
+  const template = document.createElement('template')
+  template.innerHTML = catalogDialog()
+  const nextDetail = template.content.querySelector('.catalog-detail')
+  const currentDetail = dialog.querySelector('.catalog-detail')
+  if (nextDetail && currentDetail) currentDetail.replaceWith(nextDetail)
+
+  const selectedEntry = dialog.querySelector(`[data-action="select-catalog-entry"][data-index="${selectedIndex}"]`)
+  state.dialogFocusSelector = ''
+  selectedEntry?.focus()
 }
 
 function overlays() {
@@ -559,8 +585,7 @@ async function runAction(action, element) {
     const index = Number(element.dataset.index)
     if (state.catalog && Number.isInteger(index) && index >= 0 && index < state.catalog.entries.length) {
       state.catalog.selectedIndex = index
-      state.dialogFocusSelector = `[data-action="select-catalog-entry"][data-index="${index}"]`
-      render()
+      updateCatalogSelectionInPlace()
     }
     return
   }
@@ -670,8 +695,7 @@ function moveCatalogSelection(index) {
   if (!entries.length) return
   const nextIndex = Math.max(0, Math.min(entries.length - 1, index))
   state.catalog.selectedIndex = nextIndex
-  state.dialogFocusSelector = `[data-action="select-catalog-entry"][data-index="${nextIndex}"]`
-  render()
+  updateCatalogSelectionInPlace()
 }
 
 document.addEventListener('keydown', event => {
