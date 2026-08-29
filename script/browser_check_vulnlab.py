@@ -244,6 +244,10 @@ def main() -> None:
             "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, backgroundImage: getComputedStyle(element).backgroundImage })"
         )
         assert catalog_style == {"backgroundColor": "rgb(255, 255, 255)", "backgroundImage": "none"}, catalog_style
+        catalog_link_decoration = page.locator(".catalog-links a").first.evaluate(
+            "element => getComputedStyle(element).textDecorationLine"
+        )
+        assert catalog_link_decoration == "none", catalog_link_decoration
         expect(page.locator(".catalog-entry")).to_have_count(12)
         expect(page.locator(".catalog-entry").first).to_contain_text("Matrix-Breakout: 2 Morpheus")
         expect(page.locator(".catalog-entry").first).to_have_attribute("aria-label", "选择启动环境：Matrix-Breakout: 2 Morpheus")

@@ -52,7 +52,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .danger-text { color: var(--coral); }
 
-.button { min-height: 38px; border: 1px solid transparent; border-radius: 11px; padding: 0 15px; color: var(--ink-soft); font-size: 12px; font-weight: 700; line-height: 1; transition: transform 150ms cubic-bezier(.2, .8, .2, 1), border-color 170ms ease, background-color 170ms ease, color 170ms ease, box-shadow 170ms ease; }
+.button { min-height: 38px; border: 1px solid transparent; border-radius: 11px; padding: 0 15px; color: var(--ink-soft); font-size: 12px; font-weight: 700; line-height: 1; text-decoration: none; transition: transform 150ms cubic-bezier(.2, .8, .2, 1), border-color 170ms ease, background-color 170ms ease, color 170ms ease, box-shadow 170ms ease; }
 .button:active { transform: translateY(1px) scale(.985); }
 .button:disabled { cursor: default; opacity: .58; }
 .button-primary { border-color: var(--blue); color: #fff; background-color: var(--blue); background-image: linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(0, 0, 0, .03)); box-shadow: 0 7px 16px rgba(10, 132, 255, .19), inset 0 1px 0 rgba(255, 255, 255, .26); }
@@ -232,8 +232,8 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .lab-card-media { position: relative; width: 100%; height: 100%; min-height: 100%; display: block; overflow: hidden; border: 0; padding: 0; color: var(--workspace-ink); background-color: var(--workspace-canvas); text-align: left; cursor: pointer; }
 .lab-card-media:focus-visible { outline: 2px solid rgba(10, 132, 255, .75); outline-offset: -3px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .92); }
 .lab-card-media:active { transform: scale(.997); }
-.lab-card-media::before { position: absolute; z-index: 2; inset: 0; background-image: linear-gradient(118deg, rgba(255, 255, 255, .25), transparent 28%, transparent 70%, rgba(255, 255, 255, .06)); content: ""; opacity: 0; pointer-events: none; transition: opacity 220ms ease; }
-.lab-card-media:hover::before, .lab-card-media:focus-visible::before { opacity: .72; }
+.lab-card-media::before { position: absolute; z-index: 2; inset: 0; background-color: rgba(255, 255, 255, .06); content: ""; opacity: 0; pointer-events: none; transition: opacity 220ms ease; }
+.lab-card-media:hover::before, .lab-card-media:focus-visible::before { opacity: 1; }
 .lab-card-media::after { position: absolute; z-index: 1; inset: 0; background: transparent; content: ""; opacity: 0; pointer-events: none; transition: opacity 200ms ease, box-shadow 200ms ease; }
 .lab-card-media:hover::after, .lab-card-media:focus-visible::after, .lab-card:focus-within .lab-card-media::after { opacity: 1; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 .lab-card-media[data-cover="default"] { background-color: var(--workspace-canvas); }
