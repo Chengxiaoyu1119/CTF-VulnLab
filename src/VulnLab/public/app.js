@@ -159,6 +159,37 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
+function catalogDownloadLabel(download) {
+  return download?.status === 'completed' ? '已下载' : download?.status === 'downloading' ? `${download.progress}%` : download?.status === 'error' ? '重试' : null
+}
+
+function catalogDetailMarkup(catalog, entry, selectedIndex, downloads) {
+  const download = downloads.find(item => item.entryIndex === selectedIndex)
+  const value = item => item || '—'
+  const downloadButtons = entry?.downloadUrls?.length
+    ? entry.downloadUrls.map((url, index) => {
+      const isCurrent = download?.downloadUrl === url
+      const label = isCurrent ? catalogDownloadLabel(download) : null
+      const downloadBusy = busyFor('download-catalog-entry', `${catalog.labId}:${selectedIndex}:${index}`)
+      if (downloadBusy) return '<span class="download-state">下载中…</span>'
+      return label === '已下载'
+        ? '<span class="download-state is-complete">已下载</span>'
+        : label && download?.status === 'downloading'
+          ? `<span class="download-state">下载中 ${esc(label)}</span>`
+          : `<button class="button button-quiet is-download" type="button" data-action="download-catalog-entry" data-index="${selectedIndex}" data-download-index="${index}">${label === '重试' ? '重试下载' : '下载镜像'}</button>`
+    }).join('')
+    : '<span class="download-state">暂无官方镜像</span>'
+  const vmStarting = busyFor('start-vm-instance', catalog.labId)
+  const vmStartButton = vmStarting
+    ? '<span class="download-state">启动中…</span>'
+    : download?.status === 'completed'
+    ? state.runtimeStatus.labs?.vulnhub?.available
+      ? `<button class="button button-primary is-start" type="button" data-action="start-vm-instance" data-lab-id="${esc(catalog.labId)}" data-download-id="${esc(download.id)}">启动环境</button>`
+      : `<button class="button button-quiet" type="button" data-action="open-runtime-dialog" data-id="${esc(catalog.labId)}">查看启动条件</button>`
+    : ''
+  return `<article class="catalog-detail" aria-live="polite" data-catalog-index="${selectedIndex}"><div class="catalog-detail-title"><h3 data-catalog-title>${esc(entry.title)}</h3></div><div class="catalog-facts"><div><span>作者</span><strong data-catalog-field="author">${esc(value(entry.author))}</strong></div><div><span>难度</span><strong data-catalog-field="difficulty">${esc(value(entry.difficulty))}</strong></div><div><span>文件</span><strong data-catalog-field="filename">${esc(value(entry.filename))}</strong></div><div><span>大小</span><strong data-catalog-field="fileSize">${esc(value(entry.fileSize))}</strong></div><div><span>MD5</span><strong class="catalog-hash" data-catalog-field="md5">${esc(value(entry.md5))}</strong></div><div><span>SHA1</span><strong class="catalog-hash" data-catalog-field="sha1">${esc(value(entry.sha1))}</strong></div></div><div class="catalog-links" data-catalog-actions><a class="button button-outline" href="${esc(entry.url)}" target="_blank" rel="noreferrer">官方详情 ↗</a>${downloadButtons}${vmStartButton}</div></article>`
+}
+
 function catalogDialog() {
   const catalog = state.catalog
   if (!catalog) return ''
@@ -170,32 +201,8 @@ function catalogDialog() {
   const requestedIndex = Number.isInteger(catalog.selectedIndex) ? catalog.selectedIndex : 0
   const selectedIndex = entries.length ? Math.max(0, Math.min(entries.length - 1, requestedIndex)) : null
   const entry = selectedIndex === null ? null : entries[selectedIndex]
-  const downloadFor = index => downloads.find(item => item.entryIndex === index)
-  const downloadLabel = download => download?.status === 'completed' ? '已下载' : download?.status === 'downloading' ? `${download.progress}%` : download?.status === 'error' ? '重试' : null
   const value = item => item || '—'
-  const download = downloadFor(selectedIndex)
-  const downloadButtons = entry?.downloadUrls?.length
-    ? entry.downloadUrls.map((url, index) => {
-      const isCurrent = download?.downloadUrl === url
-      const label = isCurrent ? downloadLabel(download) : null
-      const downloadBusy = busyFor('download-catalog-entry', `${catalog.labId}:${selectedIndex}:${index}`)
-      if (downloadBusy) return '<span class="download-state">下载中…</span>'
-      return label === '已下载'
-        ? '<span class="download-state is-complete">已下载</span>'
-        : label && download?.status === 'downloading'
-          ? `<span class="download-state">下载中 ${esc(label)}</span>`
-        : `<button class="button button-quiet is-download" type="button" data-action="download-catalog-entry" data-index="${selectedIndex}" data-download-index="${index}">${label === '重试' ? '重试下载' : '下载镜像'}</button>`
-    }).join('')
-    : '<span class="download-state">暂无官方镜像</span>'
-  const vmStarting = busyFor('start-vm-instance', catalog.labId)
-  const vmStartButton = vmStarting
-    ? '<span class="download-state">启动中…</span>'
-    : download?.status === 'completed'
-    ? state.runtimeStatus.labs?.vulnhub?.available
-      ? `<button class="button button-primary is-start" type="button" data-action="start-vm-instance" data-lab-id="${esc(catalog.labId)}" data-download-id="${esc(download.id)}">启动环境</button>`
-      : `<button class="button button-quiet" type="button" data-action="open-runtime-dialog" data-id="${esc(catalog.labId)}">查看启动条件</button>`
-    : ''
-  return `<div class="dialog-backdrop catalog-backdrop"><section class="dialog catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-dialog-title"><div class="catalog-dialog-head"><div><h2 id="catalog-dialog-title">选择 VulnHub 启动环境</h2><span>${esc(catalog.labTitle)}</span></div><button class="dialog-close" type="button" data-action="close-catalog" aria-label="关闭目录">×</button></div>${entries.length ? `<div class="catalog-layout"><div class="catalog-list" role="listbox" aria-label="可选 VulnHub 启动环境"><div class="catalog-list-scroll">${entries.map((item, index) => `<button id="catalog-option-${index}" class="catalog-entry${index === selectedIndex ? ' is-selected' : ''}" type="button" role="option" aria-label="选择启动环境：${esc(item.title)}" aria-selected="${index === selectedIndex}" data-action="select-catalog-entry" data-index="${index}"><strong>${esc(item.title)}</strong><span>${esc(downloadLabel(downloadFor(index)) ?? value(item.difficulty))}</span></button>`).join('')}</div></div><article class="catalog-detail" aria-live="polite"><div class="catalog-detail-title"><h3>${esc(entry.title)}</h3></div><div class="catalog-facts"><div><span>作者</span><strong>${esc(value(entry.author))}</strong></div><div><span>难度</span><strong>${esc(value(entry.difficulty))}</strong></div><div><span>文件</span><strong>${esc(value(entry.filename))}</strong></div><div><span>大小</span><strong>${esc(value(entry.fileSize))}</strong></div><div><span>MD5</span><strong class="catalog-hash">${esc(value(entry.md5))}</strong></div><div><span>SHA1</span><strong class="catalog-hash">${esc(value(entry.sha1))}</strong></div></div><div class="catalog-links"><a class="button button-outline" href="${esc(entry.url)}" target="_blank" rel="noreferrer">官方详情 ↗</a>${downloadButtons}${vmStartButton}</div></article></div>` : '<div class="empty-state">没有可选择的启动环境。</div>'}</section></div>`
+  return `<div class="dialog-backdrop catalog-backdrop"><section class="dialog catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-dialog-title"><div class="catalog-dialog-head"><div><h2 id="catalog-dialog-title">选择 VulnHub 启动环境</h2><span>${esc(catalog.labTitle)}</span></div><button class="dialog-close" type="button" data-action="close-catalog" aria-label="关闭目录">×</button></div>${entries.length ? `<div class="catalog-layout"><div class="catalog-list" role="listbox" aria-label="可选 VulnHub 启动环境"><div class="catalog-list-scroll">${entries.map((item, index) => `<button id="catalog-option-${index}" class="catalog-entry${index === selectedIndex ? ' is-selected' : ''}" type="button" role="option" aria-label="选择启动环境：${esc(item.title)}" aria-selected="${index === selectedIndex}" data-action="select-catalog-entry" data-index="${index}"><strong>${esc(item.title)}</strong><span>${esc(catalogDownloadLabel(downloads.find(download => download.entryIndex === index)) ?? value(item.difficulty))}</span></button>`).join('')}</div></div>${catalogDetailMarkup(catalog, entry, selectedIndex, downloads)}</div>` : '<div class="empty-state">没有可选择的启动环境。</div>'}</section></div>`
 }
 
 function updateCatalogSelectionInPlace() {
@@ -214,14 +221,27 @@ function updateCatalogSelectionInPlace() {
   })
 
   const template = document.createElement('template')
-  template.innerHTML = catalogDialog()
+  template.innerHTML = catalogDetailMarkup(state.catalog, entries[selectedIndex], selectedIndex, state.catalog.downloads ?? [])
   const nextDetail = template.content.querySelector('.catalog-detail')
   const currentDetail = dialog.querySelector('.catalog-detail')
-  if (nextDetail && currentDetail) currentDetail.replaceWith(nextDetail)
+  if (!nextDetail || !currentDetail) {
+    render()
+    return
+  }
+  currentDetail.dataset.catalogIndex = String(selectedIndex)
+  currentDetail.querySelector('[data-catalog-title]').textContent = nextDetail.querySelector('[data-catalog-title]').textContent
+  currentDetail.querySelectorAll('[data-catalog-field]').forEach(field => {
+    const nextField = nextDetail.querySelector(`[data-catalog-field="${field.dataset.catalogField}"]`)
+    if (nextField) field.textContent = nextField.textContent
+  })
+  const currentActions = currentDetail.querySelector('[data-catalog-actions]')
+  const nextActions = nextDetail.querySelector('[data-catalog-actions]')
+  if (currentActions && nextActions) currentActions.replaceChildren(...nextActions.childNodes)
 
   const selectedEntry = dialog.querySelector(`[data-action="select-catalog-entry"][data-index="${selectedIndex}"]`)
   state.dialogFocusSelector = ''
   selectedEntry?.focus()
+  selectedEntry?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' })
 }
 
 function overlays() {
@@ -238,9 +258,9 @@ function runtimePanel() {
   const dependencies = state.runtimeStatus?.dependencies ?? []
   const allLabsReady = state.labs.length > 0 && overview.readyCount === state.labs.length
   const logs = [
-    ['CORE', 'OK', 'VulnLab 服务已就绪'],
-    ['LABS', allLabsReady ? 'OK' : 'RUN', allLabsReady ? '靶场资源已就绪' : '仍有靶场待安装'],
-    ['RUN', overview.runningInstanceCount ? 'RUN' : 'WAIT', overview.runningInstanceCount ? '有环境正在运行' : '暂无运行环境'],
+    ['CORE', 'OK', '服务已就绪'],
+    ['LABS', allLabsReady ? 'OK' : 'RUN', allLabsReady ? '靶场已就绪' : '等待安装'],
+    ['RUN', overview.runningInstanceCount ? 'RUN' : 'WAIT', overview.runningInstanceCount ? '环境运行中' : '暂无运行环境'],
     ...dependencies.map(item => [item.label.toUpperCase().slice(0, 6), item.available ? 'OK' : 'WAIT', item.detail]),
   ]
   return `<aside class="runtime-panel" aria-label="运行状态">
@@ -317,6 +337,7 @@ function labsPage() {
 function labDetailModal() {
   const lab = state.labs.find(item => item.id === state.labDetailId)
   if (!lab) return ''
+  const coveredByRuntimeDialog = state.runtimeDialogLabId === lab.id
   const admin = state.session.role === 'admin'
   const ready = lab.status === 'ready'
   const runtime = state.runtimeStatus.labs?.[lab.slug] ?? {}
@@ -352,6 +373,7 @@ function labDetailModal() {
   } else {
     primaryAction = '<span class="button button-quiet lab-detail-action">等待安装</span>'
   }
+  const detailState = instance ? 'running' : starting ? 'starting' : installing ? 'preparing' : importing ? 'installing' : queued ? 'queued' : failed ? 'error' : requiresSetup ? 'attention' : 'ready'
   const stateLabel = instance ? '运行中' : starting ? '启动中' : installing ? '准备中' : importing ? '安装中' : queued ? '排队中' : failed ? '安装失败' : requiresSetup ? '待配置' : ''
   const facts = [lab.category, lab.difficulty, lab.version].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
@@ -361,7 +383,7 @@ function labDetailModal() {
   const managementActions = instance && admin
     ? `<button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button><button class="button button-quiet lab-detail-stop" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button>`
     : ''
-  return `<div class="dialog-backdrop lab-detail-backdrop"><section class="dialog lab-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+  return `<div class="dialog-backdrop lab-detail-backdrop"${coveredByRuntimeDialog ? ' aria-hidden="true" inert' : ''}><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
 }
 
 function runtimeRequirementsDialog() {
@@ -394,7 +416,7 @@ function loginPage() {
   const passwordInvalid = state.loginErrorFields.includes('password')
   const notice = state.error ? loginNoticeCard({ id: 'login-notice', title: '登录失败', message: state.error, action: 'dismiss-login-error' }) : ''
   const describedBy = state.error ? 'aria-describedby="login-notice"' : ''
-  return `<div class="login-page"><div class="login-mark"><img src="/favicon.svg" alt=""><span>VulnLab</span></div><form class="login-form" id="login-form" novalidate><h1>进入靶场</h1><label>账号<input name="userName" autocomplete="username" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label>密码<input name="password" type="password" autocomplete="current-password" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录'}</button></form>${notice}</div>`
+  return `<div class="login-page"><div class="login-mark"><img src="/favicon.svg" alt=""><span>VulnLab</span></div><form class="login-form" id="login-form" novalidate><h1>进入靶场</h1><label>账号<input name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label>密码<input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录'}</button></form>${notice}</div>`
 }
 
 function scheduleImportPolling() {

@@ -119,6 +119,22 @@ def main() -> None:
         expect(page.locator(".workspace-nav, .workspace-account, .lab-workspace-head")).to_have_count(0)
         expect(page.locator(".runtime-ascii")).to_be_visible()
         expect(page.locator(".runtime-ascii")).to_contain_text("____ _")
+        ascii_metrics = page.locator(".runtime-ascii").evaluate(
+            """element => {
+                const box = element.getBoundingClientRect()
+                const range = document.createRange()
+                range.selectNodeContents(element)
+                const content = range.getBoundingClientRect()
+                const panel = element.closest('.runtime-panel').getBoundingClientRect()
+                return {
+                    box: { left: box.left, right: box.right, width: box.width },
+                    content: { left: content.left, right: content.right, width: content.width },
+                    panel: { left: panel.left, right: panel.right, width: panel.width },
+                }
+            }"""
+        )
+        assert ascii_metrics["content"]["width"] >= 160, ascii_metrics
+        assert ascii_metrics["content"]["right"] <= ascii_metrics["panel"]["right"] + 0.5, ascii_metrics
         assert "9/9" not in page.locator(".runtime-log").inner_text()
         expect(page.locator(".runtime-signals")).to_have_count(0)
         expect(page.locator(".runtime-log-head")).to_have_count(0)
@@ -133,20 +149,21 @@ def main() -> None:
         expect(page.locator('.lab-grid [data-action="start-instance"]')).to_have_count(0)
         expect(page.locator('.lab-grid [data-action="view-catalog"]')).to_have_count(0)
         page.mouse.move(0, 0)
-        expect(page.locator('.lab-card-caption').first).to_be_hidden()
+        expect(page.locator('.lab-card-caption').first).to_be_visible()
         page.locator('.lab-card-media').first.hover()
         expect(page.locator('.lab-card-caption').first).to_be_visible()
         caption_color = page.locator('.lab-card-caption').first.evaluate(
-            "element => ({ color: getComputedStyle(element).color, backgroundImage: getComputedStyle(element).backgroundImage })"
+            "element => ({ color: getComputedStyle(element).color, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
-        assert caption_color["color"] == "rgb(245, 251, 255)", caption_color
-        assert caption_color["backgroundImage"] != "none", caption_color
+        assert caption_color["color"] == "rgb(22, 37, 54)", caption_color
+        assert caption_color["backgroundColor"] == "rgb(255, 255, 255)", caption_color
         focus_layer = page.locator('.lab-card-media').first.evaluate(
             "element => ({ backgroundImage: getComputedStyle(element, '::after').backgroundImage, backgroundColor: getComputedStyle(element, '::after').backgroundColor })"
         )
         assert focus_layer["backgroundImage"] == "none" and focus_layer["backgroundColor"] == "rgba(0, 0, 0, 0)", focus_layer
         page.mouse.move(0, 0)
-        expect(page.locator('.lab-card-caption').first).to_be_hidden()
+        expect(page.locator('.lab-card-caption').first).to_be_visible()
+        page.wait_for_timeout(250)
         desktop_titles = page.locator(".lab-card .lab-card-title").evaluate_all(
             "elements => elements.map(element => element.textContent.trim())"
         )
@@ -155,9 +172,13 @@ def main() -> None:
             "VulnHub Machines", "OWASP Juice Shop", "OWASP WebGoat", "OWASP Mutillidae II", "OWASP PyGoat",
         ], desktop_titles
         caption_metrics = page.locator('.lab-card-caption').evaluate_all(
-            "elements => elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, cardWidth: element.closest('.lab-card').getBoundingClientRect().width }))"
+            """elements => elements.map(element => {
+                const caption = element.getBoundingClientRect()
+                const card = element.closest('.lab-card').getBoundingClientRect()
+                return { width: caption.width, height: caption.height, left: caption.left, bottom: caption.bottom, cardWidth: card.width, cardLeft: card.left, cardBottom: card.bottom, childCount: element.children.length }
+            })"""
         )
-        assert all(item["width"] >= item["cardWidth"] - 4 and 40 <= item["height"] <= 54 for item in caption_metrics), caption_metrics
+        assert all(item["cardWidth"] - 2.1 <= item["width"] <= item["cardWidth"] and 37 <= item["height"] <= 39 and 0.9 <= item["left"] - item["cardLeft"] <= 1.1 and 0.9 <= item["cardBottom"] - item["bottom"] <= 1.1 and item["childCount"] == 1 for item in caption_metrics), caption_metrics
         card_tops = page.locator('.lab-card').evaluate_all(
             "elements => elements.map(element => element.getBoundingClientRect().top)"
         )
@@ -179,8 +200,8 @@ def main() -> None:
         assert len(workspace_columns.split()) == 2, workspace_columns
         assert page.locator(".labs-screen").evaluate("element => getComputedStyle(element).gap") == "0px"
         screen_box = page.locator(".labs-screen").bounding_box()
-        assert screen_box and abs(screen_box["x"] - 200) <= 1 and abs(screen_box["y"] - 120) <= 1, screen_box
-        assert screen_box and abs(screen_box["width"] - 1040) <= 1 and abs(screen_box["height"] - 660) <= 1, screen_box
+        assert screen_box and abs(screen_box["x"] - 220) <= 1 and abs(screen_box["y"] - 140) <= 1, screen_box
+        assert screen_box and abs(screen_box["width"] - 1000) <= 1 and abs(screen_box["height"] - 620) <= 1, screen_box
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
         detail_trigger = page.locator(".lab-card-media").first
@@ -241,9 +262,11 @@ def main() -> None:
         expect(page.get_by_role("dialog", name="选择 VulnHub 启动环境")).to_be_visible()
         expect(page.get_by_role("listbox", name="可选 VulnHub 启动环境")).to_be_visible()
         catalog_style = page.locator(".catalog-dialog").evaluate(
-            "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, backgroundImage: getComputedStyle(element).backgroundImage })"
+            "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, backgroundImage: getComputedStyle(element).backgroundImage, height: element.getBoundingClientRect().height })"
         )
-        assert catalog_style == {"backgroundColor": "rgb(255, 255, 255)", "backgroundImage": "none"}, catalog_style
+        assert catalog_style["backgroundColor"] == "rgb(255, 255, 255)", catalog_style
+        assert catalog_style["backgroundImage"] == "none", catalog_style
+        assert catalog_style["height"] <= 430, catalog_style
         catalog_link_decoration = page.locator(".catalog-links a").first.evaluate(
             "element => getComputedStyle(element).textDecorationLine"
         )
@@ -254,12 +277,13 @@ def main() -> None:
         expect(page.get_by_text("Details", exact=True)).to_have_count(0)
         expect(page.locator(".catalog-detail-title .eyebrow")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "catalog-dialog-desktop.png"), full_page=True)
-        page.evaluate("window.__catalogDialogBeforeSelection = document.querySelector('.catalog-dialog')")
+        page.evaluate("window.__catalogDialogBeforeSelection = document.querySelector('.catalog-dialog'); window.__catalogDetailBeforeSelection = document.querySelector('.catalog-detail')")
         page.evaluate("window.__catalogDialogAnimations = 0; document.addEventListener('animationstart', event => { if (event.animationName === 'dialog-in') window.__catalogDialogAnimations += 1 }, { once: false })")
         page.locator(".catalog-entry").nth(1).click()
         expect(page.locator(".catalog-entry").nth(1)).to_have_attribute("aria-selected", "true")
         expect(page.get_by_role("heading", name="Web Machine: (N7)", exact=True)).to_be_visible()
         assert page.evaluate("window.__catalogDialogBeforeSelection === document.querySelector('.catalog-dialog')")
+        assert page.evaluate("window.__catalogDetailBeforeSelection === document.querySelector('.catalog-detail')")
         assert page.evaluate("window.__catalogDialogAnimations === 0")
         page.screenshot(path=str(OUTPUT_DIR / "catalog-dialog-after-switch.png"), full_page=True)
         page.locator(".catalog-entry").first.focus()
@@ -271,7 +295,12 @@ def main() -> None:
         page.keyboard.press("Home")
         expect(page.locator(".catalog-entry").first).to_be_focused()
         page.get_by_role("button", name="关闭目录").click()
-        expect(page.locator('.lab-card[data-runtime="vm"] .lab-card-media').first).to_be_focused()
+        desktop_vm_trigger = page.locator('.lab-card[data-runtime="vm"] .lab-card-media').first
+        expect(desktop_vm_trigger).to_be_focused()
+        expect(desktop_vm_trigger.locator(".lab-card-caption")).to_be_visible()
+        page.locator(".lab-canvas").focus()
+        page.mouse.move(0, 0)
+        expect(desktop_vm_trigger.locator(".lab-card-caption")).to_be_visible()
         page.screenshot(path=str(OUTPUT_DIR / "labs-desktop.png"), full_page=True)
         if PRIMARY_SCREENSHOT:
             primary = Path(PRIMARY_SCREENSHOT)
@@ -314,11 +343,15 @@ def main() -> None:
         runtime_trigger.click()
         expect(page.locator(".runtime-dialog")).to_be_visible()
         expect(page.locator(".runtime-dialog")).to_contain_text("PHP")
+        expect(page.locator(".lab-detail-backdrop")).to_have_attribute("aria-hidden", "true")
+        expect(page.locator(".lab-detail-backdrop")).to_have_attribute("inert", "")
+        expect(page.locator('[role="dialog"]:not([inert] [role="dialog"])')).to_have_count(1)
         expect(page.get_by_role("button", name="准备运行时", exact=True)).to_be_visible()
         page.screenshot(path=str(OUTPUT_DIR / "runtime-requirements-desktop.png"), full_page=True)
         page.keyboard.press("Escape")
         expect(page.locator(".runtime-dialog")).to_have_count(0)
         expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        expect(page.get_by_role("button", name="查看启动条件", exact=True)).to_be_focused()
         page.get_by_role("button", name="关闭靶场信息").click()
         page.unroute("**/api/runtime-status", runtime_status_with_missing)
         page.evaluate("location.hash = 'labs'")
@@ -335,19 +368,39 @@ def main() -> None:
         expect(page.locator(".lab-card-actions")).to_have_count(0)
         expect(page.locator('.lab-grid [data-action="start-instance"]')).to_have_count(0)
         expect(page.locator(".lab-card-caption")).to_have_count(9)
-        expect(page.locator('.lab-card-caption').first).to_be_hidden()
+        expect(page.locator('.lab-card-caption').first).to_be_visible()
         expect(page.locator(".runtime-line:visible")).to_have_count(2)
         runtime_box = page.locator(".runtime-panel").bounding_box()
-        assert runtime_box and 87 <= runtime_box["height"] <= 89, runtime_box
+        assert runtime_box and 85 <= runtime_box["height"] <= 87, runtime_box
         expect(page.locator(".lab-workspace-head, .workspace-nav, .workspace-account")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
+
+        mobile_vm_trigger = page.locator('.lab-card[data-runtime="vm"] .lab-card-media').first
+        mobile_vm_trigger.click()
+        expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        page.get_by_role("button", name="选择启动环境", exact=True).click()
+        expect(page.locator(".catalog-dialog")).to_be_visible()
+        expect(page.get_by_role("listbox", name="可选 VulnHub 启动环境")).to_be_visible()
+        mobile_catalog_box = page.locator(".catalog-dialog").bounding_box()
+        mobile_catalog_columns = page.locator(".catalog-layout").evaluate(
+            "element => getComputedStyle(element).gridTemplateColumns"
+        )
+        assert mobile_catalog_box and mobile_catalog_box["width"] <= 366, mobile_catalog_box
+        assert len(mobile_catalog_columns.split()) == 1, mobile_catalog_columns
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.wait_for_timeout(250)
+        page.screenshot(path=str(OUTPUT_DIR / "catalog-dialog-mobile.png"), full_page=True)
+        page.get_by_role("button", name="关闭目录").click()
+        expect(mobile_vm_trigger).to_be_focused()
+        expect(mobile_vm_trigger.locator(".lab-card-caption")).to_be_visible()
+        page.locator(".lab-canvas").focus()
 
         mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
         mobile_caption_metrics = page.locator('.lab-card-caption').evaluate_all(
             "elements => elements.map(element => ({ visibility: getComputedStyle(element).visibility, opacity: getComputedStyle(element).opacity, width: element.getBoundingClientRect().width, cardWidth: element.closest('.lab-card').getBoundingClientRect().width }))"
         )
-        assert mobile_caption_metrics and all(item["visibility"] == "hidden" and item["opacity"] == "0" for item in mobile_caption_metrics), mobile_caption_metrics
+        assert mobile_caption_metrics and all(item["visibility"] == "visible" and item["opacity"] == "1" and item["cardWidth"] - 2.1 <= item["width"] <= item["cardWidth"] for item in mobile_caption_metrics), mobile_caption_metrics
         no_horizontal_overflow = page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert no_horizontal_overflow
         mobile_detail_trigger = page.locator(".lab-card-media").first
@@ -365,9 +418,7 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile-after-detail.png"), full_page=True)
 
         page.set_viewport_size({"width": 320, "height": 844})
-        # Blur the restored card trigger before asserting the touch layout. The
-        # caption intentionally remains available for keyboard focus, while a
-        # compact touch viewport has no hover affordance.
+        # Blur the restored trigger before checking the fixed title footer.
         page.locator(".lab-canvas").focus()
         page.mouse.move(0, 0)
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
@@ -375,7 +426,7 @@ def main() -> None:
         assert len(compact_columns.split()) == 2, compact_columns
         expect(page.locator(".lab-card-actions")).to_have_count(0)
         expect(page.locator(".lab-card-caption")).to_have_count(9)
-        expect(page.locator('.lab-card-caption').first).to_be_hidden()
+        expect(page.locator('.lab-card-caption').first).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "labs-compact.png"), full_page=True)
         page.emulate_media(reduced_motion="reduce")
