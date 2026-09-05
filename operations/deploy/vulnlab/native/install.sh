@@ -128,7 +128,7 @@ find "${NODE_ROOT}" -type d -exec chmod 0755 {} +
 find "${NODE_ROOT}" -type f -exec chmod 0644 {} +
 find "${NODE_ROOT}" -type f \( -name node -o -name npm -o -name npx \) -exec chmod 0755 {} +
 # Node.js is immutable after bootstrap. Other runtime folders remain writable to
-# the service so the Environment page can prepare PHP, MariaDB, Java and Python.
+# the service so the runtime preparation endpoint can prepare PHP, MariaDB, Java and Python.
 chown -R root:root "${NODE_ROOT}" "${NODE_MANIFEST}"
 # Keep the executable and its dependencies immutable to the service account;
 # only the external data directory is writable at runtime.

@@ -4,7 +4,7 @@
   <img src="src/VulnLab/public/favicon.svg" width="88" alt="VulnLab Logo">
   <h1>VulnLab</h1>
   <p><strong>把主流开源靶场装进一个真正可启动的单机工作台。</strong></p>
-  <p>官方资源固定版本 · 自动安装 · 原生进程运行 · 生命周期管理 · 单服务器部署</p>
+  <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 单服务器部署</p>
 
   [![VulnLab CI](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg)](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml)
   [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
@@ -27,7 +27,7 @@
 
 ## 项目是什么
 
-VulnLab 是面向个人学习和小团队训练的开源靶场工作台。桌面端以固定 3×3 目录呈现九个主流靶场，用户可以直接完成安装、启动、访问和停止。
+VulnLab 是面向个人学习和小团队训练的开源靶场工作台。桌面端以固定 3×3 目录呈现九个主流靶场，用户从详情弹窗点击“启动环境”即可完成准备、启动、访问和停止。
 
 当前版本为 `0.3.0`。主服务采用 Node.js 原生运行，Windows、Linux、macOS 本地和单台 Linux 云服务器使用同一套代码。
 
@@ -38,9 +38,8 @@ VulnLab 是面向个人学习和小团队训练的开源靶场工作台。桌面
 ### 1. 准备基础环境
 
 - Windows 启动脚本和 Linux 原生部署会从 Node.js 官方源下载并校验固定版本 Node.js 22.23.1 到项目数据目录，再用它启动或构建 VulnLab；macOS 仍使用系统 Node.js 22+ 启动脚本。
-- Windows x64 可在对应靶场详情弹窗按需准备固定版本 Node.js 22、PHP 8.3、MariaDB 11.4、Java 21 和 Python 3.11，不需要单独安装数据库、Java 或 Python。
+- Windows x64 首次启动对应靶场时会自动准备固定版本 Node.js 22、PHP 8.3、MariaDB 11.4、Java 21 和 Python 3.11，不需要单独安装数据库、Java 或 Python。
 - Linux x64 可下载项目内 Node.js、MariaDB、Java 和 Python；PHP 仍使用系统安装，并套用项目生成的 `php.ini`。
-- QEMU 仅在运行 VulnHub 虚拟机时需要，继续使用宿主机安装以接入硬件虚拟化能力。
 
 ### 2. 启动
 
@@ -60,7 +59,7 @@ cd CTF-VulnLab
 bash script/run_vulnlab.sh
 ```
 
-打开 `http://127.0.0.1:6710/`。首次启动只检查状态，不会默默下载大文件；点击靶场封面进入详情弹窗，按需安装、处理启动条件或启动环境。服务监听地址、端口和并发参数通过部署配置或环境变量维护，不设置独立的环境页面。
+打开 `http://127.0.0.1:6710/`。点击靶场封面进入详情弹窗，再点击“启动环境”；首次启动由服务自动准备该靶场所需资源和运行时，完成后即可打开页面。服务监听地址、端口和并发参数通过部署配置或环境变量维护，不设置独立的环境页面。
 
 ### 3. 登录
 
@@ -74,32 +73,31 @@ bash script/run_vulnlab.sh
 
 ## 内置靶场
 
-| 靶场 | 固定来源 | 安装方式 | 运行方式 |
+| 靶场 | 固定来源 | 启动前准备 | 运行方式 |
 | --- | --- | --- | --- |
 | DVWA | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | Pikachu | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | SQLi-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | Upload-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP |
-| VulnHub Machines | 官方机器目录 | 按需加载目录与镜像 | QEMU |
+| XVWA | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | OWASP Juice Shop | 官方发行包 `20.2.0` | 页面按需校验后解包 | Node.js |
 | OWASP WebGoat | 官方发行包 `2023.8` | 页面按需校验后安装 | Java |
 | OWASP Mutillidae II | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
 
-VulnHub 的机器镜像体积差异很大，因此只在用户选择具体启动环境（机器）后下载；其他八个项目也采用页面按需安装。批量准备时可设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1`。
+九个靶场的目录、版本和运行方式内置在 VulnLab 中。源码和发行包在首次启动时由服务自动下载、校验并保存到项目数据目录；也可以设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 在服务启动时批量准备全部资源。
 
 ## 运行依赖
 
 | 依赖 | 影响范围 | VulnLab 的处理方式 |
 | --- | --- | --- |
 | PHP CLI | PHP 靶场 | Windows x64 下载官方 PHP 8.3 到 `data/runtime/toolchains`；Linux 使用系统 PHP 和项目配置 |
-| PHP `mysqli` + MySQL/MariaDB | DVWA、Pikachu、SQLi-Labs、Mutillidae | Windows/Linux x64 可下载项目内 MariaDB 11.4；每次启动创建独立数据库和最小权限账号 |
+| PHP `mysqli`、`pdo_mysql` + MySQL/MariaDB | DVWA、Pikachu、SQLi-Labs、XVWA、Mutillidae | Windows/Linux x64 可下载项目内 MariaDB 11.4；每次启动创建独立数据库和最小权限账号 |
 | Node.js 22+ | VulnLab 主服务、Juice Shop | Windows/Linux 启动器与原生部署使用项目内 Node.js 22；macOS 启动脚本使用系统 Node.js，Juice Shop优先复用已准备的项目版本 |
 | Java 17+ | WebGoat | Windows/Linux x64 下载项目内 Eclipse Temurin JRE 21，独立端口启动 WebGoat 与 WebWolf |
 | Python 3.10 / 3.11 | PyGoat | Windows/Linux x64 下载项目内 Python 3.11，再创建项目私有虚拟环境并执行迁移 |
-| QEMU | VulnHub Machines | 以临时快照启动已校验镜像 |
 
-详情弹窗只显示当前靶场相关的真实启动条件。靶场声明自己的 Provider，用户不需要理解或选择 Provider。
+详情弹窗只提供“启动环境”主动作。运行依赖由服务在启动过程中自动检查和准备，失败原因通过操作提示反馈；用户不需要理解、选择或手动准备 Provider。
 
 ## 运行原理
 
@@ -117,7 +115,6 @@ flowchart LR
     RUN --> NODE[native-node]
     RUN --> JAVA[native-java]
     RUN --> PY[native-python]
-    RUN --> VM[qemu-vm]
     PHP --> MYSQL[(每实例 MySQL 资源)]
 ```
 
@@ -126,7 +123,7 @@ flowchart LR
 - 前端：原生 JavaScript + CSS 工作区。
 - 安装：固定上游版本、下载大小限制、路径检查、校验记录、失败清理。
 - 运行：每个靶场声明 Provider；启动、续期、停止、过期回收采用统一生命周期。
-- 隔离：原生靶场使用独立运行副本；VulnHub 使用 QEMU 临时快照。
+- 隔离：原生靶场使用独立运行副本；PHP 数据库靶场使用每实例数据库和最小权限账号。
 
 ## 项目结构
 
@@ -136,12 +133,11 @@ CTF-VulnLab/
 │  ├─ public/                 页面、样式与封面
 │  ├─ builtin-assets.ts       官方发行包安装器
 │  ├─ importer.ts             GitHub / GitLab 下载与安全解包
-│  ├─ providers.ts            PHP / Node / Java / Python / QEMU Provider
+│  ├─ providers.ts            PHP / Node / Java / Python Provider
 │  ├─ runtime-prep.ts         PyGoat 私有运行环境准备
-│  ├─ runtime-status.ts       本机依赖检测与靶场启动条件
+│  ├─ runtime-status.ts       本机运行依赖检测与启动前校验
 │  ├─ runtime-toolchains.ts   Node.js / PHP / MariaDB / Java / Python 官方运行时下载、校验、安全解压与清单
 │  ├─ project-environment.ts  项目内 PHP 配置与 MariaDB 生命周期
-│  ├─ vm-download.ts          VulnHub 镜像下载与校验
 │  ├─ db.ts                   SQLite 数据层
 │  └─ data/                   本地资源与状态，Git 忽略
 ├─ script/                    启动、单元测试、冒烟与浏览器回归
@@ -177,7 +173,7 @@ node script/smoke_vulnlab_builtin_runtimes.mjs
 python script/browser_check_vulnlab.py
 ```
 
-运行冒烟会真实启动并停止 Upload-Labs、Juice Shop、WebGoat 和 PyGoat。浏览器回归检查桌面 3×3、移动端双列、九个固定卡片、靶场详情、启动条件上下文弹窗、触控尺寸、横向溢出和控制台错误。
+运行冒烟会真实启动并停止 Upload-Labs、Juice Shop、WebGoat 和 PyGoat。浏览器回归检查桌面 3×3、移动端双列、九个固定卡片、靶场详情、启动状态、触控尺寸、横向溢出和控制台错误。
 
 ## 单服务器部署
 
@@ -189,8 +185,7 @@ python script/browser_check_vulnlab.py
 
 - 当前定位是单机和可信小团队，不是多租户集群调度平台。
 - Windows x64 已具备 Node.js、PHP、MariaDB、Java、Python 的项目内下载、校验和运行链路；Linux x64 已具备 Node.js、MariaDB、Java、Python 链路，PHP 仍来自系统包管理器。
-- QEMU 继续作为宿主机能力接入；VulnHub 机器的架构、镜像格式和服务端口仍需逐台验证。
-- VulnHub 镜像由上游机器作者分别发布，格式、架构和启动参数仍需逐台验证。
+- XVWA 使用官方固定 commit 导入，启动时在独立 PHP 副本内完成数据库初始化，并通过 `/xvwa/` 入口访问。
 - 原生进程提供练习副本和生命周期回收，但操作系统级隔离弱于虚拟机。
 
 ## 许可证
