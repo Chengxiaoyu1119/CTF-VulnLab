@@ -10,14 +10,10 @@ on:
       - "script/smoke_vulnlab_native_php.mjs"
       - "script/smoke_vulnlab_native_php_mysql.mjs"
       - "script/smoke_vulnlab_builtin_runtimes.mjs"
-      - "script/smoke_vulnlab_vulnhub.mjs"
-      - "script/smoke_vulnlab_vulnhub_api.mjs"
-      - "script/smoke_vulnlab_vm_download_api.mjs"
       - "script/smoke_vulnlab_project_toolchains.mjs"
       - "script/test_vulnlab_importer.mjs"
       - "script/test_vulnlab_builtin_assets.mjs"
       - "script/test_vulnlab_runtime_status.mjs"
-      - "script/test_vulnlab_vm_download.mjs"
       - "script/test_vulnlab_database.mjs"
       - "script/test_vulnlab_expiration.mjs"
       - "script/test_vulnlab_provider.mjs"
@@ -39,11 +35,7 @@ on:
       - "script/smoke_vulnlab_native_php.mjs"
       - "script/smoke_vulnlab_native_php_mysql.mjs"
       - "script/smoke_vulnlab_builtin_runtimes.mjs"
-      - "script/smoke_vulnlab_vulnhub.mjs"
-      - "script/smoke_vulnlab_vulnhub_api.mjs"
-      - "script/smoke_vulnlab_vm_download_api.mjs"
       - "script/smoke_vulnlab_project_toolchains.mjs"
-      - "script/test_vulnlab_vm_download.mjs"
       - "script/test_vulnlab_database.mjs"
       - "script/test_vulnlab_expiration.mjs"
       - "script/test_vulnlab_importer.mjs"
@@ -112,14 +104,10 @@ jobs:
           node --check script/smoke_vulnlab_native_php.mjs
           node --check script/smoke_vulnlab_native_php_mysql.mjs
           node --check script/smoke_vulnlab_builtin_runtimes.mjs
-          node --check script/smoke_vulnlab_vulnhub.mjs
-          node --check script/smoke_vulnlab_vulnhub_api.mjs
-          node --check script/smoke_vulnlab_vm_download_api.mjs
           node --check script/smoke_vulnlab_project_toolchains.mjs
           node --check script/test_vulnlab_importer.mjs
           node --check script/test_vulnlab_builtin_assets.mjs
           node --check script/test_vulnlab_runtime_status.mjs
-          node --check script/test_vulnlab_vm_download.mjs
           node --check script/test_vulnlab_database.mjs
           node --check script/test_vulnlab_expiration.mjs
           node --check script/test_vulnlab_provider.mjs
