@@ -8,7 +8,7 @@ import type { Lab } from './types.js'
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 
 export interface RuntimeDependencyStatus {
-  id: 'php' | 'php-mysqli' | 'mysql' | 'node' | 'java' | 'python' | 'qemu'
+  id: 'php' | 'php-mysqli' | 'php-pdo-mysql' | 'mysql' | 'node' | 'java' | 'python'
   label: string
   available: boolean
   detail: string
@@ -46,20 +46,19 @@ export const inspectRuntimeDependencies = async (input: {
   nodeBinary: string
   javaBinary: string
   pythonBinary: string
-  qemuBinary: string
   mysql?: MySqlRuntimeConfig
   sources?: Partial<Record<RuntimeDependencyStatus['id'], { source?: RuntimeSource; action?: RuntimeDependencyStatus['action'] }>>
 }): Promise<RuntimeDependencyStatus[]> => {
-  const [php, node, java, python, qemu, mysqlReachable] = await Promise.all([
-    command(input.phpBinary, [...(input.phpIni ? ['-c', input.phpIni] : []), '-r', 'echo PHP_VERSION."|".(extension_loaded("mysqli")?"mysqli":"no-mysqli");']),
+  const [php, node, java, python, mysqlReachable] = await Promise.all([
+    command(input.phpBinary, [...(input.phpIni ? ['-c', input.phpIni] : []), '-r', 'echo PHP_VERSION."|".(extension_loaded("mysqli")?"mysqli":"no-mysqli")."|".(extension_loaded("pdo_mysql")?"pdo_mysql":"no-pdo_mysql");']),
     command(input.nodeBinary, ['--version']),
     command(input.javaBinary, ['-version']),
     command(input.pythonBinary, [...(process.platform === 'win32' && /(?:^|[\\/])py(?:\.exe)?$/i.test(input.pythonBinary) ? ['-3'] : []), '--version']),
-    command(input.qemuBinary, ['--version']),
     input.mysql ? tcp(input.mysql.host, input.mysql.port) : Promise.resolve(false),
   ])
   const phpParts = php.output.split('|')
   const mysqliReady = php.available && phpParts[1] === 'mysqli'
+  const pdoMysqlReady = php.available && phpParts[2] === 'pdo_mysql'
   const nodeReady = node.available && majorVersion(node.output) >= 22
   const javaReady = java.available && majorVersion(java.output) >= 17
   const pythonMajorMinor = firstVersion(python.output).split('.').slice(0, 2).join('.')
@@ -68,25 +67,24 @@ export const inspectRuntimeDependencies = async (input: {
   return [
     withSource('php', { label: 'PHP', available: php.available, detail: php.available ? (phpParts[0] || firstVersion(php.output)) : '未检测到' }),
     withSource('php-mysqli', { label: 'PHP mysqli', available: mysqliReady, detail: mysqliReady ? '扩展已启用' : '扩展未启用' }),
+    withSource('php-pdo-mysql', { label: 'PHP PDO MySQL', available: pdoMysqlReady, detail: pdoMysqlReady ? '扩展已启用' : '扩展未启用' }),
     withSource('mysql', { label: 'MySQL / MariaDB', available: Boolean(input.mysql && mysqlReachable), detail: !input.mysql ? '未配置连接' : mysqlReachable ? `${input.mysql.host}:${input.mysql.port}` : `${input.mysql.host}:${input.mysql.port} 未连接` }),
     withSource('node', { label: 'Node.js', available: nodeReady, detail: node.available ? `${firstVersion(node.output)}${nodeReady ? '' : ' · 需要 22+'}` : '未检测到' }),
     withSource('java', { label: 'Java', available: javaReady, detail: java.available ? `${firstVersion(java.output)}${javaReady ? '' : ' · 需要 17+'}` : '未检测到' }),
     withSource('python', { label: 'Python', available: pythonReady, detail: python.available ? `${firstVersion(python.output)}${pythonReady ? '' : ' · 需要 3.10/3.11'}` : '未检测到' }),
-    withSource('qemu', { label: 'QEMU', available: qemu.available, detail: qemu.available ? firstVersion(qemu.output) : '未检测到' }),
   ]
 }
 
-const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae'])
+const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae', 'xvwa'])
 
 export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDependencyStatus[], dataDir: string) => {
   const status = new Map(dependencies.map(item => [item.id, item]))
   const entries = await Promise.all(labs.map(async lab => {
     const required: RuntimeDependencyStatus['id'][] = lab.runtimeKind === 'native-php'
-      ? ['php', ...(databaseLabs.has(lab.slug) ? ['php-mysqli' as const, 'mysql' as const] : [])]
+      ? ['php', ...(databaseLabs.has(lab.slug) ? ['php-mysqli' as const, 'php-pdo-mysql' as const, 'mysql' as const] : [])]
       : lab.runtimeKind === 'native-node' ? ['node']
         : lab.runtimeKind === 'native-java' ? ['java']
-          : lab.runtimeKind === 'native-python' ? ['python']
-            : lab.runtimeKind === 'vm' ? ['qemu'] : []
+          : lab.runtimeKind === 'native-python' ? ['python'] : []
     const missing = required.filter(id => !status.get(id)?.available)
     if (lab.slug === 'pygoat' && lab.status === 'ready') {
       const marker = join(dataDir, 'labs', lab.slug, lab.version, '.vulnlab-python-ready')

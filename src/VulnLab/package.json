@@ -12,15 +12,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node ../../script/test_vulnlab_importer.mjs && node ../../script/test_vulnlab_builtin_assets.mjs && node ../../script/test_vulnlab_vm_download.mjs && node ../../script/test_vulnlab_database.mjs && node ../../script/test_vulnlab_expiration.mjs && node ../../script/test_vulnlab_mysql.mjs && node ../../script/test_vulnlab_runtime_status.mjs && node ../../script/test_vulnlab_runtime_toolchains.mjs && node ../../script/test_vulnlab_project_environment.mjs && node ../../script/test_vulnlab_native_deployment.mjs && node ../../script/test_vulnlab_provider.mjs",
+    "test": "npm run build && node ../../script/test_vulnlab_importer.mjs && node ../../script/test_vulnlab_builtin_assets.mjs && node ../../script/test_vulnlab_database.mjs && node ../../script/test_vulnlab_expiration.mjs && node ../../script/test_vulnlab_mysql.mjs && node ../../script/test_vulnlab_runtime_status.mjs && node ../../script/test_vulnlab_runtime_toolchains.mjs && node ../../script/test_vulnlab_project_environment.mjs && node ../../script/test_vulnlab_native_deployment.mjs && node ../../script/test_vulnlab_provider.mjs",
     "smoke": "node ../../script/smoke_vulnlab.mjs",
     "smoke:native-php": "node ../../script/smoke_vulnlab_native_php.mjs",
     "smoke:native-php:mysql": "node ../../script/smoke_vulnlab_native_php_mysql.mjs",
     "smoke:toolchains": "node ../../script/smoke_vulnlab_project_toolchains.mjs",
     "smoke:runtimes": "node ../../script/smoke_vulnlab_builtin_runtimes.mjs",
-    "smoke:vulnhub": "node ../../script/smoke_vulnlab_vulnhub.mjs",
-    "smoke:vulnhub:api": "node ../../script/smoke_vulnlab_vulnhub_api.mjs",
-    "smoke:vm-download-api": "node ../../script/smoke_vulnlab_vm_download_api.mjs",
     "smoke:operational": "node ../../script/smoke_vulnlab_operational.mjs"
   },
   "dependencies": {

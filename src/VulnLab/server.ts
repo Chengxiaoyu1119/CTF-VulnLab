@@ -13,14 +13,12 @@ import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
 import { importGitHubRepository, importGitLabRepository, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
-import { ProviderError, providerRegistry, type NativeRuntimeConfig, type VmRuntimeConfig } from './providers.js'
+import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
 import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
 import { prepareInstalledLab } from './runtime-prep.js'
 import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
-import { importVulnHubCatalog, readVulnHubCatalog, type VulnHubCatalogEntry } from './vulnhub.js'
-import { downloadVmImage, VmDownloadError, vmDownloadFilename } from './vm-download.js'
-import type { AppSettings, ImportManifest, Lab, SessionView, VmDownload } from './types.js'
+import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView } from './types.js'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
@@ -34,10 +32,6 @@ const hasPortOverride = process.env.VULNLAB_PORT !== undefined || process.env.PO
 if (configuredHost !== 'localhost' && isIP(configuredHost) === 0) throw new Error('VULNLAB_HOST 必须是 localhost 或有效 IP 地址。')
 const configuredLifetime = Number(process.env.VULNLAB_INSTANCE_MINUTES ?? 60)
 const instanceLifetimeMinutes = Number.isFinite(configuredLifetime) && configuredLifetime > 0 ? configuredLifetime : 60
-const defaultVmMaxBytes = 20 * 1024 ** 3
-const configuredVmMaxBytes = Number(process.env.VULNLAB_VM_MAX_BYTES ?? defaultVmMaxBytes)
-if (!Number.isSafeInteger(configuredVmMaxBytes) || configuredVmMaxBytes < 1024 * 1024 || configuredVmMaxBytes > 100 * 1024 ** 3) throw new Error('VULNLAB_VM_MAX_BYTES 必须是 1 MiB 到 100 GiB 之间的整数。')
-const vmMaxBytes = configuredVmMaxBytes
 const runtimeHost = process.env.VULNLAB_RUNTIME_HOST ?? '127.0.0.1'
 const runtimePortStart = Number(process.env.VULNLAB_RUNTIME_PORT_START ?? 6800)
 const runtimePortEnd = Number(process.env.VULNLAB_RUNTIME_PORT_END ?? 6899)
@@ -60,19 +54,6 @@ const nativeRuntime: NativeRuntimeConfig = {
   mysql: runtimeMySql,
 }
 const projectEnvironment = projectEnvironmentOptionsFromEnv(dataDir, process.env.VULNLAB_PHP_BIN?.trim(), runtimePhpIni, runtimeMySql, process.env.VULNLAB_NODE_BIN?.trim())
-const vmPortStart = Number(process.env.VULNLAB_VM_PORT_START ?? 6900)
-const vmPortEnd = Number(process.env.VULNLAB_VM_PORT_END ?? 6999)
-const vmGuestPort = Number(process.env.VULNLAB_VM_GUEST_PORT ?? 80)
-const vmMemoryMb = Number(process.env.VULNLAB_VM_MEMORY_MB ?? 2048)
-const vmCpus = Number(process.env.VULNLAB_VM_CPUS ?? 2)
-const vmBootTimeoutMs = Number(process.env.VULNLAB_VM_BOOT_TIMEOUT_MS ?? 120_000)
-const vmQemuBinary = process.env.VULNLAB_QEMU_BIN?.trim() || 'qemu-system-x86_64'
-if (!Number.isInteger(vmPortStart) || !Number.isInteger(vmPortEnd) || vmPortStart < 1024 || vmPortEnd > 65535 || vmPortStart > vmPortEnd) throw new Error('VULNLAB_VM_PORT_START/END 必须是有效端口范围。')
-if (!Number.isInteger(vmGuestPort) || vmGuestPort < 1 || vmGuestPort > 65535) throw new Error('VULNLAB_VM_GUEST_PORT 必须是有效端口。')
-if (!Number.isInteger(vmMemoryMb) || vmMemoryMb < 128 || vmMemoryMb > 65_536) throw new Error('VULNLAB_VM_MEMORY_MB 必须是 128 到 65536 之间的整数。')
-if (!Number.isInteger(vmCpus) || vmCpus < 1 || vmCpus > 64) throw new Error('VULNLAB_VM_CPUS 必须是 1 到 64 之间的整数。')
-if (!Number.isInteger(vmBootTimeoutMs) || vmBootTimeoutMs < 1_000 || vmBootTimeoutMs > 600_000) throw new Error('VULNLAB_VM_BOOT_TIMEOUT_MS 必须是 1000 到 600000 之间的整数。')
-const vmRuntime: VmRuntimeConfig = { portStart: vmPortStart, portEnd: vmPortEnd, qemuBinary: vmQemuBinary, guestPort: vmGuestPort, memoryMb: vmMemoryMb, cpus: vmCpus, bootTimeoutMs: vmBootTimeoutMs }
 const isProduction = process.env.NODE_ENV === 'production'
 const secureCookies = isProduction
 const configuredPublicUrl = process.env.VULNLAB_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
@@ -107,7 +88,7 @@ const recoverProviderInstances = async () => {
     const provider = providerRegistry.get(instance.provider)
     if (!lab || !provider?.recover) continue
     try {
-      await provider.recover({ lab, instance, runtime: nativeRuntime, vm: vmRuntime, dataDir })
+      await provider.recover({ lab, instance, runtime: nativeRuntime, dataDir })
       database.destroyInstance(instance.id, `服务启动时回收遗留 ${instance.provider} 运行资源`)
       database.addAudit('system', 'instance.recovered', instance.labTitle, instance.id)
     } catch (error) {
@@ -122,7 +103,8 @@ const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 64 * 1
 const loginWindowMs = 60_000
 const loginLimit = isProduction ? 10 : 30
 const activeImports = new Map<string, { task: Promise<void>; controller: AbortController }>()
-const activeVmDownloads = new Map<string, { task: Promise<void>; controller: AbortController }>()
+const pendingStarts = new Map<string, Promise<LabInstance | null>>()
+const activeStarts = new Map<string, Promise<LabInstance>>()
 let reapingExpiredInstances = false
 let runtimeStatusCache: { expiresAt: number; value: Awaited<ReturnType<typeof inspectRuntimeDependencies>> } | null = null
 
@@ -135,7 +117,6 @@ const runtimeDependencies = async () => {
     nodeBinary: nativeRuntime.nodeBinary,
     javaBinary: nativeRuntime.javaBinary,
     pythonBinary: nativeRuntime.pythonBinary,
-    qemuBinary: vmRuntime.qemuBinary,
     mysql: nativeRuntime.mysql,
     sources: {
       php: { source: projectStatus.php.source },
@@ -165,7 +146,7 @@ const prepareProjectEnvironment = async (force = false, installMissing = false) 
   } catch (error) {
     runtimeMySql = mysqlRuntimeConfigFromEnv()
     nativeRuntime.mysql = runtimeMySql
-    app.log.error(error, '项目运行环境准备失败，服务仍会启动并在环境页显示待配置状态。')
+    app.log.error(error, '项目运行环境准备失败，服务仍会启动，并在对应靶场启动时返回具体依赖错误。')
   }
   return projectEnvironment.getStatus()
 }
@@ -185,7 +166,7 @@ const reapExpiredInstances = async () => {
         return
       }
       try {
-        await provider.stop({ lab, instance, runtime: nativeRuntime, vm: vmRuntime, dataDir })
+        await provider.stop({ lab, instance, runtime: nativeRuntime, dataDir })
       } catch (error) {
         // Keep the row running so the next sweep retries the provider cleanup.
         app.log.error(error, `过期实例 ${instance.id} 的运行资源回收失败。`)
@@ -265,23 +246,6 @@ const requireCsrf = (request: FastifyRequest, reply: FastifyReply, session: Sess
 
 const requestBody = (request: FastifyRequest) => (request.body ?? {}) as Record<string, unknown>
 
-const loadVulnHubCatalog = async (lab: Lab) => {
-  const job = database.listJobsParsed().find(item => item.labId === lab.id && item.manifest?.adapterId === 'vulnhub-catalog' && item.manifest.localPath === lab.localPath)
-  const manifest = job?.manifest
-  const catalogPath = lab.localPath ? resolve(lab.localPath) : ''
-  const dataRoot = resolve(dataDir)
-  const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
-  if (!manifest || !catalogPath || basename(catalogPath) !== 'catalog.json' || (catalogPath !== dataRoot && !catalogPath.startsWith(dataPrefix))) throw new VmDownloadError('CATALOG_NOT_READY', '该靶场还没有可查看的 VulnHub 目录清单。')
-  try {
-    return { manifest, catalog: await readVulnHubCatalog(catalogPath, manifest.archiveSha256) }
-  } catch (error) {
-    if (error instanceof VmDownloadError) throw error
-    throw new VmDownloadError('CATALOG_INVALID', 'VulnHub 目录清单不可读取，请重新导入。')
-  }
-}
-
-const vmDownloadView = (download: VmDownload) => ({ ...download, localPath: download.localPath ? basename(download.localPath) : null })
-
 const publicOrigin = (request: FastifyRequest) => {
   if (configuredPublicUrl) return configuredPublicUrl
   if (host !== '0.0.0.0' && host !== '::') return `http://${host}:${port}`
@@ -293,10 +257,10 @@ const publicOrigin = (request: FastifyRequest) => {
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
   if (!lab.builtin || manifest.adapterId === 'builtin-release') return manifest
   const targetRoot = join(dataDir, 'labs', lab.slug, lab.version)
-  const targetPath = manifest.adapterId === 'vulnhub-catalog' ? join(targetRoot, 'catalog.json') : targetRoot
+  const targetPath = targetRoot
   if (resolve(manifest.localPath) === resolve(targetPath)) return manifest
   await rm(targetRoot, { recursive: true, force: true })
-  await mkdir(manifest.adapterId === 'vulnhub-catalog' ? targetRoot : dirname(targetRoot), { recursive: true })
+  await mkdir(dirname(targetRoot), { recursive: true })
   try {
     await rename(manifest.localPath, targetPath)
   } catch {
@@ -400,9 +364,7 @@ const runImportJob = (jobId: string, actor: string) => {
             portablePathPolicy: lab.slug === 'sqli-labs' ? 'case-collision-lowercase' : 'strict',
             onProgress: progress,
           })
-        : adapter?.id === 'vulnhub-catalog'
-          ? await importVulnHubCatalog({ sourceUrl: lab.sourceUrl, sourceRef: lab.sourceRef, jobId, dataDir, signal: controller.signal, onProgress: progress })
-          : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
+        : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
       const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
       await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary)
       database.completeJob(jobId, manifest)
@@ -438,8 +400,90 @@ const startLabInstall = (lab: Lab, actor: string) => {
   return { lab: database.getLab(lab.id) as Lab, job: claimed, started: true }
 }
 
+const startLabInstance = (lab: Lab, actor: string, origin: string): Promise<LabInstance> => {
+  const existingStart = activeStarts.get(lab.id)
+  if (existingStart) return existingStart
+  const task = (async () => {
+    const existingInstance = database.listInstances()
+      .map(instance => database.getRunningInstance(instance.id))
+      .find(instance => instance?.labId === lab.id)
+    if (existingInstance) return existingInstance
+    if (lab.status !== 'ready') throw new ProviderError('LAB_NOT_READY', '靶场资源正在准备，请稍候。', 409)
+    let dependencies = await runtimeDependencies()
+    let readiness = await runtimeReadinessByLab([lab], dependencies, dataDir)
+    if (!readiness[lab.slug]?.available) {
+      await prepareProjectEnvironment(true, true)
+      runtimeStatusCache = null
+      dependencies = await runtimeDependencies()
+      readiness = await runtimeReadinessByLab([lab], dependencies, dataDir)
+    }
+    if (!readiness[lab.slug]?.available) throw new ProviderError('RUNTIME_DEPENDENCY_MISSING', `本机缺少运行依赖：${readiness[lab.slug]?.missing.join('、') || '未知依赖'}。`, 409)
+    const provider = providerRegistry.resolve(lab.providerId, lab.runtimeKind)
+    const overview = database.overview()
+    const maxInstances = overview.maxInstances
+    if (overview.runningInstanceCount >= maxInstances) throw new ProviderError('INSTANCE_CAPACITY_REACHED', '当前运行容量已满，请先结束一个实例。', 409)
+    const instanceId = randomUUID()
+    const started = await provider.start({
+      instanceId,
+      lab,
+      publicOrigin: origin,
+      proxyEndpoint: lab.runtimeKind === 'native-php' ? `${origin}/lab-runtime/${instanceId}/` : undefined,
+      lifetimeMinutes: instanceLifetimeMinutes,
+      dataDir,
+      runtime: nativeRuntime,
+    })
+    const instance = database.createInstance({ id: instanceId, lab, provider: provider.id, ...started }, maxInstances)
+    if (!instance) {
+      const candidate = { id: instanceId, labId: lab.id, labTitle: lab.title, provider: provider.id, endpoint: started.endpoint, status: 'running' as const, createdAt: started.createdAt, expiresAt: started.expiresAt, logs: started.logs }
+      try { await provider.stop({ lab, instance: candidate, runtime: nativeRuntime, dataDir }) } catch (error) { app.log.error(error, 'Provider 启动后无法回收未持久化实例。') }
+      throw new ProviderError('INSTANCE_CAPACITY_REACHED', '当前运行容量已满，请先结束一个实例。', 409)
+    }
+    database.addAudit(actor, 'instance.start', lab.title, instance.id)
+    return instance
+  })()
+  activeStarts.set(lab.id, task)
+  void task.then(() => {
+    if (activeStarts.get(lab.id) === task) activeStarts.delete(lab.id)
+  }, () => {
+    if (activeStarts.get(lab.id) === task) activeStarts.delete(lab.id)
+  })
+  return task
+}
+
+const queueStartAfterImport = (labId: string, jobId: string, actor: string, origin: string) => {
+  const existing = pendingStarts.get(labId)
+  if (existing) return existing
+  const task = (async () => {
+    await activeImports.get(jobId)?.task
+    const preparedLab = database.getLab(labId)
+    if (!preparedLab || preparedLab.status !== 'ready') return null
+    try {
+      return await startLabInstance(preparedLab, actor, origin)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '靶场准备完成，但启动失败。'
+      database.updateJob(jobId, { message: `资源已准备，但启动失败：${message}`, error: message })
+      database.addAudit(actor, 'instance.start.failed', preparedLab.title, message)
+      app.log.error(error, `靶场 ${preparedLab.slug} 自动启动失败。`)
+      return null
+    }
+  })()
+  pendingStarts.set(labId, task)
+  void task.then(() => {
+    if (pendingStarts.get(labId) === task) pendingStarts.delete(labId)
+  }, () => {
+    if (pendingStarts.get(labId) === task) pendingStarts.delete(labId)
+  })
+  return task
+}
+
 const bootstrapBuiltinLabs = async () => {
-  await Promise.allSettled(['vulhub', 'crapi'].map(slug => rm(join(dataDir, 'labs', slug), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
+  await Promise.allSettled(['vulnhub', 'vulhub', 'crapi'].map(slug => rm(join(dataDir, 'labs', slug), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
+  for (const job of database.listJobsParsed().filter(item => item.status === 'queued')) {
+    const lab = database.getLab(job.labId)
+    if (!lab?.builtin) continue
+    const claimed = database.claimJob(job.id)
+    if (claimed) runImportJob(claimed.id, 'system')
+  }
   for (const lab of database.listLabs().filter(item => item.builtin && item.status === 'ready')) {
     const job = database.listJobsParsed().find(item => item.labId === lab.id && item.status === 'completed' && item.manifest)
     if (job?.manifest) {
@@ -463,43 +507,6 @@ const bootstrapBuiltinLabs = async () => {
     const result = startLabInstall(lab, 'system')
     if (result.job?.id) await activeImports.get(result.job.id)?.task
   }
-}
-
-const runVmDownload = (downloadId: string, lab: Lab, entry: VulnHubCatalogEntry, actor: string) => {
-  const controller = new AbortController()
-  const task = (async () => {
-    const download = database.getVmDownload(downloadId)
-    if (!download || download.status !== 'downloading') return
-    try {
-      const result = await downloadVmImage({
-        download,
-        entry,
-        dataDir,
-        maxBytes: vmMaxBytes,
-        signal: controller.signal,
-        onProgress: value => database.updateVmDownload(downloadId, value),
-      })
-      const message = result.checksumVerified ? '镜像下载完成，已通过目录校验。' : '镜像下载完成，目录没有可用的 MD5/SHA1 校验值。'
-      database.completeVmDownload(downloadId, { localPath: result.localPath, sha256: result.sha256, actualMd5: result.md5, actualSha1: result.sha1, checksumVerified: result.checksumVerified, bytesDownloaded: result.bytesDownloaded, totalBytes: result.totalBytes, message })
-      database.addAudit(actor, 'vm.download.completed', lab.title, `${download.title} · sha256:${result.sha256}`)
-    } catch (error) {
-      if (controller.signal.aborted) {
-        database.requeueVmDownload(downloadId, '服务关闭，下载将在下次启动后恢复。')
-        return
-      }
-      const message = error instanceof Error ? error.message : '虚拟机镜像下载失败。'
-      database.failVmDownload(downloadId, message)
-      database.addAudit(actor, 'vm.download.failed', lab.title, `${download.title} · ${message}`)
-    }
-  })()
-  activeVmDownloads.set(downloadId, { task, controller })
-  void task.then(
-    () => activeVmDownloads.delete(downloadId),
-    error => {
-      activeVmDownloads.delete(downloadId)
-      app.log.error(error)
-    },
-  )
 }
 
 await app.register(cookie, { secret: cookieSecret })
@@ -598,63 +605,6 @@ app.get('/api/labs/:id', async (request, reply) => {
   return lab
 })
 
-app.get('/api/vm-downloads', async (request, reply) => {
-  if (!requireUser(request, reply)) return
-  return database.listVmDownloads().map(vmDownloadView)
-})
-
-app.get('/api/labs/:id/catalog', async (request, reply) => {
-  if (!requireUser(request, reply)) return
-  const { id } = request.params as { id: string }
-  const lab = database.getLab(id)
-  if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
-  try {
-    const { manifest, catalog } = await loadVulnHubCatalog(lab)
-    return { labId: lab.id, labTitle: lab.title, importedAt: manifest.importedAt, downloads: database.listVmDownloads(lab.id).map(vmDownloadView), ...catalog }
-  } catch (error) {
-    return reply.code(error instanceof VmDownloadError ? error.statusCode : 409).send({ code: error instanceof VmDownloadError ? error.code : 'CATALOG_INVALID', message: error instanceof Error ? error.message : 'VulnHub 目录清单不可读取。' })
-  }
-})
-
-app.post('/api/labs/:id/catalog/entries/:index/download', async (request, reply) => {
-  const session = requireAdmin(request, reply)
-  if (!session) return
-  const { id, index: rawIndex } = request.params as { id: string; index: string }
-  const lab = database.getLab(id)
-  if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
-  if (lab.sourceType !== 'catalog' && lab.runtimeKind !== 'vm') return reply.code(409).send({ code: 'VM_SOURCE_REQUIRED', message: '只有 VulnHub 虚拟机目录支持镜像下载。' })
-  if (!/^\d+$/.test(rawIndex)) return reply.code(400).send({ code: 'CATALOG_ENTRY_INVALID', message: '机器条目标识无效。' })
-  const entryIndex = Number(rawIndex)
-  try {
-    const { catalog } = await loadVulnHubCatalog(lab)
-    const entry = catalog.entries[entryIndex]
-    if (!entry) return reply.code(404).send({ code: 'CATALOG_ENTRY_NOT_FOUND', message: '机器目录中不存在该条目。' })
-    const body = requestBody(request)
-    const downloadIndex = body.downloadIndex === undefined ? 0 : Number(body.downloadIndex)
-    if (!Number.isInteger(downloadIndex) || downloadIndex < 0 || downloadIndex >= entry.downloadUrls.length) return reply.code(400).send({ code: 'VM_DOWNLOAD_URL_INVALID', message: '镜像地址选择无效。' })
-    const downloadUrl = entry.downloadUrls[downloadIndex]
-    if (!downloadUrl) return reply.code(409).send({ code: 'VM_DOWNLOAD_UNAVAILABLE', message: '该机器没有可用的官方镜像地址。' })
-    const download = database.createVmDownload({
-      labId: lab.id,
-      entryIndex,
-      title: entry.title,
-      sourceUrl: entry.url,
-      downloadUrl,
-      filename: vmDownloadFilename(entry, downloadUrl, entryIndex),
-      expectedMd5: entry.md5,
-      expectedSha1: entry.sha1,
-    })
-    if (download.status === 'completed' || download.status === 'downloading') return reply.code(200).send({ download: vmDownloadView(download) })
-    const claimed = database.claimVmDownload(download.id)
-    if (!claimed) return reply.code(409).send({ code: 'VM_DOWNLOAD_NOT_QUEUED', message: '该镜像下载任务当前状态不允许启动。' })
-    runVmDownload(claimed.id, lab, entry, session.userName)
-    database.addAudit(session.userName, 'vm.download.started', lab.title, `${entry.title} · ${downloadUrl}`)
-    return reply.code(202).send({ download: vmDownloadView(claimed) })
-  } catch (error) {
-    return reply.code(error instanceof VmDownloadError ? error.statusCode : 409).send({ code: error instanceof VmDownloadError ? error.code : 'VM_DOWNLOAD_INVALID', message: error instanceof Error ? error.message : '镜像下载任务无效。' })
-  }
-})
-
 app.get('/api/import-jobs', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
@@ -688,44 +638,16 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
   const { id } = request.params as { id: string }
   const lab = database.getLab(id)
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
-  if (lab.status !== 'ready') return reply.code(409).send({ code: 'LAB_NOT_READY', message: '靶场尚未完成导入，当前没有启动条件。' })
-  const body = requestBody(request)
-  let vmDownload: VmDownload | null = null
-  if (lab.runtimeKind === 'vm') {
-    const completedDownloads = database.listVmDownloads(lab.id).filter(item => item.status === 'completed' && item.localPath)
-    const requestedDownloadId = typeof body.vmDownloadId === 'string' ? body.vmDownloadId.trim() : ''
-    vmDownload = requestedDownloadId
-      ? completedDownloads.find(item => item.id === requestedDownloadId) ?? null
-      : completedDownloads[0] ?? null
-    if (!vmDownload) return reply.code(409).send({ code: 'VM_IMAGE_NOT_READY', message: '请先选择并完成一台 VulnHub 机器镜像下载。' })
+  if (lab.status !== 'ready') {
+    const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
+    if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的内置资源尚未接通。' })
+    const preparation = startLabInstall(lab, session.userName)
+    if (!preparation.job?.id) return reply.code(409).send({ code: 'LAB_PREPARE_FAILED', message: '靶场准备任务未创建。' })
+    queueStartAfterImport(lab.id, preparation.job.id, session.userName, publicOrigin(request))
+    database.addAudit(session.userName, 'instance.prepare', lab.title, preparation.job.id)
+    return reply.code(202).send({ status: 'preparing', lab: database.getLab(lab.id), job: preparation.job })
   }
-  const dependencies = await runtimeDependencies()
-  const readiness = await runtimeReadinessByLab([lab], dependencies, dataDir)
-  if (!readiness[lab.slug]?.available) return reply.code(409).send({ code: 'RUNTIME_DEPENDENCY_MISSING', message: `本机缺少运行依赖：${readiness[lab.slug]?.missing.join('、') || '未知依赖'}。` })
-  const provider = providerRegistry.resolve(lab.providerId, lab.runtimeKind)
-  const overview = database.overview()
-  const maxInstances = overview.maxInstances
-  if (overview.runningInstanceCount >= maxInstances) return reply.code(409).send({ code: 'INSTANCE_CAPACITY_REACHED', message: '当前运行容量已满，请先结束一个实例。' })
-  const instanceId = randomUUID()
-  const started = await provider.start({
-    instanceId,
-    lab,
-    publicOrigin: publicOrigin(request),
-    proxyEndpoint: ['native-php', 'vm'].includes(lab.runtimeKind) ? `${publicOrigin(request)}/lab-runtime/${instanceId}/` : undefined,
-    lifetimeMinutes: instanceLifetimeMinutes,
-    dataDir,
-    runtime: nativeRuntime,
-    vm: vmRuntime,
-    artifactPath: vmDownload?.localPath ?? undefined,
-  })
-  const instance = database.createInstance({ id: instanceId, lab, provider: provider.id, ...started }, maxInstances)
-  if (!instance) {
-    const candidate = { id: instanceId, labId: lab.id, labTitle: lab.title, provider: provider.id, endpoint: started.endpoint, status: 'running' as const, createdAt: started.createdAt, expiresAt: started.expiresAt, logs: started.logs }
-    try { await provider.stop({ lab, instance: candidate, runtime: nativeRuntime, vm: vmRuntime, dataDir }) } catch (error) { app.log.error(error, 'Provider 启动后无法回收未持久化实例。') }
-    return reply.code(409).send({ code: 'INSTANCE_CAPACITY_REACHED', message: '当前运行容量已满，请先结束一个实例。' })
-  }
-  database.addAudit(session.userName, 'instance.start', lab.title, instance.id)
-  return reply.code(201).send(instance)
+  return reply.code(201).send(await startLabInstance(lab, session.userName, publicOrigin(request)))
 })
 
 app.post('/api/instances/:id/renew', async (request, reply) => {
@@ -754,7 +676,7 @@ app.delete('/api/instances/:id', async (request, reply) => {
   const lab = database.getLab(current.labId)
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
   const provider = providerRegistry.resolve(current.provider, lab.runtimeKind)
-  const stopped = await provider.stop({ lab, instance: current, runtime: nativeRuntime, vm: vmRuntime, dataDir })
+  const stopped = await provider.stop({ lab, instance: current, runtime: nativeRuntime, dataDir })
   const instance = database.destroyInstance(id, stopped.log)
   if (!instance) return reply.code(404).send({ code: 'INSTANCE_NOT_FOUND', message: '运行实例不存在。' })
   database.addAudit(session.userName, 'instance.destroy', instance.labTitle, id)
@@ -865,12 +787,10 @@ const shutdown = async (signal: string) => {
   app.log.info(`收到 ${signal}，正在关闭 VulnLab。`)
   try {
     for (const { controller } of activeImports.values()) controller.abort()
-    for (const { controller } of activeVmDownloads.values()) controller.abort()
     await Promise.allSettled([...activeImports.values()].map(({ task }) => task))
-    await Promise.allSettled([...activeVmDownloads.values()].map(({ task }) => task))
     await Promise.allSettled([providerRegistry.shutdown()])
     await projectEnvironment.stop()
-    for (const providerId of ['native-php', 'native-node', 'native-java', 'native-python', 'qemu-vm']) {
+    for (const providerId of ['native-php', 'native-node', 'native-java', 'native-python']) {
       database.recoverRunningInstances(providerId, '服务关闭，运行进程已回收')
     }
     await app.close()

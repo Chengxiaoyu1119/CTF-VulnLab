@@ -2,9 +2,9 @@ export type UserRole = 'admin'
 
 export type LabStatus = 'cataloged' | 'queued' | 'importing' | 'ready' | 'error' | 'disabled'
 
-export type SourceType = 'git' | 'archive' | 'vm' | 'catalog'
+export type SourceType = 'git' | 'archive'
 
-export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python' | 'vm'
+export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python'
 
 export type Difficulty = '入门' | '简单' | '中等' | '困难'
 
@@ -60,33 +60,6 @@ export interface ImportManifest {
   topLevelEntries: string[]
   warnings: string[]
   importedAt: string
-}
-
-export type VmDownloadStatus = 'queued' | 'downloading' | 'completed' | 'error'
-
-export interface VmDownload {
-  id: string
-  labId: string
-  entryIndex: number
-  title: string
-  sourceUrl: string
-  downloadUrl: string
-  filename: string
-  status: VmDownloadStatus
-  message: string
-  progress: number
-  bytesDownloaded: number
-  totalBytes: number | null
-  expectedMd5: string | null
-  expectedSha1: string | null
-  actualMd5: string | null
-  actualSha1: string | null
-  checksumVerified: boolean
-  sha256: string | null
-  localPath: string | null
-  error: string | null
-  createdAt: string
-  updatedAt: string
 }
 
 export interface LabInstance {

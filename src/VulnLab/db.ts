@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
-import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, SessionView, UserRole, VmDownload, VmDownloadStatus } from './types.js'
+import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, SessionView, UserRole } from './types.js'
 
 type Row = Record<string, unknown>
 
@@ -26,7 +26,6 @@ const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
   if (runtimeKind === 'native-node') return 'native-node'
   if (runtimeKind === 'native-java') return 'native-java'
   if (runtimeKind === 'native-python') return 'native-python'
-  if (runtimeKind === 'vm') return 'qemu-vm'
   return runtimeKind
 }
 
@@ -73,31 +72,6 @@ const parseJob = (row: Row): ImportJob => ({
   updatedAt: asString(row.updated_at),
 })
 
-const parseVmDownload = (row: Row): VmDownload => ({
-  id: asString(row.id),
-  labId: asString(row.lab_id),
-  entryIndex: Number(row.entry_index ?? 0),
-  title: asString(row.title),
-  sourceUrl: asString(row.source_url),
-  downloadUrl: asString(row.download_url),
-  filename: asString(row.filename),
-  status: asString(row.status) as VmDownloadStatus,
-  message: asString(row.message),
-  progress: Number(row.progress ?? 0),
-  bytesDownloaded: Number(row.bytes_downloaded ?? 0),
-  totalBytes: row.total_bytes === null || row.total_bytes === undefined ? null : Number(row.total_bytes),
-  expectedMd5: row.expected_md5 ? asString(row.expected_md5) : null,
-  expectedSha1: row.expected_sha1 ? asString(row.expected_sha1) : null,
-  actualMd5: row.actual_md5 ? asString(row.actual_md5) : null,
-  actualSha1: row.actual_sha1 ? asString(row.actual_sha1) : null,
-  checksumVerified: Number(row.checksum_verified ?? 0) === 1,
-  sha256: row.sha256 ? asString(row.sha256) : null,
-  localPath: row.local_path ? asString(row.local_path) : null,
-  error: row.error ? asString(row.error) : null,
-  createdAt: asString(row.created_at),
-  updatedAt: asString(row.updated_at),
-})
-
 const parseInstance = (row: Row): LabInstance => ({
   id: asString(row.id),
   labId: asString(row.lab_id),
@@ -130,7 +104,6 @@ export class VulnLabDatabase {
     this.db.pragma('foreign_keys = ON')
     this.migrate()
     this.recoverInterruptedJobs()
-    this.recoverInterruptedVmDownloads()
     this.seed()
   }
 
@@ -176,6 +149,8 @@ export class VulnLabDatabase {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      -- Legacy table retained so an existing database can migrate without a
+      -- destructive schema operation. The active runtime never reads it.
       CREATE TABLE IF NOT EXISTS vm_downloads (
         id TEXT PRIMARY KEY,
         lab_id TEXT NOT NULL REFERENCES labs(id) ON DELETE CASCADE,
@@ -272,10 +247,6 @@ export class VulnLabDatabase {
     for (const job of interrupted) updateLab.run(timestamp, job.lab_id)
   }
 
-  private recoverInterruptedVmDownloads() {
-    this.db.prepare("UPDATE vm_downloads SET status = 'queued', message = '服务重启后已重新排队。', progress = 0, bytes_downloaded = 0, total_bytes = NULL, actual_md5 = NULL, actual_sha1 = NULL, checksum_verified = 0, error = NULL, updated_at = ? WHERE status = 'downloading'").run(now())
-  }
-
   private seed() {
     const insert = this.db.prepare(`
       INSERT OR IGNORE INTO labs
@@ -333,8 +304,17 @@ export class VulnLabDatabase {
         })
       }
       const activeSlugs = new Set(items.map(item => item.slug))
-      for (const slug of ['vulhub', 'crapi']) {
+      for (const slug of ['vulnhub', 'vulhub', 'crapi']) {
         if (!activeSlugs.has(slug)) this.db.prepare("UPDATE labs SET status = 'disabled', updated_at = ? WHERE slug = ?").run(now(), slug)
+      }
+      const legacyInstances = this.db.prepare("SELECT instances.id, instances.logs_json FROM instances JOIN labs ON labs.id = instances.lab_id WHERE instances.status = 'running' AND (labs.slug IN ('vulnhub', 'vulhub') OR instances.provider = 'qemu-vm')").all() as Array<{ id: string; logs_json: string }>
+      const disableInstance = this.db.prepare("UPDATE instances SET status = 'destroyed', logs_json = ? WHERE id = ? AND status = 'running'")
+      const timestamp = now()
+      for (const instance of legacyInstances) {
+        let logs: string[] = []
+        try { logs = JSON.parse(instance.logs_json) as string[] } catch { /* preserve migration progress even if old logs are malformed */ }
+        logs.push(`${timestamp} 旧版虚拟机运行记录已停用`)
+        disableInstance.run(JSON.stringify(logs), instance.id)
       }
     })
     transaction(seedLabs)
@@ -453,87 +433,6 @@ export class VulnLabDatabase {
 
   listJobsParsed(): ImportJob[] {
     return this.db.prepare('SELECT * FROM import_jobs ORDER BY created_at DESC').all().map(row => parseJob(row as Row))
-  }
-
-  listVmDownloads(labId?: string): VmDownload[] {
-    const rows = labId
-      ? this.db.prepare('SELECT * FROM vm_downloads WHERE lab_id = ? ORDER BY updated_at DESC').all(labId)
-      : this.db.prepare('SELECT * FROM vm_downloads ORDER BY updated_at DESC').all()
-    return rows.map(row => parseVmDownload(row as Row))
-  }
-
-  getVmDownload(id: string): VmDownload | null {
-    const row = this.db.prepare('SELECT * FROM vm_downloads WHERE id = ?').get(id) as Row | undefined
-    return row ? parseVmDownload(row) : null
-  }
-
-  createVmDownload(input: Pick<VmDownload, 'labId' | 'entryIndex' | 'title' | 'sourceUrl' | 'downloadUrl' | 'filename' | 'expectedMd5' | 'expectedSha1'>): VmDownload {
-    const existing = this.db.prepare('SELECT * FROM vm_downloads WHERE lab_id = ? AND entry_index = ? AND download_url = ?').get(input.labId, input.entryIndex, input.downloadUrl) as Row | undefined
-    if (existing) {
-      if (asString(existing.status) === 'error') {
-        this.db.prepare("UPDATE vm_downloads SET status = 'queued', message = '已重新排队，等待下载。', progress = 0, bytes_downloaded = 0, total_bytes = NULL, actual_md5 = NULL, actual_sha1 = NULL, checksum_verified = 0, sha256 = NULL, local_path = NULL, error = NULL, updated_at = ? WHERE id = ?").run(now(), asString(existing.id))
-      }
-      return this.getVmDownload(asString(existing.id)) as VmDownload
-    }
-    const timestamp = now()
-    const id = randomUUID()
-    this.db.prepare(`
-      INSERT INTO vm_downloads
-        (id, lab_id, entry_index, title, source_url, download_url, filename, status, message, progress, bytes_downloaded, total_bytes, expected_md5, expected_sha1, actual_md5, actual_sha1, checksum_verified, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', '已登记，等待下载。', 0, 0, NULL, ?, ?, NULL, NULL, 0, ?, ?)
-    `).run(id, input.labId, input.entryIndex, input.title, input.sourceUrl, input.downloadUrl, input.filename, input.expectedMd5, input.expectedSha1, timestamp, timestamp)
-    return this.getVmDownload(id) as VmDownload
-  }
-
-  claimVmDownload(id: string): VmDownload | null {
-    const claimed = this.db.prepare("UPDATE vm_downloads SET status = 'downloading', message = '正在准备下载。', progress = 0, bytes_downloaded = 0, total_bytes = NULL, actual_md5 = NULL, actual_sha1 = NULL, checksum_verified = 0, sha256 = NULL, local_path = NULL, error = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(now(), id)
-    return claimed.changes === 1 ? this.getVmDownload(id) : null
-  }
-
-  requeueVmDownload(id: string, message: string): VmDownload | null {
-    const current = this.getVmDownload(id)
-    if (!current) return null
-    this.db.prepare("UPDATE vm_downloads SET status = 'queued', message = ?, progress = 0, bytes_downloaded = 0, total_bytes = NULL, actual_md5 = NULL, actual_sha1 = NULL, checksum_verified = 0, sha256 = NULL, local_path = NULL, error = NULL, updated_at = ? WHERE id = ?").run(message, now(), id)
-    return this.getVmDownload(id)
-  }
-
-  updateVmDownload(id: string, patch: { message?: string; progress?: number; bytesDownloaded?: number; totalBytes?: number | null; sha256?: string | null; localPath?: string | null; error?: string | null }): VmDownload | null {
-    const current = this.getVmDownload(id)
-    if (!current) return null
-    this.db.prepare(`
-      UPDATE vm_downloads
-      SET message = ?, progress = ?, bytes_downloaded = ?, total_bytes = ?, sha256 = ?, local_path = ?, error = ?, updated_at = ?
-      WHERE id = ?
-    `).run(
-      patch.message ?? current.message,
-      patch.progress ?? current.progress,
-      patch.bytesDownloaded ?? current.bytesDownloaded,
-      patch.totalBytes === undefined ? current.totalBytes : patch.totalBytes,
-      patch.sha256 === undefined ? current.sha256 : patch.sha256,
-      patch.localPath === undefined ? current.localPath : patch.localPath,
-      patch.error === undefined ? current.error : patch.error,
-      now(),
-      id,
-    )
-    return this.getVmDownload(id)
-  }
-
-  completeVmDownload(id: string, input: { localPath: string; sha256: string; actualMd5: string; actualSha1: string; checksumVerified: boolean; bytesDownloaded: number; totalBytes: number | null; message: string }): VmDownload | null {
-    const current = this.getVmDownload(id)
-    if (!current) return null
-    this.db.prepare(`
-      UPDATE vm_downloads
-      SET status = 'completed', message = ?, progress = 100, bytes_downloaded = ?, total_bytes = ?, actual_md5 = ?, actual_sha1 = ?, checksum_verified = ?, sha256 = ?, local_path = ?, error = NULL, updated_at = ?
-      WHERE id = ?
-    `).run(input.message, input.bytesDownloaded, input.totalBytes, input.actualMd5, input.actualSha1, input.checksumVerified ? 1 : 0, input.sha256, input.localPath, now(), id)
-    return this.getVmDownload(id)
-  }
-
-  failVmDownload(id: string, message: string): VmDownload | null {
-    const current = this.getVmDownload(id)
-    if (!current) return null
-    this.db.prepare("UPDATE vm_downloads SET status = 'error', message = ?, progress = 0, error = ?, updated_at = ? WHERE id = ?").run(message, message, now(), id)
-    return this.getVmDownload(id)
   }
 
   createInstance(input: PersistInstanceInput, maxInstances = Number.MAX_SAFE_INTEGER): LabInstance | null {

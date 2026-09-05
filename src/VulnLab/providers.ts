@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { cp, mkdir, open, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { createConnection, createServer, type AddressInfo } from 'node:net'
-import { basename, extname, join, resolve, sep } from 'node:path'
+import { cp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createServer, type AddressInfo } from 'node:net'
+import { basename, join, resolve, sep } from 'node:path'
 import { CliMySqlManager, mysqlRuntimeConfigFromEnv, type MySqlManager, type MySqlResource, type MySqlRuntimeConfig } from './mysql.js'
 import type { Lab, LabInstance, RuntimeKind } from './types.js'
 
@@ -18,16 +18,6 @@ export interface NativeRuntimeConfig {
   mysql?: MySqlRuntimeConfig
 }
 
-export interface VmRuntimeConfig {
-  portStart: number
-  portEnd: number
-  qemuBinary: string
-  guestPort: number
-  memoryMb: number
-  cpus: number
-  bootTimeoutMs: number
-}
-
 export interface ProviderStartInput {
   instanceId: string
   lab: Lab
@@ -37,8 +27,6 @@ export interface ProviderStartInput {
   dataDir: string
   runtime: NativeRuntimeConfig
   phpAutoPrependFile?: string
-  artifactPath?: string
-  vm?: VmRuntimeConfig
 }
 
 export interface ProviderStartResult {
@@ -53,7 +41,6 @@ export interface ProviderRenewInput {
   instance: LabInstance
   lifetimeMinutes: number
   dataDir?: string
-  vm?: VmRuntimeConfig
 }
 
 export interface ProviderRenewResult {
@@ -66,7 +53,6 @@ export interface ProviderStopInput {
   instance: LabInstance
   runtime?: NativeRuntimeConfig
   dataDir?: string
-  vm?: VmRuntimeConfig
 }
 
 export interface ProviderStopResult {
@@ -89,7 +75,6 @@ export interface ProviderRecoverInput {
   instance: LabInstance
   runtime?: NativeRuntimeConfig
   dataDir?: string
-  vm?: VmRuntimeConfig
 }
 
 export class ProviderError extends Error {
@@ -186,35 +171,6 @@ const waitForHttp = async (host: string, port: number, child: ChildProcess) => {
   throw new ProviderError('NATIVE_PHP_START_TIMEOUT', 'PHP 内置服务器启动超时。', 503)
 }
 
-type TcpProbe = (host: string, port: number, child: ChildProcess, timeoutMs: number) => Promise<void>
-
-const waitForTcp: TcpProbe = async (host, port, child, timeoutMs) => {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new ProviderError('QEMU_PROCESS_EXITED', 'QEMU 进程在启动检查期间退出。', 503)
-    try {
-      await new Promise<void>((resolveProbe, rejectProbe) => {
-        const socket = createConnection({ host, port })
-        let settled = false
-        const finish = (error?: Error) => {
-          if (settled) return
-          settled = true
-          socket.destroy()
-          if (error) rejectProbe(error)
-          else resolveProbe()
-        }
-        socket.once('connect', () => finish())
-        socket.once('error', error => finish(error))
-        socket.setTimeout(Math.min(1_000, Math.max(100, timeoutMs)), () => finish(new Error('TCP probe timeout')))
-      })
-      return
-    } catch {
-      await sleep(100)
-    }
-  }
-  throw new ProviderError('QEMU_START_TIMEOUT', `QEMU 虚拟机在 ${timeoutMs} ms 内没有开放端口。`, 503)
-}
-
 const waitForExit = async (child: ChildProcess) => {
   if (child.exitCode !== null) return
   await new Promise<void>(resolveExit => {
@@ -263,13 +219,14 @@ const removeTree = async (root: string) => {
   await rm(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 150 }).catch(() => undefined)
 }
 
-type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs' | 'mutillidae'
+type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs' | 'mutillidae' | 'xvwa'
 
 const databaseProfile = (lab: Lab): DatabaseLabProfile | null => {
   if (lab.slug === 'dvwa') return 'dvwa'
   if (lab.slug === 'pikachu') return 'pikachu'
   if (lab.slug === 'sqli-labs') return 'sqli-labs'
   if (lab.slug === 'mutillidae') return 'mutillidae'
+  if (lab.slug === 'xvwa') return 'xvwa'
   return null
 }
 
@@ -462,6 +419,51 @@ define('DB_PORT', (int)(getenv('DB_PORT') ?: 3306));
   return sourceRoot
 }
 
+const configureXvwa = async (root: string) => {
+  const configPath = join(root, 'config.php')
+  const setupPath = join(root, 'setup', 'home.php')
+  const uploadRoot = join(root, 'img', 'uploads')
+  if (!(await stat(configPath).catch(() => null))?.isFile() || !(await stat(setupPath).catch(() => null))?.isFile()) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'XVWA 缺少 config.php 或数据库初始化文件。', 409)
+  }
+  const config = [
+    '<?php',
+    "$XVWA_WEBROOT = '';",
+    "$host = getenv('DB_SERVER') ?: '127.0.0.1';",
+    "$port = (int)(getenv('DB_PORT') ?: 3306);",
+    "$dbname = getenv('DB_DATABASE') ?: 'vulnlab';",
+    "$user = getenv('DB_USER') ?: 'vulnlab';",
+    "$pass = getenv('DB_PASSWORD') ?: '';",
+    '$conn = new mysqli($host, $user, $pass, $dbname, $port);',
+    '$conn1 = new PDO("mysql:host=" . $host . ";port=" . $port . ";dbname=" . $dbname, $user, $pass);',
+    '$conn1->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);',
+    '?>',
+    '',
+  ].join('\n')
+  await writeFile(configPath, config, 'utf8')
+
+  let setup = await readFile(setupPath, 'utf8')
+  setup = setup.replace("$sql = 'DROP TABLE '. $tables[$i].';';", "$sql = 'DROP TABLE IF EXISTS '. $tables[$i].';';")
+  setup = setup.replaceAll('mysql_error()', 'mysqli_error($conn)')
+  if (/DROP TABLE(?! IF EXISTS)/i.test(setup) || /mysql_error\s*\(/i.test(setup)) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'XVWA 初始化脚本仍包含不兼容的数据库语句。', 409)
+  }
+  await writeFile(setupPath, setup, 'utf8')
+  await mkdir(uploadRoot, { recursive: true })
+}
+
+const configureUploadLabs = async (root: string, appUrlRoot: string) => {
+  const configPath = join(root, 'config.php')
+  let contents = await readFile(configPath, 'utf8').catch(() => {
+    throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'Upload-Labs 缺少 config.php 配置文件。', 409)
+  })
+  const pattern = /^\s*define\(\s*["']APP_URL_ROOT["']\s*,.*$/mi
+  if (!pattern.test(contents)) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Upload-Labs 配置缺少 APP_URL_ROOT 定义。', 409)
+  if (!/^\/?(?:lab-runtime\/[A-Za-z0-9-]+)?$/.test(appUrlRoot)) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Upload-Labs 运行入口路径无效。', 409)
+  contents = contents.replace(pattern, `define("APP_URL_ROOT",${JSON.stringify(appUrlRoot)});`)
+  await writeFile(configPath, contents, 'utf8')
+}
+
 const configureDvwaExistingDatabase = async (root: string) => {
   const installerPath = join(root, 'dvwa', 'includes', 'DBMS', 'MySQL.php')
   let contents = await readFile(installerPath, 'utf8').catch(() => {
@@ -597,7 +599,8 @@ export class NativePhpProvider implements LabProvider {
     const bootstrapRoot = `${root}-bootstrap`
     let processInfo: { child: ChildProcess; port: number } | null = null
     try {
-      await cp(resolve(input.lab.localPath as string), bootstrapRoot, { recursive: true, force: true })
+      const sourceRoot = profile === 'xvwa' ? join(bootstrapRoot, 'xvwa') : bootstrapRoot
+      await cp(resolve(input.lab.localPath as string), sourceRoot, { recursive: true, force: true })
       if (profile === 'dvwa') {
         await configureDvwa(bootstrapRoot)
         await configureDvwaInstallerCompatibility(bootstrapRoot)
@@ -608,10 +611,12 @@ export class NativePhpProvider implements LabProvider {
         await configurePikachuInstallerPort(bootstrapRoot)
       }
       const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(bootstrapRoot) : null
+      if (profile === 'xvwa') await configureXvwa(sourceRoot)
       const phpInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(bootstrapRoot) }
         : input
-      processInfo = await this.startPhpProcess(mutillidaeRoot ?? bootstrapRoot, phpInput, this.databaseEnvironment(profile, resource))
+      const documentRoot = profile === 'xvwa' ? bootstrapRoot : mutillidaeRoot ?? bootstrapRoot
+      processInfo = await this.startPhpProcess(documentRoot, phpInput, this.databaseEnvironment(profile, resource))
       if (profile === 'dvwa') {
         const setupResponse = await fetch(this.runtimeUrl(input, processInfo.port, '/setup.php'))
         const setupHtml = await setupResponse.text()
@@ -647,6 +652,12 @@ export class NativePhpProvider implements LabProvider {
         if (!result.ok || !/Inserted data correctly|Creating New Table/i.test(resultHtml) || /Could not connect|Failed to connect|Error creating|Unable to connect/i.test(resultHtml)) {
           throw new ProviderError('NATIVE_PHP_DB_INIT_FAILED', 'SQLi-Labs 数据库初始化没有完成。', 503)
         }
+      } else if (profile === 'xvwa') {
+        const result = await fetch(this.runtimeUrl(input, processInfo.port, '/xvwa/setup/?action=do'))
+        const resultHtml = await result.text()
+        if (!result.ok || !/Setup finished/i.test(resultHtml) || /Connection Failed|Failed to use\/select database/i.test(resultHtml)) {
+          throw new ProviderError('NATIVE_PHP_DB_INIT_FAILED', 'XVWA 数据库初始化没有完成。', 503)
+        }
       } else {
         const result = await fetch(this.runtimeUrl(input, processInfo.port, '/set-up-database.php'))
         const resultHtml = await result.text()
@@ -676,23 +687,30 @@ export class NativePhpProvider implements LabProvider {
     if (sourcePath !== dataRoot && !sourcePath.startsWith(dataPrefix)) throw new ProviderError('NATIVE_PHP_SOURCE_OUTSIDE_DATA', '靶场目录必须位于 VulnLab 数据目录内。', 409)
     const runtimeRoot = join(dataRoot, 'runtime', input.instanceId)
     const profile = databaseProfile(input.lab)
+    const sourceTarget = profile === 'xvwa' ? join(runtimeRoot, 'xvwa') : runtimeRoot
     let processInfo: { child: ChildProcess; port: number } | null = null
     let database: MySqlResource | null = null
     try {
       await mkdir(resolve(dataRoot, 'runtime'), { recursive: true })
       if (profile) {
-        if (!input.runtime.mysql) throw new ProviderError('NATIVE_PHP_MYSQL_NOT_CONFIGURED', 'DVWA/Pikachu 运行需要配置 MySQL 管理账号。', 409)
+        if (!input.runtime.mysql) throw new ProviderError('NATIVE_PHP_MYSQL_NOT_CONFIGURED', 'PHP 数据库靶场运行需要配置 MySQL 管理账号。', 409)
         database = await this.mysqlManager.provision({ labSlug: input.lab.slug, instanceId: input.instanceId, config: input.runtime.mysql })
         await this.initializeDatabase(profile, input, runtimeRoot, database)
       }
-      await cp(sourcePath, runtimeRoot, { recursive: true, force: true })
-      if (profile === 'dvwa') await configureDvwa(runtimeRoot)
-      if (profile === 'pikachu') await configurePikachu(runtimeRoot)
+      await cp(sourcePath, sourceTarget, { recursive: true, force: true })
+      if (profile === 'dvwa') await configureDvwa(sourceTarget)
+      if (profile === 'pikachu') await configurePikachu(sourceTarget)
       const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(runtimeRoot) : null
+      if (profile === 'xvwa') await configureXvwa(sourceTarget)
+      if (input.lab.slug === 'upload-labs') {
+        const appUrlRoot = input.proxyEndpoint ? new URL(input.proxyEndpoint).pathname.replace(/\/$/, '') : ''
+        await configureUploadLabs(sourceTarget, appUrlRoot)
+      }
       const runtimeInput = profile === 'sqli-labs'
-        ? { ...input, phpAutoPrependFile: await configureSqliLabs(runtimeRoot) }
+        ? { ...input, phpAutoPrependFile: await configureSqliLabs(sourceTarget) }
         : input
-      processInfo = await this.startPhpProcess(mutillidaeRoot ?? runtimeRoot, runtimeInput, profile && database ? this.databaseEnvironment(profile, database) : {})
+      const documentRoot = profile === 'xvwa' ? runtimeRoot : mutillidaeRoot ?? runtimeRoot
+      processInfo = await this.startPhpProcess(documentRoot, runtimeInput, profile && database ? this.databaseEnvironment(profile, database) : {})
       const runtime: NativeRuntime = { child: processInfo.child, root: runtimeRoot, port: processInfo.port, bindHost: input.runtime.bindHost, database }
       this.runtimes.set(input.instanceId, runtime)
       if (processInfo.child.pid) await writeFile(join(runtimeRoot, 'vulnlab-runtime.json'), JSON.stringify({ pid: processInfo.child.pid, port: processInfo.port, provider: this.id }), 'utf8')
@@ -705,9 +723,10 @@ export class NativePhpProvider implements LabProvider {
         if (detachedDatabase) void this.mysqlManager.destroy(detachedDatabase).catch(() => undefined)
       })
       const timestamps = lease(input.lifetimeMinutes)
+      const endpointSuffix = profile === 'xvwa' ? 'xvwa/' : ''
       return {
         ...timestamps,
-        endpoint: input.proxyEndpoint ?? `${runtimeOrigin(input.publicOrigin, processInfo.port, input.runtime.publicOriginTemplate)}/`,
+        endpoint: `${input.proxyEndpoint ?? `${runtimeOrigin(input.publicOrigin, processInfo.port, input.runtime.publicOriginTemplate)}/`}${endpointSuffix}`,
         logs: [
           `${timestamps.createdAt} 启动原生 PHP 实例`,
           `${timestamps.createdAt} PHP=${input.runtime.phpBinary || this.phpBinary}`,
@@ -1090,383 +1109,6 @@ export class NativeProcessProvider implements LabProvider {
   }
 }
 
-interface QemuRuntime {
-  child: ChildProcess
-  root: string
-  port: number
-}
-
-interface QemuState {
-  pid: number
-  port: number
-  createdAt: string
-}
-
-export interface QemuVmProviderOptions {
-  qemuBinary?: string
-  spawnImpl?: SpawnFunction
-  allocatePort?: PortAllocator
-  probePort?: TcpProbe
-  terminatePid?: TerminatePid
-}
-
-const qemuImageFormat = (imagePath: string) => {
-  const extension = extname(imagePath).toLowerCase()
-  const formats: Record<string, string> = {
-    '.qcow': 'qcow',
-    '.qcow2': 'qcow2',
-    '.raw': 'raw',
-    '.img': 'raw',
-    '.vdi': 'vdi',
-    '.vmdk': 'vmdk',
-  }
-  const format = formats[extension]
-  if (!format) {
-    if (extension === '.ova' || extension === '.ovf') {
-      throw new ProviderError('QEMU_IMAGE_ARCHIVE_UNSUPPORTED', '当前 QEMU Provider 只把 OVA 作为整体归档处理；单独的 OVF 文件仍需要配套磁盘。', 409)
-    }
-    throw new ProviderError('QEMU_IMAGE_FORMAT_UNSUPPORTED', '当前 QEMU Provider 只支持 qcow2、raw、vdi 和 vmdk 磁盘镜像。', 409)
-  }
-  if (imagePath.includes(',')) throw new ProviderError('QEMU_IMAGE_PATH_INVALID', '虚拟机镜像路径不能包含逗号。', 409)
-  return format
-}
-
-interface OvaMember {
-  path: string
-  bytes: number
-  descriptor: boolean
-}
-
-const TAR_BLOCK_BYTES = 512
-const OVA_MAX_MEMBERS = 256
-const OVA_MAX_EXTRACTED_BYTES = 100 * 1024 ** 3
-
-const tarText = (block: Buffer, start: number, length: number) => {
-  const end = block.indexOf(0, start)
-  return block.subarray(start, end === -1 ? start + length : end).toString('utf8').trim()
-}
-
-const tarSize = (block: Buffer) => {
-  const raw = tarText(block, 124, 12).replace(/\0/g, '').trim()
-  if (!raw) return 0
-  if (!/^[0-7]+$/.test(raw)) throw new ProviderError('QEMU_OVA_HEADER_INVALID', 'OVA 文件包含无效的 TAR 文件大小。', 409)
-  const size = Number.parseInt(raw, 8)
-  if (!Number.isSafeInteger(size) || size < 0) throw new ProviderError('QEMU_OVA_MEMBER_TOO_LARGE', 'OVA 文件成员大小无效。', 409)
-  return size
-}
-
-const safeArchivePath = (value: string) => {
-  const normalized = value.replaceAll('\\', '/')
-  const segments = normalized.split('/')
-  if (!normalized || normalized.startsWith('/') || segments.some(segment => !segment || segment === '.' || segment === '..')) {
-    throw new ProviderError('QEMU_OVA_PATH_INVALID', `OVA 文件包含不安全路径：${value}。`, 409)
-  }
-  return segments.join('/')
-}
-
-const descriptorHeader = (value: Buffer) => value.toString('utf8').replace(/^\uFEFF/, '').trimStart().startsWith('# Disk DescriptorFile')
-
-const skipArchiveBytes = async (archive: Awaited<ReturnType<typeof open>>, bytes: number) => {
-  let remaining = bytes
-  const chunk = Buffer.alloc(1024 * 1024)
-  while (remaining > 0) {
-    const readSize = Math.min(remaining, chunk.byteLength)
-    const result = await archive.read(chunk, 0, readSize, null)
-    if (result.bytesRead !== readSize) throw new ProviderError('QEMU_OVA_TRUNCATED', 'OVA 文件成员不完整。', 409)
-    remaining -= readSize
-  }
-}
-
-const extractOva = async (sourcePath: string, destinationRoot: string): Promise<string> => {
-  const archive = await open(sourcePath, 'r')
-  const members: OvaMember[] = []
-  const seenPaths = new Set<string>()
-  let extractedBytes = 0
-  let ended = false
-  try {
-    await mkdir(destinationRoot, { recursive: true })
-    const header = Buffer.alloc(TAR_BLOCK_BYTES)
-    for (let memberIndex = 0; memberIndex < OVA_MAX_MEMBERS; memberIndex += 1) {
-      const read = await archive.read(header, 0, TAR_BLOCK_BYTES, null)
-      if (read.bytesRead !== TAR_BLOCK_BYTES) throw new ProviderError('QEMU_OVA_TRUNCATED', 'OVA 文件的 TAR 头不完整。', 409)
-      if (header.every(byte => byte === 0)) {
-        ended = true
-        break
-      }
-      const name = tarText(header, 0, 100)
-      const prefix = tarText(header, 345, 155)
-      const rawMemberPath = prefix ? `${prefix}/${name}` : name
-      const memberPath = safeArchivePath(rawMemberPath.replace(/\/+$/, ''))
-      if (seenPaths.has(memberPath)) throw new ProviderError('QEMU_OVA_PATH_DUPLICATE', `OVA 文件包含重复成员：${memberPath}。`, 409)
-      seenPaths.add(memberPath)
-      const size = tarSize(header)
-      const type = String.fromCharCode(header[156] || 0)
-      const isDirectory = type === '5' || memberPath.endsWith('/')
-      const isRegular = type === '\0' || type === '0'
-      if (!isDirectory && !isRegular) throw new ProviderError('QEMU_OVA_MEMBER_UNSUPPORTED', `OVA 文件包含不支持的成员类型：${memberPath}。`, 409)
-      if (size > OVA_MAX_EXTRACTED_BYTES || extractedBytes > OVA_MAX_EXTRACTED_BYTES - size) throw new ProviderError('QEMU_OVA_SIZE_LIMIT', 'OVA 解包后的磁盘总大小超过限制。', 409)
-      extractedBytes += size
-      const padding = (TAR_BLOCK_BYTES - (size % TAR_BLOCK_BYTES)) % TAR_BLOCK_BYTES
-      if (isDirectory) {
-        await mkdir(join(destinationRoot, memberPath), { recursive: true })
-        await skipArchiveBytes(archive, size)
-      } else if (/\.vmdk$/i.test(memberPath)) {
-        const outputPath = join(destinationRoot, memberPath)
-        await mkdir(resolve(outputPath, '..'), { recursive: true })
-        const output = await open(outputPath, 'w')
-        const firstBytes = Buffer.alloc(Math.min(1_024, size))
-        let remaining = size
-        let firstRead = 0
-        try {
-          const chunk = Buffer.alloc(1024 * 1024)
-          while (remaining > 0) {
-            const readSize = Math.min(remaining, chunk.byteLength)
-            const result = await archive.read(chunk, 0, readSize, null)
-            if (result.bytesRead !== readSize) throw new ProviderError('QEMU_OVA_TRUNCATED', `OVA 文件成员不完整：${memberPath}。`, 409)
-            await output.write(chunk.subarray(0, readSize))
-            if (firstRead < firstBytes.byteLength) {
-              const copySize = Math.min(firstBytes.byteLength - firstRead, readSize)
-              chunk.copy(firstBytes, firstRead, 0, copySize)
-              firstRead += copySize
-            }
-            remaining -= readSize
-          }
-        } finally {
-          await output.close()
-        }
-        members.push({ path: memberPath, bytes: size, descriptor: descriptorHeader(firstBytes) })
-      } else {
-        let remaining = size
-        const chunk = Buffer.alloc(1024 * 1024)
-        while (remaining > 0) {
-          const readSize = Math.min(remaining, chunk.byteLength)
-          const result = await archive.read(chunk, 0, readSize, null)
-          if (result.bytesRead !== readSize) throw new ProviderError('QEMU_OVA_TRUNCATED', `OVA 文件成员不完整：${memberPath}。`, 409)
-          remaining -= readSize
-        }
-      }
-      if (padding) {
-        await skipArchiveBytes(archive, padding)
-      }
-    }
-    if (!ended) throw new ProviderError('QEMU_OVA_MEMBER_LIMIT', 'OVA 文件成员数量超过限制或缺少结束标记。', 409)
-    if (!members.length) throw new ProviderError('QEMU_OVA_NO_DISK', 'OVA 文件中没有 VMDK 磁盘成员。', 409)
-    const selected = members.find(member => member.descriptor) ?? [...members].sort((left, right) => right.bytes - left.bytes)[0]
-    return join(destinationRoot, selected.path)
-  } finally {
-    await archive.close()
-  }
-}
-
-const validateQemuRuntime = (config: VmRuntimeConfig | undefined) => {
-  if (!config) throw new ProviderError('QEMU_RUNTIME_NOT_CONFIGURED', '尚未配置 QEMU 运行参数。', 409)
-  if (!config.qemuBinary?.trim()) throw new ProviderError('QEMU_BINARY_INVALID', 'QEMU 可执行文件配置为空。', 500)
-  if (!Number.isInteger(config.portStart) || !Number.isInteger(config.portEnd) || config.portStart < 1024 || config.portEnd > 65535 || config.portStart > config.portEnd) {
-    throw new ProviderError('QEMU_PORT_RANGE_INVALID', 'QEMU 运行端口范围无效。', 500)
-  }
-  if (!Number.isInteger(config.guestPort) || config.guestPort < 1 || config.guestPort > 65535) throw new ProviderError('QEMU_GUEST_PORT_INVALID', 'QEMU 虚拟机服务端口无效。', 500)
-  if (!Number.isInteger(config.memoryMb) || config.memoryMb < 128 || config.memoryMb > 65_536) throw new ProviderError('QEMU_MEMORY_INVALID', 'QEMU 内存必须是 128 到 65536 MiB 之间的整数。', 500)
-  if (!Number.isInteger(config.cpus) || config.cpus < 1 || config.cpus > 64) throw new ProviderError('QEMU_CPUS_INVALID', 'QEMU CPU 数量必须是 1 到 64 之间的整数。', 500)
-  if (!Number.isInteger(config.bootTimeoutMs) || config.bootTimeoutMs < 1_000 || config.bootTimeoutMs > 600_000) throw new ProviderError('QEMU_BOOT_TIMEOUT_INVALID', 'QEMU 启动超时必须是 1000 到 600000 毫秒之间的整数。', 500)
-  return config
-}
-
-export class QemuVmProvider implements LabProvider {
-  readonly id = 'qemu-vm'
-  readonly supportedRuntimeKinds: readonly RuntimeKind[] = ['vm']
-  private readonly qemuBinary: string
-  private readonly spawnImpl: SpawnFunction
-  private readonly allocatePortImpl: PortAllocator
-  private readonly probePortImpl: TcpProbe
-  private readonly terminatePidImpl: TerminatePid
-  private readonly runtimes = new Map<string, QemuRuntime>()
-  private readonly reservedPorts = new Set<number>()
-  private portAllocation = Promise.resolve()
-
-  constructor(options: QemuVmProviderOptions = {}) {
-    this.qemuBinary = options.qemuBinary ?? process.env.VULNLAB_QEMU_BIN ?? 'qemu-system-x86_64'
-    this.spawnImpl = options.spawnImpl ?? spawn
-    this.allocatePortImpl = options.allocatePort ?? allocatePort
-    this.probePortImpl = options.probePort ?? waitForTcp
-    this.terminatePidImpl = options.terminatePid ?? terminatePid
-  }
-
-  private async claimPort(config: VmRuntimeConfig): Promise<number> {
-    let release!: () => void
-    const turn = new Promise<void>(resolveTurn => { release = resolveTurn })
-    const previous = this.portAllocation
-    this.portAllocation = previous.then(() => turn)
-    await previous
-    try {
-      for (let attempt = 0; attempt <= config.portEnd - config.portStart; attempt += 1) {
-        const port = await this.allocatePortImpl('127.0.0.1', config.portStart, config.portEnd)
-        if (!this.reservedPorts.has(port)) {
-          this.reservedPorts.add(port)
-          return port
-        }
-      }
-      throw new ProviderError('QEMU_PORT_EXHAUSTED', 'QEMU 运行端口已用尽，请扩大端口范围。', 409)
-    } finally {
-      release()
-    }
-  }
-
-  private async artifact(input: ProviderStartInput) {
-    if (!input.artifactPath) throw new ProviderError('QEMU_IMAGE_NOT_READY', '尚未选择已完成下载的虚拟机镜像。', 409)
-    const dataRoot = resolve(input.dataDir)
-    const imagePath = resolve(input.artifactPath)
-    const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
-    if (imagePath !== dataRoot && !imagePath.startsWith(dataPrefix)) throw new ProviderError('QEMU_IMAGE_OUTSIDE_DATA', '虚拟机镜像必须位于 VulnLab 数据目录内。', 409)
-    if (imagePath.includes(',')) throw new ProviderError('QEMU_IMAGE_PATH_INVALID', '虚拟机镜像路径不能包含逗号。', 409)
-    const imageStat = await stat(imagePath).catch(() => null)
-    if (!imageStat?.isFile() || imageStat.size <= 0) throw new ProviderError('QEMU_IMAGE_NOT_FOUND', '虚拟机镜像不存在或为空。', 409)
-    return { imagePath, format: extname(imagePath).toLowerCase() === '.ova' ? 'ova' : qemuImageFormat(imagePath) }
-  }
-
-  private async launch(input: ProviderStartInput, config: VmRuntimeConfig, imagePath: string, format: string, port: number, root: string) {
-    const args = [
-      '-m', String(config.memoryMb),
-      '-smp', String(config.cpus),
-      '-drive', `file=${imagePath},if=ide,format=${format}`,
-      '-nic', `user,model=e1000,hostfwd=tcp:127.0.0.1:${port}-:${config.guestPort}`,
-      '-display', 'none',
-      '-serial', 'none',
-      '-monitor', 'none',
-      '-snapshot',
-      '-no-reboot',
-    ]
-    let child: ChildProcess | null = null
-    let stderrTail = ''
-    try {
-      child = this.spawnImpl(config.qemuBinary || this.qemuBinary, args, {
-        cwd: resolve(input.dataDir),
-        env: { ...process.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        shell: false,
-      })
-      await new Promise<void>((resolveSpawn, rejectSpawn) => {
-        child?.once('spawn', () => resolveSpawn())
-        child?.once('error', rejectSpawn)
-      })
-      child.stdout?.resume()
-      child.stderr?.setEncoding('utf8')
-      child.stderr?.on('data', chunk => {
-        stderrTail = `${stderrTail}${String(chunk)}`.slice(-2_000)
-      })
-      if (!child.pid) throw new ProviderError('QEMU_PID_MISSING', 'QEMU 进程没有返回有效 PID。', 503)
-      await writeFile(join(root, 'state.json'), JSON.stringify({ pid: child.pid, port, createdAt: new Date().toISOString() }, null, 2), 'utf8')
-      await this.probePortImpl('127.0.0.1', port, child, config.bootTimeoutMs)
-      return child
-    } catch (error) {
-      if (child) await waitForExit(child)
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') throw new ProviderError('QEMU_NOT_FOUND', `找不到 QEMU 可执行文件：${config.qemuBinary || this.qemuBinary}。`, 503)
-      if (error instanceof ProviderError) {
-        const detail = stderrTail.replace(/\s+/g, ' ').trim()
-        throw detail ? new ProviderError(error.code, `${error.message} QEMU: ${detail}`, error.statusCode) : error
-      }
-      throw new ProviderError('QEMU_START_FAILED', error instanceof Error ? error.message : 'QEMU 虚拟机启动失败。', 503)
-    }
-  }
-
-  private statePath(dataDir: string, instanceId: string) {
-    return join(resolve(dataDir), 'vm-runtime', instanceId, 'state.json')
-  }
-
-  private async readState(dataDir: string, instanceId: string): Promise<Partial<QemuState> | null> {
-    try {
-      return JSON.parse(await readFile(this.statePath(dataDir, instanceId), 'utf8')) as Partial<QemuState>
-    } catch {
-      return null
-    }
-  }
-
-  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
-    const config = validateQemuRuntime(input.vm)
-    if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError('QEMU_INSTANCE_ID_INVALID', 'QEMU 运行实例 ID 格式无效。', 400)
-    const artifact = await this.artifact(input)
-    const root = join(resolve(input.dataDir), 'vm-runtime', input.instanceId)
-    let port = 0
-    let child: ChildProcess | null = null
-    try {
-      await mkdir(root, { recursive: true })
-      port = await this.claimPort(config)
-      const preparedArtifact = extname(artifact.imagePath).toLowerCase() === '.ova'
-        ? { imagePath: await extractOva(artifact.imagePath, join(root, 'ova')), format: 'vmdk' }
-        : artifact
-      child = await this.launch(input, config, preparedArtifact.imagePath, preparedArtifact.format, port, root)
-      const runtime: QemuRuntime = { child, root, port }
-      this.runtimes.set(input.instanceId, runtime)
-      child.once('exit', () => {
-        if (this.runtimes.get(input.instanceId)?.child === child) this.runtimes.delete(input.instanceId)
-        this.reservedPorts.delete(port)
-        void removeTree(root)
-      })
-      const timestamps = lease(input.lifetimeMinutes)
-      const origin = input.publicOrigin.replace(/\/+$/, '')
-      return {
-        ...timestamps,
-        endpoint: input.proxyEndpoint ?? `${origin}/lab-runtime/${encodeURIComponent(input.instanceId)}/`,
-        logs: [
-          `${timestamps.createdAt} 启动 QEMU 虚拟机`,
-          `${timestamps.createdAt} 镜像格式=${artifact.format}`,
-          `${timestamps.createdAt} 宿主端口=${port} → 虚拟机端口=${config.guestPort}`,
-          `${timestamps.createdAt} 入口已准备`,
-        ],
-      }
-    } catch (error) {
-      this.reservedPorts.delete(port)
-      if (child) await waitForExit(child)
-      await removeTree(root)
-      if (error instanceof ProviderError) throw error
-      throw new ProviderError('QEMU_START_FAILED', error instanceof Error ? error.message : 'QEMU 虚拟机启动失败。', 503)
-    }
-  }
-
-  async renew(input: ProviderRenewInput): Promise<ProviderRenewResult> {
-    if (!this.runtimes.has(input.instance.id)) throw new ProviderError('QEMU_PROCESS_MISSING', 'QEMU 虚拟机进程已退出，请重新启动实例。', 409)
-    const { expiresAt } = lease(input.lifetimeMinutes)
-    return { expiresAt, log: `${new Date().toISOString()} QEMU 虚拟机实例续期` }
-  }
-
-  getProxyTarget(instanceId: string): string | null {
-    const runtime = this.runtimes.get(instanceId)
-    return runtime ? `http://127.0.0.1:${runtime.port}` : null
-  }
-
-  async stop(input: ProviderStopInput): Promise<ProviderStopResult> {
-    const runtime = this.runtimes.get(input.instance.id)
-    if (runtime) {
-      this.runtimes.delete(input.instance.id)
-      this.reservedPorts.delete(runtime.port)
-      await waitForExit(runtime.child)
-      await removeTree(runtime.root)
-    } else if (input.dataDir) {
-      const state = await this.readState(input.dataDir, input.instance.id)
-      if (Number.isInteger(state?.pid) && (state?.pid as number) > 0) await this.terminatePidImpl(state?.pid as number)
-      await removeTree(join(resolve(input.dataDir), 'vm-runtime', input.instance.id))
-    }
-    return { log: `${new Date().toISOString()} QEMU 虚拟机实例结束` }
-  }
-
-  async recover(input: ProviderRecoverInput): Promise<void> {
-    if (!input.dataDir) return
-    const state = await this.readState(input.dataDir, input.instance.id)
-    if (Number.isInteger(state?.pid) && (state?.pid as number) > 0) await this.terminatePidImpl(state?.pid as number)
-    await removeTree(join(resolve(input.dataDir), 'vm-runtime', input.instance.id))
-  }
-
-  async shutdown(): Promise<void> {
-    const runtimes = [...this.runtimes.values()]
-    this.runtimes.clear()
-    await Promise.all(runtimes.map(async runtime => {
-      this.reservedPorts.delete(runtime.port)
-      await waitForExit(runtime.child)
-      await removeTree(runtime.root)
-    }))
-  }
-}
-
 export class ProviderRegistry {
   private readonly providers = new Map<string, LabProvider>()
 
@@ -1500,5 +1142,4 @@ export const providerRegistry = new ProviderRegistry([
   new NativeProcessProvider('native-node'),
   new NativeProcessProvider('native-java'),
   new NativeProcessProvider('native-python'),
-  new QemuVmProvider(),
 ])
