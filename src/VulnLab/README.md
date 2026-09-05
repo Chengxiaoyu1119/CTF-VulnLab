@@ -1,6 +1,6 @@
 # VulnLab Node 应用
 
-这是 VulnLab 0.3.0 的 Node.js / TypeScript 单机应用入口。
+这是 VulnLab 当前开发基线的 Node.js / TypeScript 单机应用入口，暂未形成正式发行版。
 
 ## 模块边界
 
