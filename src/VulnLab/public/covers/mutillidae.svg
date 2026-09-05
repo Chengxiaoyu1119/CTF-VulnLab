@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 900" role="img" aria-labelledby="title description">
+  <title id="title">OWASP Mutillidae II</title>
+  <desc id="description">OWASP Mutillidae II training environment cover</desc>
+  <rect width="1000" height="900" fill="#162229"/>
+  <path d="M0 70h1000M0 140h1000M0 210h1000M0 280h1000M0 350h1000M0 420h1000M0 490h1000M0 560h1000M0 630h1000M0 700h1000M0 770h1000M70 0v900M140 0v900M210 0v900M280 0v900M350 0v900M420 0v900M490 0v900M560 0v900M630 0v900M700 0v900M770 0v900M840 0v900M910 0v900" stroke="#21343c" stroke-width="2" opacity=".62"/>
+  <rect x="48" y="48" width="904" height="804" rx="24" fill="none" stroke="#36505a" stroke-width="2"/>
+  <g transform="translate(500 282)">
+    <circle r="112" fill="#dc4439"/>
+    <circle r="80" fill="#162229"/>
+    <path d="M-80-34-138-78M-80 34l-58 44M80-34l58-44M80 34l58 44" fill="none" stroke="#dc4439" stroke-width="17" stroke-linecap="round"/>
+    <path d="M0-62V62M-62 0H62" stroke="#f5f7f5" stroke-width="10" stroke-linecap="round"/>
+    <circle r="24" fill="#f5f7f5"/>
+    <circle r="10" fill="#dc4439"/>
+  </g>
+  <text x="500" y="510" fill="#f4f6f5" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="700" letter-spacing="7" text-anchor="middle">MUTILLIDAE</text>
+  <text x="500" y="558" fill="#b6c4c8" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="600" letter-spacing="4" text-anchor="middle">OWASP  /  WEB SECURITY LAB</text>
+  <path d="M190 612h620" stroke="#dc4439" stroke-width="4"/>
+  <text x="500" y="665" fill="#7f969d" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" letter-spacing="3" text-anchor="middle">MUTILLIDAE II</text>
+  <text x="500" y="710" fill="#668089" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" letter-spacing="2" text-anchor="middle">DELIBERATELY VULNERABLE APPLICATION</text>
+  <text x="500" y="794" fill="#647b83" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" letter-spacing="3" text-anchor="middle">VULNLAB / NATIVE PHP + MYSQL</text>
+</svg>

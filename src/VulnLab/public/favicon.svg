@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">VulnLab</title>
   <desc id="desc">VulnLab target mark</desc>
-  <rect width="64" height="64" rx="18" fill="#17202c"/>
+  <rect width="64" height="64" rx="18" fill="#1e1e1e"/>
   <path d="M17 19h30L32 47 17 19Z" fill="none" stroke="#f6f7f8" stroke-width="4" stroke-linejoin="round"/>
-  <circle cx="32" cy="32" r="6" fill="#d85b54"/>
+  <circle cx="32" cy="32" r="6" fill="#ff7f2a"/>
 </svg>
