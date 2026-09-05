@@ -90,9 +90,19 @@ try {
   const labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
   const dvwa = labs.find(lab => lab.slug === 'dvwa')
   assert.ok(dvwa)
-  const blockedStart = await fetch(`${server.baseUrl}/api/labs/${dvwa.id}/instances`, { method: 'POST', headers: { cookie: endpointSession.cookie, 'x-csrf-token': endpointSession.csrfToken } })
-  assert.equal(blockedStart.status, 409)
-  assert.equal((await blockedStart.json()).code, 'LAB_NOT_READY')
+  const preparingStart = await fetch(`${server.baseUrl}/api/labs/${dvwa.id}/instances`, { method: 'POST', headers: { cookie: endpointSession.cookie, 'x-csrf-token': endpointSession.csrfToken } })
+  assert.equal(preparingStart.status, 202)
+  assert.equal((await preparingStart.json()).status, 'preparing')
+  await stopServer(server.child)
+  server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com' })
+  let resumedJob = null
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const jobs = (await request(server.baseUrl, '/api/import-jobs', { headers: { cookie: endpointSession.cookie } })).body
+    const current = jobs.find(job => job.labId === dvwa.id)
+    if (current && current.status !== 'queued') { resumedJob = current; break }
+    await wait(100)
+  }
+  assert.ok(resumedJob, 'queued import was not resumed after restart')
   await stopServer(server.child)
 
   const productionDir = join(root, 'production')

@@ -8,7 +8,6 @@ const root = resolve(import.meta.dirname, '..')
 const require = createRequire(resolve(root, 'src/VulnLab/package.json'))
 const { zipSync } = require('fflate')
 const { importGitHubRepository, importGitLabRepository, importerInternals, ImporterError } = await import(new URL('../src/VulnLab/dist/importer.js', import.meta.url))
-const { importVulnHubCatalog, readVulnHubCatalog, vulnhubInternals, VulnHubImporterError } = await import(new URL('../src/VulnLab/dist/vulnhub.js', import.meta.url))
 
 const archive = zipSync({
   'DVWA-main/README.md': new TextEncoder().encode('# DVWA fixture'),
@@ -84,47 +83,6 @@ try {
   assert.throws(() => importerInternals.assertPortablePaths(['A', 'a/index.php']), /Windows 文件目录冲突/)
   assert.throws(() => importerInternals.assertPortablePaths(['CON.txt']), /Windows 不可用文件名/)
   assert.throws(() => importerInternals.assertPortablePaths(['report.txt:secret']), /Windows 不可用文件名/)
-
-  const vulnhubCatalogHtml = '<a href="/entry/earth,755/"><div class="card-teaser">Earth fixture</div></a><div class="card-title"><a href="/entry/earth,755/">The Planets: Earth</a></div><a href="/entry/earth,755/">2 Nov 2021</a><a href="/entry/earth,755/" class="card-option-link">Details</a>'
-  const vulnhubDetailHtml = '<li><b>Author</b>: <a>SirFlash</a></li><p>Difficulty: Easy</p><li><b>Filename</b>: Earth.ova</li><li><b>File size</b>: 2.0 GB</li><li><b>MD5</b>: 7577F9CB54D024FD2283C998BCC8C173</li><li><b>SHA1</b>: 6476ACC056C32E09377B5403126FB0B34DBEA0A7</li><a href="https://download.vulnhub.com/theplanets/Earth.ova">Mirror</a><a href="https://download.vulnhub.com/checksum.txt">Checksums</a>'
-  const vulnhubLinks = vulnhubInternals.parseCatalogLinks('https://www.vulnhub.com/', vulnhubCatalogHtml)
-  assert.equal(vulnhubLinks.length, 1)
-  assert.equal(vulnhubLinks[0].title, 'The Planets: Earth')
-  const vulnhubDetail = vulnhubInternals.parseDetail(vulnhubDetailHtml)
-  assert.equal(vulnhubDetail.md5, '7577F9CB54D024FD2283C998BCC8C173')
-  assert.deepEqual(vulnhubDetail.downloadUrls, ['https://download.vulnhub.com/theplanets/Earth.ova'])
-  let vulnhubBodyCancelled = false
-  const oversizedVulnHubPage = new Response(new ReadableStream({
-    start(controller) { controller.enqueue(new Uint8Array(vulnhubInternals.MAX_PAGE_BYTES + 1)) },
-    cancel() { vulnhubBodyCancelled = true },
-  }), { status: 200 })
-  await assert.rejects(vulnhubInternals.readPage(async () => oversizedVulnHubPage, 'https://www.vulnhub.com/'), /超过大小限制/)
-  assert.equal(vulnhubBodyCancelled, true)
-  const vulnhubDir = await mkdtemp(join(tmpdir(), 'vulnlab-vulnhub-import-'))
-  try {
-    const vulnhubManifest = await importVulnHubCatalog({
-      sourceUrl: 'https://www.vulnhub.com/',
-      sourceRef: 'vulnhub.com',
-      jobId: 'vulnhub-fixture',
-      dataDir: vulnhubDir,
-      fetchImpl: async url => new Response(url.endsWith('/entry/earth,755/') ? vulnhubDetailHtml : vulnhubCatalogHtml, { status: 200 }),
-    })
-    assert.equal(vulnhubManifest.adapterId, 'vulnhub-catalog')
-    assert.equal(vulnhubManifest.fileCount, 1)
-    assert.equal(vulnhubManifest.warnings.length, 0)
-    assert.ok(vulnhubManifest.archiveSha256.match(/^[a-f0-9]{64}$/))
-    const catalog = await readVulnHubCatalog(vulnhubManifest.localPath, vulnhubManifest.archiveSha256)
-    assert.equal(catalog.entries[0].title, 'The Planets: Earth')
-    assert.notEqual(catalog.entries[0].title, 'Details')
-    assert.equal(catalog.entries[0].downloadUrls[0], 'https://download.vulnhub.com/theplanets/Earth.ova')
-    assert.ok(catalog.entries[0].downloadUrls.every(url => !url.endsWith('/checksum.txt')))
-    await assert.rejects(
-      readVulnHubCatalog(vulnhubManifest.localPath, '0'.repeat(64)),
-      /校验值不匹配/,
-    )
-  } finally {
-    await rm(vulnhubDir, { recursive: true, force: true })
-  }
 
   const collisionArchive = zipSync({
     'Less-24/Logged-in.php': new TextEncoder().encode('<?php echo "upper";'),
