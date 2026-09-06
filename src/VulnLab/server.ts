@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie'
 import helmet from '@fastify/helmet'
 import fastifyStatic from '@fastify/static'
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { isIP } from 'node:net'
 import { fileURLToPath } from 'node:url'
@@ -254,11 +254,20 @@ const publicOrigin = (request: FastifyRequest) => {
   return requestHost ? `${protocol}://${requestHost}` : `http://127.0.0.1:${port}`
 }
 
+const isDirectory = async (path: string) => (await stat(path).catch(() => null))?.isDirectory() ?? false
+
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
   if (!lab.builtin || manifest.adapterId === 'builtin-release') return manifest
   const targetRoot = join(dataDir, 'labs', lab.slug, lab.version)
   const targetPath = targetRoot
   if (resolve(manifest.localPath) === resolve(targetPath)) return manifest
+  if (await isDirectory(targetRoot)) {
+    const promoted = { ...manifest, localPath: targetPath }
+    await writeFile(join(targetRoot, 'vulnlab.manifest.json'), JSON.stringify(promoted, null, 2), 'utf8')
+    await rm(join(dataDir, 'imports', jobId), { recursive: true, force: true })
+    return promoted
+  }
+  if (!(await isDirectory(manifest.localPath))) throw new ImporterError('内置靶场安装清单指向的资源已不存在，请重新安装。')
   await rm(targetRoot, { recursive: true, force: true })
   await mkdir(dirname(targetRoot), { recursive: true })
   try {
@@ -461,6 +470,7 @@ const queueStartAfterImport = (labId: string, jobId: string, actor: string, orig
       return await startLabInstance(preparedLab, actor, origin)
     } catch (error) {
       const message = error instanceof Error ? error.message : '靶场准备完成，但启动失败。'
+      database.updateLabStatus(preparedLab.id, 'error')
       database.updateJob(jobId, { message: `资源已准备，但启动失败：${message}`, error: message })
       database.addAudit(actor, 'instance.start.failed', preparedLab.title, message)
       app.log.error(error, `靶场 ${preparedLab.slug} 自动启动失败。`)
@@ -486,11 +496,11 @@ const bootstrapBuiltinLabs = async () => {
   }
   for (const lab of database.listLabs().filter(item => item.builtin && item.status === 'ready')) {
     const job = database.listJobsParsed().find(item => item.labId === lab.id && item.status === 'completed' && item.manifest)
-    if (job?.manifest) {
-      const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
-      if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
-    }
     try {
+      if (job?.manifest) {
+        const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
+        if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
+      }
       await prepareInstalledLab(database.getLab(lab.id) ?? lab, undefined, nativeRuntime.pythonBinary)
       await cleanupOutdatedBuiltinVersions(database.getLab(lab.id) ?? lab)
     } catch (error) {
@@ -772,6 +782,10 @@ app.setErrorHandler((error, _request, reply) => {
 })
 
 const start = async () => {
+  const reconciliation = database.reconcileBuiltinPaths(dataDir)
+  if (reconciliation.repaired.length || reconciliation.reset.length) {
+    app.log.info(reconciliation, '内置靶场路径已完成启动前对账。')
+  }
   await prepareProjectEnvironment()
   await recoverProviderInstances()
   await app.listen({ host, port })

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -48,6 +48,49 @@ const stopServer = async child => {
   await Promise.race([exited, wait(5000).then(() => { child.kill(); return undefined })])
 }
 
+const seedRelocatedState = async dataDir => {
+  const { VulnLabDatabase } = await import(new URL('../src/VulnLab/dist/db.js', import.meta.url))
+  const database = new VulnLabDatabase(dataDir)
+  const manifestFor = (lab, localPath) => ({
+    adapterId: 'github-git',
+    sourceUrl: lab.sourceUrl,
+    sourceRef: lab.sourceRef,
+    resolvedRef: lab.sourceRef,
+    revision: lab.version,
+    archiveSha256: 'b'.repeat(64),
+    localPath,
+    fileCount: 1,
+    totalBytes: 1,
+    licenseFiles: [],
+    topLevelEntries: [],
+    warnings: [],
+    importedAt: new Date().toISOString(),
+  })
+  try {
+    const uploadLabs = database.getLabBySlug('upload-labs')
+    const dvwa = database.getLabBySlug('dvwa')
+    const mutillidae = database.getLabBySlug('mutillidae')
+    assert.ok(uploadLabs)
+    assert.ok(dvwa)
+    assert.ok(mutillidae)
+    await mkdir(join(dataDir, 'labs', uploadLabs.slug, uploadLabs.version), { recursive: true })
+    const uploadJob = database.claimJob(database.createJob(uploadLabs.id, uploadLabs.sourceUrl).id)
+    assert.ok(uploadJob)
+    database.completeJob(uploadJob.id, manifestFor(uploadLabs, join(dataDir, 'old-project', 'labs', uploadLabs.slug, uploadLabs.version)))
+    const dvwaJob = database.claimJob(database.createJob(dvwa.id, dvwa.sourceUrl).id)
+    assert.ok(dvwaJob)
+    database.completeJob(dvwaJob.id, manifestFor(dvwa, join(dataDir, 'old-project', 'labs', dvwa.slug, dvwa.version)))
+    const brokenSource = join(dataDir, 'old-project', 'labs', mutillidae.slug, 'broken-source')
+    await mkdir(join(dataDir, 'old-project', 'labs', mutillidae.slug), { recursive: true })
+    await writeFile(brokenSource, 'not a directory')
+    const mutillidaeJob = database.claimJob(database.createJob(mutillidae.id, mutillidae.sourceUrl).id)
+    assert.ok(mutillidaeJob)
+    database.completeJob(mutillidaeJob.id, manifestFor(mutillidae, brokenSource))
+  } finally {
+    database.close()
+  }
+}
+
 const request = async (baseUrl, path, options = {}) => {
   const response = await fetch(`${baseUrl}${path}`, options)
   const body = await response.json().catch(() => ({}))
@@ -77,9 +120,10 @@ const login = async baseUrl => {
 }
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-operational-'))
+let server = null
 try {
   const sessionDir = join(root, 'session')
-  let server = await startServer({ port: 6741, dataDir: sessionDir })
+  server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)
   const sessionCookiePath = getCookiePath(session.setCookie)
   assert.equal(sessionCookiePath, '/api')
@@ -106,11 +150,22 @@ try {
   await stopServer(server.child)
 
   const endpointDir = join(root, 'endpoint')
+  await seedRelocatedState(endpointDir)
   server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com' })
   const endpointSession = await login(server.baseUrl)
-  const labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
+  let labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
   const dvwa = labs.find(lab => lab.slug === 'dvwa')
   assert.ok(dvwa)
+  const repairedUploadLabs = labs.find(lab => lab.slug === 'upload-labs')
+  assert.equal(repairedUploadLabs?.status, 'ready')
+  assert.equal(repairedUploadLabs?.localPath, join(endpointDir, 'labs', 'upload-labs', repairedUploadLabs.version))
+  assert.equal(dvwa.status, 'cataloged')
+  assert.equal(dvwa.localPath, null)
+  for (let attempt = 0; attempt < 50 && labs.find(lab => lab.slug === 'mutillidae')?.status !== 'error'; attempt += 1) {
+    await wait(100)
+    labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
+  }
+  assert.equal(labs.find(lab => lab.slug === 'mutillidae')?.status, 'error')
   const preparingStart = await fetch(`${server.baseUrl}/api/labs/${dvwa.id}/instances`, { method: 'POST', headers: { cookie: endpointSession.cookie, 'x-csrf-token': endpointSession.csrfToken } })
   assert.equal(preparingStart.status, 202)
   assert.equal((await preparingStart.json()).status, 'preparing')
@@ -141,7 +196,8 @@ try {
   assert.equal(limitedLogin.status, 429)
   await stopServer(server.child)
 } finally {
-  await rm(root, { recursive: true, force: true })
+  if (server?.child) await stopServer(server.child).catch(() => undefined)
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 }
 
 console.log('VulnLab operational smoke passed: SQLite sessions, runtime readiness guard, secure production cookie and persistent login limit.')

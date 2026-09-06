@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
-import { mkdirSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
 import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, SessionView, UserRole } from './types.js'
@@ -55,6 +55,18 @@ const parseLab = (row: Row): Lab => ({
 const parseManifest = (value: string): ImportManifest => {
   const parsed = JSON.parse(value) as Partial<ImportManifest>
   return { ...parsed, warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [] } as ImportManifest
+}
+
+const builtinRoot = (dataDir: string, slug: string, version: string) => {
+  if (!/^[a-z0-9-]+$/.test(slug) || !/^[A-Za-z0-9._-]+$/.test(version)) return null
+  return join(resolve(dataDir), 'labs', slug, version)
+}
+
+const builtinLocalPath = (root: string, runtimeKind: string, adapterId: string, localPath: string) => {
+  if (runtimeKind !== 'native-java' || adapterId !== 'builtin-release') return root
+  const fileName = basename(localPath)
+  if (!fileName || fileName === '.' || fileName === '..' || /[\\/\0:]/.test(fileName)) return null
+  return join(root, fileName)
 }
 
 const parseJob = (row: Row): ImportJob => ({
@@ -318,6 +330,73 @@ export class VulnLabDatabase {
       }
     })
     transaction(seedLabs)
+  }
+
+  reconcileBuiltinPaths(dataDir = this.runtimeDefaults.dataDir) {
+    const repaired = new Set<string>()
+    const reset = new Set<string>()
+    const timestamp = now()
+    this.db.transaction(() => {
+      const labs = this.db.prepare("SELECT id, slug, version, runtime_kind, status, local_path FROM labs WHERE builtin = 1 AND status != 'disabled'").all() as Array<{
+        id: string
+        slug: string
+        version: string
+        runtime_kind: string
+        status: string
+        local_path: string | null
+      }>
+      const jobs = this.db.prepare("SELECT id, lab_id, manifest_json FROM import_jobs WHERE status = 'completed' AND manifest_json IS NOT NULL ORDER BY created_at DESC").all() as Array<{
+        id: string
+        lab_id: string
+        manifest_json: string
+      }>
+      const jobsByLab = new Map<string, Array<{ id: string; manifest: ImportManifest | null }>>()
+      for (const job of jobs) {
+        let manifest: ImportManifest | null = null
+        try { manifest = parseManifest(job.manifest_json) } catch { /* a malformed historical manifest is repaired by the next install */ }
+        const entries = jobsByLab.get(job.lab_id) ?? []
+        entries.push({ id: job.id, manifest })
+        jobsByLab.set(job.lab_id, entries)
+      }
+      const updateLabPath = this.db.prepare('UPDATE labs SET local_path = ?, updated_at = ? WHERE id = ?')
+      const resetLab = this.db.prepare("UPDATE labs SET status = 'cataloged', local_path = NULL, imported_at = NULL, updated_at = ? WHERE id = ?")
+      const updateManifest = this.db.prepare('UPDATE import_jobs SET manifest_json = ?, updated_at = ? WHERE id = ?')
+      const resetJob = this.db.prepare("UPDATE import_jobs SET status = 'error', stage = 'reconcile', message = ?, progress = 0, error = ?, manifest_json = NULL, updated_at = ? WHERE id = ?")
+      const staleMessage = '内置靶场本地资源路径已失效，等待重新安装。'
+
+      for (const lab of labs) {
+        const root = builtinRoot(dataDir, lab.slug, lab.version)
+        if (!root) continue
+        const labJobs = jobsByLab.get(lab.id) ?? []
+        const manifestEntries = labJobs
+          .filter(item => item.manifest)
+          .map(item => ({ ...item, localPath: builtinLocalPath(root, lab.runtime_kind, item.manifest?.adapterId ?? '', item.manifest?.localPath ?? '') }))
+        const recordedPath = lab.local_path ?? ''
+        const expectedPath = builtinLocalPath(root, lab.runtime_kind, manifestEntries[0]?.manifest?.adapterId ?? 'builtin-release', manifestEntries[0]?.manifest?.localPath ?? recordedPath)
+        const expectedExists = Boolean(expectedPath && existsSync(expectedPath))
+
+        if (expectedExists) {
+          if (lab.local_path !== expectedPath) {
+            updateLabPath.run(expectedPath, timestamp, lab.id)
+            repaired.add(lab.slug)
+          }
+          for (const item of manifestEntries) {
+            if (!item.localPath || !existsSync(item.localPath) || item.manifest?.localPath === item.localPath) continue
+            updateManifest.run(JSON.stringify({ ...item.manifest, localPath: item.localPath }), timestamp, item.id)
+            repaired.add(lab.slug)
+          }
+          continue
+        }
+
+        const usableHistoricalManifest = labJobs.some(item => Boolean(item.manifest?.localPath && existsSync(item.manifest.localPath)))
+        if (lab.status === 'ready' && !usableHistoricalManifest) {
+          resetLab.run(timestamp, lab.id)
+          for (const item of labJobs) resetJob.run(staleMessage, staleMessage, timestamp, item.id)
+          reset.add(lab.slug)
+        }
+      }
+    })()
+    return { repaired: [...repaired], reset: [...reset] }
   }
 
   listLabs(): Lab[] {
