@@ -1,7 +1,6 @@
 const app = document.querySelector('#app')
 let importPollTimer = null
 let modalReturnFocus = null
-let loginNoticeTimer = null
 let loginSuccessNoticeTimer = null
 let toastTimer = null
 
@@ -19,6 +18,7 @@ const state = {
   busyAction: null,
   error: '',
   loginErrorFields: [],
+  loginPasswordVisible: false,
   successNotice: null,
   toast: null,
   confirm: null,
@@ -84,30 +84,13 @@ function navigate() {
 
 function setToast(message, type = 'success') {
   if (toastTimer) { window.clearTimeout(toastTimer); toastTimer = null }
-  state.toast = { message, type }
+  state.toast = { message: readableError(message), type }
   render()
   toastTimer = window.setTimeout(() => {
     toastTimer = null
     state.toast = null
     render()
   }, 3600)
-}
-
-function clearLoginNoticeTimer() {
-  if (loginNoticeTimer) { window.clearTimeout(loginNoticeTimer); loginNoticeTimer = null }
-}
-
-function scheduleLoginNoticeDismiss() {
-  clearLoginNoticeTimer()
-  if (!state.error || state.session) return
-  loginNoticeTimer = window.setTimeout(() => {
-    loginNoticeTimer = null
-    if (!state.session && state.error) {
-      state.error = ''
-      state.loginErrorFields = []
-      render()
-    }
-  }, LOGIN_NOTICE_DURATION)
 }
 
 function clearLoginSuccessNoticeTimer() {
@@ -174,6 +157,24 @@ const coverVariant = lab => Object.hasOwn(coverAssets, lab.slug) ? lab.slug : 'd
 const coverArt = (lab, imageClass = 'lab-card-cover') => coverAssets[lab.slug]
   ? `<img class="${esc(imageClass)}" data-cover-image="true" src="${coverAssets[lab.slug]}" alt="${esc(lab.title)} 封面" loading="lazy" decoding="async" />`
   : ''
+const latestFailedJob = lab => state.jobs
+  .filter(job => job.labId === lab.id && job.status === 'error')
+  .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0] ?? null
+const jobStageLabel = stage => ({
+  queued: '排队等待',
+  starting: '准备启动',
+  downloading: '下载资源',
+  extracting: '解压资源',
+  verifying: '校验资源',
+  reconcile: '整理资源',
+  completed: '准备完成',
+  failed: '准备失败',
+}[String(stage ?? '')] ?? (String(stage ?? '').trim() || '准备资源'))
+const jobProgress = job => Math.max(0, Math.min(100, Number(job?.progress ?? 0) || 0))
+const readableError = value => String(value ?? '')
+  .replace(/[A-Za-z]:[\\/][^\s"'<>]*/g, '本地资源路径')
+  .replace(/\/(?:Users|home|tmp|var|opt|workspace)\/[^\s"'<>]*/g, '本地资源路径')
+
 function labCardView(lab) {
   const ready = lab.status === 'ready'
   const importing = lab.status === 'importing'
@@ -199,7 +200,13 @@ function labDetailModal() {
   const admin = state.session.role === 'admin'
   const importing = lab.status === 'importing'
   const queued = lab.status === 'queued'
+  const cataloged = lab.status === 'cataloged'
+  const activeJob = state.jobs
+    .filter(job => job.labId === lab.id && ['queued', 'importing'].includes(job.status))
+    .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0] ?? null
+  const failedJob = lab.status === 'error' ? latestFailedJob(lab) : null
   const failed = lab.status === 'error'
+  const failureMessage = readableError(failedJob?.error ?? (lab.status === 'error' ? '靶场准备失败，请重试。' : ''))
   const instance = state.instances.find(item => item.labId === lab.id && item.status === 'running')
   const starting = busyFor('start-instance', lab.id)
   const preparing = importing || queued
@@ -211,29 +218,58 @@ function labDetailModal() {
   } else if (preparing) {
     primaryAction = '<span class="button button-quiet lab-detail-action" aria-busy="true">准备中…</span>'
   } else if (admin) {
-    primaryAction = `<button class="button ${failed ? 'button-danger' : 'button-primary'} lab-detail-action" type="button" data-action="start-instance" data-id="${esc(lab.id)}">${failed ? '重试启动' : '启动环境'}</button>`
+    primaryAction = `<button class="button ${failed ? 'button-danger' : 'button-primary'} lab-detail-action" type="button" data-action="start-instance" data-id="${esc(lab.id)}">${failed ? '重试启动' : cataloged ? '准备并启动' : '启动环境'}</button>`
   } else {
     primaryAction = '<span class="button button-quiet lab-detail-action">等待准备</span>'
   }
-  const detailState = instance ? 'running' : starting ? 'starting' : preparing ? 'preparing' : failed ? 'error' : 'ready'
-  const stateLabel = instance ? '运行中' : starting ? '启动中' : preparing ? '准备中' : failed ? '准备失败' : ''
-  const facts = [lab.category, lab.difficulty, lab.version].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
+  const detailState = instance ? 'running' : starting ? 'starting' : preparing ? 'preparing' : failed ? 'error' : cataloged ? 'cataloged' : 'ready'
+  const stateLabel = instance ? '运行中' : starting ? '启动中' : preparing ? '准备中' : failed ? '准备失败' : cataloged ? '待准备' : ''
+  const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
+  const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
+  const errorInfo = failureMessage ? `<p class="lab-detail-error" role="alert">${esc(failureMessage)}</p>` : ''
   const runningInfo = instance
     ? `<div class="lab-detail-running"><div><span class="lab-detail-running-dot" aria-hidden="true"></span><strong>运行中</strong></div><time>到期 ${date(instance.expiresAt)}</time></div><div class="lab-detail-endpoint"><span>入口</span><code>${esc(instance.endpoint)}</code></div>`
     : ''
   const managementActions = instance && admin
     ? `<button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button><button class="button button-quiet lab-detail-stop" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button>`
     : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${errorInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+}
+
+function passwordToggleIcon(visible) {
+  return visible
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 6.3A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a16.8 16.8 0 0 1-3.1 3.7M6.1 6.9C3.8 8.4 2.5 12 2.5 12S6 18 12 18c1 0 1.9-.2 2.8-.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.8"/></svg>'
+}
+
+function loginErrorMarkup() {
+  return `<p class="login-form-error" id="login-error" role="alert" aria-live="polite">${esc(state.error)}</p>`
 }
 
 function loginPage() {
   const userNameInvalid = state.loginErrorFields.includes('userName')
   const passwordInvalid = state.loginErrorFields.includes('password')
-  const notice = state.error ? loginNoticeCard({ id: 'login-notice', title: '登录失败', message: state.error, action: 'dismiss-login-error' }) : ''
-  const describedBy = state.error ? 'aria-describedby="login-notice"' : ''
-  return `<div class="login-page"><form class="login-form" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>VulnLab</h1><p>攻防控制台</p></div><div class="login-mode">登录</div><label><span class="sr-only">账号</span><input name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label><span class="sr-only">密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '进入靶场'}</button></form>${notice}</div>`
+  const describedBy = state.error ? 'aria-describedby="login-error"' : ''
+  const passwordType = state.loginPasswordVisible ? 'text' : 'password'
+  const toggleLabel = state.loginPasswordVisible ? '隐藏密码' : '显示密码'
+  return `<div class="login-page"><form class="login-form" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>VulnLab</h1><p>攻防控制台</p></div><div class="login-mode">登录</div>${state.error ? loginErrorMarkup() : ''}<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}><button class="password-toggle" type="button" data-action="toggle-password" aria-label="${toggleLabel}" aria-pressed="${state.loginPasswordVisible}">${passwordToggleIcon(state.loginPasswordVisible)}</button></span></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '进入靶场'}</button></form></div>`
+}
+
+function updateLoginFormView() {
+  const form = document.querySelector('#login-form')
+  if (!form) return
+  const error = form.querySelector('#login-error')
+  if (state.error && !error) form.querySelector('.login-mode')?.insertAdjacentHTML('afterend', loginErrorMarkup())
+  else if (!state.error) error?.remove()
+  form.querySelectorAll('input[name]').forEach(input => {
+    const invalid = state.loginErrorFields.includes(input.name)
+    input.setAttribute('aria-invalid', String(invalid))
+    if (state.error) input.setAttribute('aria-describedby', 'login-error')
+    else input.removeAttribute('aria-describedby')
+  })
+  const submit = form.querySelector('button[type="submit"]')
+  if (submit) { submit.disabled = state.busy; submit.textContent = state.busy ? '登录中…' : '进入靶场' }
 }
 
 function scheduleImportPolling() {
@@ -340,8 +376,7 @@ function render() {
     app.innerHTML = '<div class="loading-screen" role="status" aria-live="polite"><div class="loading-mark" aria-hidden="true"><span></span><span></span><span></span></div><span>正在打开 VulnLab…</span></div>'
     return
   }
-  if (!state.session) { clearLoginSuccessNoticeTimer(); app.innerHTML = loginPage(); scheduleLoginNoticeDismiss(); return }
-  clearLoginNoticeTimer()
+  if (!state.session) { clearLoginSuccessNoticeTimer(); app.innerHTML = loginPage(); return }
   scheduleLoginSuccessNoticeDismiss()
   if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
   patchLabs()
@@ -379,7 +414,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'dismiss-login-error', 'dismiss-login-success', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'dismiss-login-success', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -401,7 +436,18 @@ async function runAction(action, element) {
     restoreModalFocus()
     return
   }
-  if (action === 'dismiss-login-error') { clearLoginNoticeTimer(); state.error = ''; state.loginErrorFields = []; render(); return }
+  if (action === 'toggle-password') {
+    const input = document.querySelector('#login-password')
+    const toggle = document.querySelector('[data-action="toggle-password"]')
+    if (!input || !toggle) return
+    state.loginPasswordVisible = !state.loginPasswordVisible
+    input.type = state.loginPasswordVisible ? 'text' : 'password'
+    toggle.setAttribute('aria-label', state.loginPasswordVisible ? '隐藏密码' : '显示密码')
+    toggle.setAttribute('aria-pressed', String(state.loginPasswordVisible))
+    toggle.innerHTML = passwordToggleIcon(state.loginPasswordVisible)
+    input.focus()
+    return
+  }
   if (action === 'dismiss-login-success') { clearLoginSuccessNoticeTimer(); state.successNotice = null; render(); return }
   if (action === 'cancel-confirm') { state.confirm = null; render(); restoreModalFocus(); return }
   if (action === 'confirm-action') {
@@ -413,7 +459,7 @@ async function runAction(action, element) {
   }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {
@@ -470,6 +516,7 @@ app.addEventListener('submit', async event => {
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
     state.busy = true; state.error = ''; state.loginErrorFields = []
+    updateLoginFormView()
     const userName = typeof values.userName === 'string' ? values.userName.trim() : ''
     const password = typeof values.password === 'string' ? values.password : ''
     const missingFields = [!userName ? 'userName' : null, !password ? 'password' : null].filter(Boolean)
@@ -477,11 +524,31 @@ app.addEventListener('submit', async event => {
       state.loginErrorFields = missingFields
       state.error = !userName && !password ? '请输入账号和密码' : !userName ? '请输入账号' : '请输入密码'
       state.busy = false
-      render()
+      updateLoginFormView()
       document.querySelector(`[name="${missingFields[0]}"]`)?.focus()
       return
     }
-    try { const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) }); state.session = session; state.csrfToken = session.csrfToken; await refresh(); state.successNotice = { title: '登录成功', message: '身份验证通过，正在进入系统' }; navigate('labs') } catch (error) { state.successNotice = null; state.error = error.message } finally { state.busy = false; render() }
+    try {
+      const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) })
+      state.session = session
+      state.csrfToken = session.csrfToken
+      await refresh()
+      state.successNotice = { title: '登录成功', message: '身份验证通过，正在进入系统' }
+      state.loginPasswordVisible = false
+      navigate('labs')
+      state.busy = false
+      render()
+    } catch (error) {
+      state.successNotice = null
+      state.error = error.message
+      state.loginErrorFields = state.session ? [] : ['userName']
+      state.busy = false
+      if (state.session) render()
+      else {
+        updateLoginFormView()
+        document.querySelector(`[name="${state.loginErrorFields[0] ?? 'userName'}"]`)?.focus()
+      }
+    }
     return
   }
 })
@@ -489,10 +556,9 @@ app.addEventListener('submit', async event => {
 app.addEventListener('input', event => {
   const input = event.target
   if (!input.form || input.form.id !== 'login-form' || !state.error) return
-  clearLoginNoticeTimer()
   state.error = ''
   state.loginErrorFields = []
-  document.querySelector('#login-notice')?.remove()
+  input.form.querySelector('#login-error')?.remove()
   input.form.querySelectorAll('input').forEach(field => {
     field.setAttribute('aria-invalid', 'false')
     field.removeAttribute('aria-describedby')
