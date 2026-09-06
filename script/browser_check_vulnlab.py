@@ -25,7 +25,9 @@ def main() -> None:
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.goto(BASE_URL, wait_until="networkidle")
+        assert page.title() == "VulnLab · 攻防控制台"
         expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
+        assert page.locator(".login-brand img").evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.get_by_text("安装、启动和管理本机靶场。", exact=True)).to_have_count(0)
         expect(page.get_by_label("账号")).to_have_value("")
         expect(page.get_by_label("密码")).to_have_value("")
@@ -120,8 +122,41 @@ def main() -> None:
         assert page.locator(".lab-card-cover").evaluate_all(
             "elements => elements.every(element => element.complete && element.naturalWidth > 0)"
         )
+        page.evaluate(
+            """() => {
+                window.__vulnlabDialogAnimationStarts = 0
+                document.addEventListener('animationstart', event => {
+                    if (event.animationName === 'dialog-in' || event.animationName === 'dialog-backdrop-in') {
+                        window.__vulnlabDialogAnimationStarts += 1
+                    }
+                }, true)
+            }"""
+        )
+        notice_canvas = page.locator(".lab-canvas").element_handle()
+        notice_card = page.locator(".lab-card").first.element_handle()
+        notice_cover = page.locator(".lab-card-cover").first.element_handle()
+        notice_detail_trigger = page.locator(".lab-card-media").first
+        notice_detail_trigger.click()
+        expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        page.wait_for_timeout(250)
+        notice_dialog = page.locator(".lab-detail-dialog").element_handle()
+        notice_focusables = page.locator(".lab-detail-dialog button, .lab-detail-dialog a[href]")
+        assert notice_focusables.count() >= 2
+        notice_focus_target = notice_focusables.last.element_handle()
+        notice_focusables.last.focus()
+        notice_animation_count = page.evaluate("window.__vulnlabDialogAnimationStarts")
         page.wait_for_timeout(4500)
         expect(page.locator("#login-success-notice")).to_have_count(0)
+        assert page.locator(".lab-canvas").evaluate("(element, previous) => element === previous", notice_canvas)
+        assert page.locator(".lab-card").first.evaluate("(element, previous) => element === previous", notice_card)
+        assert page.locator(".lab-card-cover").first.evaluate("(element, previous) => element === previous", notice_cover)
+        assert page.locator(".lab-detail-dialog").evaluate("(element, previous) => element === previous", notice_dialog)
+        assert notice_focus_target.evaluate("element => element.isConnected && document.activeElement === element")
+        assert page.evaluate("window.__vulnlabDialogAnimationStarts") == notice_animation_count
+        page.keyboard.press("Escape")
+        expect(page.locator(".lab-detail-dialog")).to_have_count(0)
+        expect(notice_detail_trigger).to_be_focused()
+        page.locator(".lab-canvas").focus()
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .workspace-account, .lab-workspace-head")).to_have_count(0)
         expect(page.locator(".lab-card-head")).to_have_count(0)
@@ -220,12 +255,24 @@ def main() -> None:
             detail_box["x"] + detail_box["width"] / 2 - (workspace_box["x"] + workspace_box["width"] / 2)
         ) <= 1, {"detail": detail_box, "workspace": workspace_box}
         page.screenshot(path=str(OUTPUT_DIR / "lab-detail-desktop.png"), full_page=True)
+        detail_focusables = page.locator(".lab-detail-dialog button, .lab-detail-dialog a[href]")
+        assert detail_focusables.count() >= 2
+        expect(detail_focusables.first).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        expect(detail_focusables.last).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(detail_focusables.first).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(page.locator(".lab-detail-dialog")).to_have_count(0)
+        expect(detail_trigger).to_be_focused()
+        detail_trigger.click()
         page.get_by_role("button", name="关闭靶场信息").click()
         expect(detail_trigger).to_be_focused()
         detail_trigger.click()
         page.locator(".lab-detail-backdrop").click(position={"x": 5, "y": 5})
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
         expect(detail_trigger).to_be_focused()
+        page.locator(".lab-canvas").focus()
         running_detail_trigger = page.locator('.lab-card[data-state="running"] .lab-card-media').first
         if running_detail_trigger.count():
             running_detail_trigger.click()
@@ -238,28 +285,6 @@ def main() -> None:
             popup_info.value.close()
             expect(page.locator(".lab-detail-dialog")).to_have_count(0)
             expect(running_detail_trigger).to_be_focused()
-        detail_start_button = page.locator('.lab-detail-dialog [data-action="start-instance"]').first
-        if detail_start_button.count():
-            pending_start = {}
-
-            def hold_start(route, request):
-                if request.method == "POST":
-                    pending_start["route"] = route
-                    return
-                route.continue_()
-
-            page.route("**/api/labs/*/instances", hold_start)
-            detail_start_button.click()
-            expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
-            expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
-            assert "route" in pending_start
-            page.get_by_role("button", name="关闭靶场信息").click()
-            page.locator(".lab-card-media").nth(1).click()
-            expect(page.locator(".lab-detail-dialog")).to_be_visible()
-            page.get_by_role("button", name="关闭靶场信息").click()
-            pending_start["route"].fulfill(status=200, content_type="application/json", body='{}')
-            page.unroute("**/api/labs/*/instances", hold_start)
-            page.wait_for_timeout(3800)
         page.screenshot(path=str(OUTPUT_DIR / "labs-desktop.png"), full_page=True)
         if PRIMARY_SCREENSHOT:
             primary = Path(PRIMARY_SCREENSHOT)
@@ -273,8 +298,18 @@ def main() -> None:
         assert len(tablet_columns.split()) == 2, tablet_columns
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "labs-tablet.png"), full_page=True)
-        tablet_detail_trigger = page.locator(".lab-card-media").first
+        tablet_canvas = page.locator(".lab-canvas").element_handle()
+        tablet_card = page.locator(".lab-card").last.element_handle()
+        tablet_cover = page.locator(".lab-card-cover").first.element_handle()
+        tablet_detail_trigger = page.locator(".lab-card-media").last
+        tablet_detail_trigger.scroll_into_view_if_needed()
+        tablet_scroll_top = page.locator(".lab-canvas").evaluate("element => element.scrollTop")
+        assert tablet_scroll_top > 0
         tablet_detail_trigger.click()
+        assert page.locator(".lab-canvas").evaluate("(element, previous) => element === previous", tablet_canvas)
+        assert page.locator(".lab-card").last.evaluate("(element, previous) => element === previous", tablet_card)
+        assert page.locator(".lab-card-cover").first.evaluate("(element, previous) => element === previous", tablet_cover)
+        assert page.locator(".lab-canvas").evaluate("element => element.scrollTop") == tablet_scroll_top
         tablet_detail_box = page.locator(".lab-detail-dialog").bounding_box()
         tablet_workspace_box = page.locator(".lab-workspace").bounding_box()
         assert tablet_detail_box and tablet_workspace_box and abs(
@@ -292,10 +327,10 @@ def main() -> None:
         expect(page.locator(".settings-page, .settings-layout, .lab-workspace-head")).to_have_count(0)
 
         labs_payload = page.evaluate("async () => await (await fetch('/api/labs')).json()")
-        for lab in labs_payload:
-            if lab["slug"] == "dvwa":
-                lab["status"] = "ready"
-                lab["localPath"] = "/tmp/vulnlab-browser-fixture/dvwa"
+        dvwa_lab = next(lab for lab in labs_payload if lab["slug"] == "dvwa")
+        dvwa_lab["status"] = "ready"
+        dvwa_lab["localPath"] = "/tmp/vulnlab-browser-fixture/dvwa"
+        start_state = {"completed": False}
 
         def labs_with_ready_dvwa(route, request):
             if request.method == "GET":
@@ -303,7 +338,21 @@ def main() -> None:
             else:
                 route.continue_()
 
+        def instances_after_start(route, request):
+            if request.method == "GET":
+                instances = [{
+                    "id": "browser-instance",
+                    "labId": dvwa_lab["id"],
+                    "status": "running",
+                    "endpoint": "http://127.0.0.1:65535/",
+                    "expiresAt": "2099-01-01T00:00:00.000Z",
+                }] if start_state["completed"] else []
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(instances))
+            else:
+                route.continue_()
+
         page.route("**/api/labs", labs_with_ready_dvwa)
+        page.route("**/api/instances", instances_after_start)
         page.reload(wait_until="networkidle")
         expect(page.locator(".lab-grid")).to_be_visible()
         page.locator('.lab-card-media[data-id]').first.click()
@@ -313,7 +362,46 @@ def main() -> None:
         expect(page.locator(".runtime-dialog, .runtime-requirements")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "lab-detail-ready-desktop.png"), full_page=True)
         expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        detail_start_button = page.locator('.lab-detail-dialog [data-action="start-instance"]')
+        expect(detail_start_button).to_have_count(1)
+        pending_start = {}
+
+        def hold_start(route, request):
+            if request.method == "POST":
+                pending_start["route"] = route
+                return
+            route.continue_()
+
+        page.evaluate(
+            """() => {
+                window.__vulnlabDetailUpdateAnimations = 0
+                document.addEventListener('animationstart', event => {
+                    if (event.animationName === 'dialog-in' || event.animationName === 'dialog-backdrop-in') {
+                        window.__vulnlabDetailUpdateAnimations += 1
+                    }
+                }, true)
+            }"""
+        )
+        page.route("**/api/labs/*/instances", hold_start)
+        detail_start_button.click()
+        expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
+        expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
+        expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
+        assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
+        assert "route" in pending_start
+        start_state["completed"] = True
+        pending_start["route"].fulfill(status=201, content_type="application/json", body='{"status":"running"}')
+        expect(page.locator(".lab-detail-running")).to_be_visible()
+        expect(page.locator('.lab-card[data-state="running"]')).to_have_count(1)
+        expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
+        assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
         page.get_by_role("button", name="关闭靶场信息").click()
+        page.locator(".lab-card-media").nth(1).click()
+        expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        page.get_by_role("button", name="关闭靶场信息").click()
+        page.unroute("**/api/labs/*/instances", hold_start)
+        page.wait_for_timeout(3800)
+        page.unroute("**/api/instances", instances_after_start)
         page.unroute("**/api/labs", labs_with_ready_dvwa)
         page.evaluate("location.hash = 'labs'")
         page.reload(wait_until="networkidle")

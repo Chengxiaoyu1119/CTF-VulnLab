@@ -1,4 +1,4 @@
-# VulnLab Node 应用
+# VulnLab · 攻防控制台（Node 应用）
 
 这是 VulnLab 当前开发基线的 Node.js / TypeScript 单机应用入口，暂未形成正式发行版。
 
@@ -47,7 +47,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 进程状态写入运行目录；正常停止、过期回收、服务关闭和服务重启都执行资源回收。点击“启动环境”时，实例 API 会先准备资源和项目运行时，再调用 Provider；确实无法满足的依赖以 `RUNTIME_DEPENDENCY_MISSING` 返回。
 
-服务运行后，`npm run smoke:runtimes` 会依次启动 Upload-Labs、Juice Shop、WebGoat 和 PyGoat，检查真实页面后停止实例。
+服务运行后，`npm run smoke:runtimes` 要求 Upload-Labs、Juice Shop、WebGoat 和 PyGoat 已处于 `ready`，随后依次启动、检查真实页面并停止实例。该命令不覆盖其余五个靶场的真实运行链路。
 
 ## 项目运行环境
 
@@ -74,14 +74,14 @@ VULNLAB_MYSQL_BIN
 
 项目内实例端口可以通过 `VULNLAB_PROJECT_MYSQL_PORT` 调整；需要手动指定服务端二进制时使用 `VULNLAB_MYSQLD_BIN`。这两个设置只影响项目运行目录，不会修改系统 MySQL 服务。
 
-真实运行时链路回归：
+Windows x64 真实运行时链路回归：
 
 ```powershell
 npm run build
 npm run smoke:toolchains
 ```
 
-该回归在全新临时目录完成“官方下载 → SHA-256 → 安全解压 → Node.js → PHP mysqli → MariaDB 连接 → Java 启动 → Python venv/pip → 停止回收”，随后删除临时目录。`npm test` 另外覆盖 Linux TAR.XZ 解压 fixture 和原生 systemd 部署文件契约。
+该回归在全新临时目录完成“官方下载 → SHA-256 → 安全解压 → Node.js → PHP mysqli → MariaDB 连接 → Java 启动 → Python venv/pip → 停止回收”，随后删除临时目录。`npm test` 另外覆盖 Linux TAR.XZ 解压 fixture 和原生 systemd 部署文件契约；这些 fixture 与契约检查不等同于 Linux 或 macOS 实机运行验收。
 
 ## 生产配置
 

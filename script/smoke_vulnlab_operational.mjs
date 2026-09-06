@@ -55,13 +55,25 @@ const request = async (baseUrl, path, options = {}) => {
   return { response, body }
 }
 
+const getCookiePath = setCookieHeader => {
+  const pathAttribute = setCookieHeader.split(';').map(attribute => attribute.trim()).find(attribute => attribute.toLowerCase().startsWith('path='))
+  assert.ok(pathAttribute, `Set-Cookie is missing Path: ${setCookieHeader}`)
+  return pathAttribute.slice('path='.length)
+}
+
+const cookiePathMatches = (cookiePath, requestPath) => requestPath === cookiePath || (
+  requestPath.startsWith(cookiePath) && (cookiePath.endsWith('/') || requestPath[cookiePath.length] === '/')
+)
+
 const login = async baseUrl => {
   const result = await request(baseUrl, '/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }),
   })
-  return { cookie: result.response.headers.getSetCookie()[0].split(';', 1)[0], csrfToken: result.body.csrfToken }
+  const setCookie = result.response.headers.getSetCookie()[0]
+  assert.ok(setCookie, 'login did not set vulnlab_session')
+  return { cookie: setCookie.split(';', 1)[0], csrfToken: result.body.csrfToken, setCookie }
 }
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-operational-'))
@@ -69,6 +81,10 @@ try {
   const sessionDir = join(root, 'session')
   let server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)
+  const sessionCookiePath = getCookiePath(session.setCookie)
+  assert.equal(sessionCookiePath, '/api')
+  assert.equal(cookiePathMatches(sessionCookiePath, '/api/auth/session'), true)
+  assert.equal(cookiePathMatches(sessionCookiePath, '/lab-runtime/fixture/'), false)
   const sessionAfterLogin = await fetch(`${server.baseUrl}/api/auth/session`, { headers: { cookie: session.cookie } })
   assert.equal((await sessionAfterLogin.json()).userName, 'vulnlab')
   await stopServer(server.child)
@@ -82,6 +98,11 @@ try {
   assert.equal((await sessionAfterRestart.json()).userName, 'vulnlab')
   const logout = await request(server.baseUrl, '/api/auth/logout', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.deepEqual(logout.body, { ok: true })
+  const clearCookie = logout.response.headers.getSetCookie()[0]
+  assert.ok(clearCookie, 'logout did not clear vulnlab_session')
+  assert.equal(getCookiePath(clearCookie), sessionCookiePath)
+  assert.equal(clearCookie.split(';', 1)[0], 'vulnlab_session=')
+  assert.match(clearCookie, /Expires=Thu, 01 Jan 1970 00:00:00 GMT/i)
   await stopServer(server.child)
 
   const endpointDir = join(root, 'endpoint')

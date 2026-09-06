@@ -140,7 +140,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .login-brand { display: grid; justify-items: center; margin-bottom: 12px; text-align: center; }
 .login-brand img { width: 64px; height: 64px; margin-bottom: 18px; border-radius: 18px; box-shadow: none; }
 .login-brand h1 { margin: 0 0 6px; color: #fff; font-family: var(--font-display); font-size: 25px; font-weight: 700; letter-spacing: -.035em; }
-.login-brand p { margin: 0; color: #858585; font-size: 13px; }
+.login-brand p { margin: 0; color: #858585; font-size: 15px; }
 .login-mode { align-self: center; border-bottom: 2px solid var(--workspace-accent); padding: 0 2px 8px; color: var(--workspace-accent); font-size: 13px; font-weight: 700; }
 .login-form label { position: relative; gap: 0; }
 .login-form label::before { position: absolute; z-index: 2; top: 50%; left: 15px; width: 15px; height: 15px; background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='1.7'%3E%3Ccircle cx='12' cy='8' r='3.2'/%3E%3Cpath d='M5.5 20c.5-4 2.7-6 6.5-6s6 2 6.5 6'/%3E%3C/svg%3E"); content: ''; pointer-events: none; transform: translateY(-50%); }

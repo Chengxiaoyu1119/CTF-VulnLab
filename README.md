@@ -1,9 +1,9 @@
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
 <div align="center">
-  <img src="src/VulnLab/public/favicon.svg" width="88" alt="VulnLab Logo">
-  <h1>VulnLab</h1>
-  <p><strong>把主流开源靶场装进一个真正可启动的单机工作台。</strong></p>
+  <img src="src/VulnLab/public/favicon.png" width="88" alt="VulnLab Logo">
+  <h1>VulnLab · 攻防控制台</h1>
+  <p><strong>把主流开源安全训练环境装进一个真正可启动的单机工作台。</strong></p>
   <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 单服务器部署</p>
 
   [![VulnLab CI](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg)](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml)
@@ -23,15 +23,15 @@
   <a href="#单服务器部署">部署</a>
 </p>
 
-![VulnLab 靶场工作台](.github/assets/vulnlab-workspace.png)
+![VulnLab 攻防控制台](.github/assets/vulnlab-workspace.png)
 
 ## 项目是什么
 
-VulnLab 是面向个人学习和小团队训练的开源靶场工作台。桌面端以固定 3×3 目录呈现九个主流靶场，用户从详情弹窗点击“启动环境”即可完成准备、启动、访问和停止。
+VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面端以固定 3×3 目录呈现九个主流训练环境，用户从详情弹窗点击“启动环境”即可完成准备、启动、访问和停止。
 
 当前代码处于开发基线，暂未发布正式发行版；`0.3.0` 仅是当前内部版本号，首个公开版本号另行确定。主服务采用 Node.js 原生运行，Windows、Linux、macOS 本地和单台 Linux 云服务器使用同一套代码。
 
-大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、SHA-256 和安装逻辑；靶场资源进入 `src/VulnLab/data/labs`，PHP/MariaDB 运行时进入 `src/VulnLab/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
+大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务会记录每次下载的 SHA-256，并在上游提供固定校验值时先完成比对。靶场资源进入 `src/VulnLab/data/labs`，PHP/MariaDB 运行时进入 `src/VulnLab/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
 
 ## 快速开始
 
@@ -163,7 +163,7 @@ cd src/VulnLab
 npm run smoke:toolchains
 ```
 
-测试覆盖固定版本导入、安全解包、官方发行包、ZIP/TAR.XZ 下载校验、SQLite 生命周期、MySQL 资源、Provider 契约、部署契约和按靶场依赖判断。
+`npm test` 使用本地 fixture 覆盖固定版本导入、安全解包、官方发行包、ZIP/TAR.XZ 下载校验、SQLite 生命周期、MySQL 资源、Provider 契约、部署文件契约和按靶场依赖判断；它不会下载并启动九个真实靶场。
 
 服务启动后执行浏览器回归：
 
@@ -173,7 +173,9 @@ node script/smoke_vulnlab_builtin_runtimes.mjs
 python script/browser_check_vulnlab.py
 ```
 
-运行冒烟会真实启动并停止 Upload-Labs、Juice Shop、WebGoat 和 PyGoat。浏览器回归检查桌面 3×3、移动端双列、九个固定卡片、靶场详情、启动状态、触控尺寸、横向溢出和控制台错误。
+运行冒烟要求 Upload-Labs、Juice Shop、WebGoat 和 PyGoat 已处于 `ready`，随后真实检查页面并停止实例。浏览器回归验证当前界面、响应式布局、交互状态和控制台错误；真实靶场页面由运行冒烟单独验证。
+
+GitHub CI 当前在 Ubuntu 24.04 上执行类型检查、构建、fixture/契约测试、API/服务生命周期冒烟和浏览器回归，不执行上述真实运行时下载与靶场启动冒烟，也不代表 Windows、macOS 或 Linux 原生部署已经完成实机验收。
 
 ## 单服务器部署
 

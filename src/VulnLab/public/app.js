@@ -23,7 +23,6 @@ const state = {
   toast: null,
   confirm: null,
   labDetailId: null,
-  dialogFocusSelector: '',
 }
 
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -80,7 +79,6 @@ async function bootstrap() {
 
 function navigate() {
   state.labDetailId = null
-  state.dialogFocusSelector = ''
   if (location.hash !== '#labs') location.hash = 'labs'
 }
 
@@ -149,20 +147,15 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
-function overlays() {
-  const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
-  return `${successNotice}${state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : ''}
-    ${labDetailModal()}
-    ${state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : ''}
-    `
-}
-
-function labsShell(content) {
+function labsShell() {
   return `<div class="labs-screen">
     <section class="lab-workspace">
-      <main class="lab-canvas" tabindex="-1">${content}</main>
+      <main class="lab-canvas" tabindex="-1"></main>
     </section>
-    ${overlays()}
+    <div data-overlay-slot="success"></div>
+    <div data-overlay-slot="toast"></div>
+    <div data-overlay-slot="detail"></div>
+    <div data-overlay-slot="confirm"></div>
   </div>`
 }
 
@@ -181,7 +174,7 @@ const coverVariant = lab => Object.hasOwn(coverAssets, lab.slug) ? lab.slug : 'd
 const coverArt = (lab, imageClass = 'lab-card-cover') => coverAssets[lab.slug]
   ? `<img class="${esc(imageClass)}" data-cover-image="true" src="${coverAssets[lab.slug]}" alt="${esc(lab.title)} 封面" loading="lazy" decoding="async" />`
   : ''
-function labCard(lab) {
+function labCardView(lab) {
   const ready = lab.status === 'ready'
   const importing = lab.status === 'importing'
   const queued = lab.status === 'queued'
@@ -190,20 +183,14 @@ function labCard(lab) {
   const starting = busyFor('start-instance', lab.id)
   const cardState = instance ? 'running' : starting ? 'starting' : importing ? 'preparing' : queued ? 'preparing' : failed ? 'error' : ready ? 'ready' : 'idle'
   const statusLabel = instance ? '运行中' : starting ? '启动中' : importing || queued ? '准备中' : failed ? '准备失败' : ready ? '已就绪' : '待启动'
-  const accessibleState = statusLabel || '等待处理'
-  return `<article class="lab-card" data-state="${cardState}" data-runtime="${esc(lab.runtimeKind ?? '')}" aria-label="${esc(lab.title)}，${accessibleState}" aria-live="polite"${starting || importing || queued ? ' aria-busy="true"' : ''}>
-    <button class="lab-card-media" type="button" data-action="open-lab-details" data-id="${esc(lab.id)}" data-cover="${coverVariant(lab)}" aria-label="查看 ${esc(lab.title)} 信息">${coverArt(lab)}<span class="lab-card-caption" title="${esc(lab.title)}"><span class="lab-card-title">${esc(lab.title)}</span></span></button>
-  </article>`
+  return { cardState, statusLabel, busy: starting || importing || queued }
 }
 
-function labsPage() {
-  const visibleLabs = state.labs.slice(0, 9)
-  if (state.error && !state.labs.length) {
-    return `<div class="empty-state lab-empty-state"><p>${esc(state.error)}</p><button class="button button-primary" type="button" data-action="refresh-labs">重新连接</button></div>`
-  }
-  return visibleLabs.length
-    ? `<h1 class="sr-only">靶场</h1><div class="lab-grid" aria-label="靶场列表">${visibleLabs.map(labCard).join('')}</div>`
-    : '<div class="empty-state lab-empty-state"><p>暂无可用靶场。</p><button class="button button-primary" type="button" data-action="refresh-labs">重新检查</button></div>'
+function labCard(lab) {
+  const view = labCardView(lab)
+  return `<article class="lab-card" data-state="${view.cardState}" data-runtime="${esc(lab.runtimeKind ?? '')}" aria-label="${esc(lab.title)}，${view.statusLabel}" aria-live="polite"${view.busy ? ' aria-busy="true"' : ''}>
+    <button class="lab-card-media" type="button" data-action="open-lab-details" data-id="${esc(lab.id)}" data-cover="${coverVariant(lab)}" aria-label="查看 ${esc(lab.title)} 信息">${coverArt(lab)}<span class="lab-card-caption" title="${esc(lab.title)}"><span class="lab-card-title">${esc(lab.title)}</span></span></button>
+  </article>`
 }
 
 function labDetailModal() {
@@ -246,7 +233,7 @@ function loginPage() {
   const passwordInvalid = state.loginErrorFields.includes('password')
   const notice = state.error ? loginNoticeCard({ id: 'login-notice', title: '登录失败', message: state.error, action: 'dismiss-login-error' }) : ''
   const describedBy = state.error ? 'aria-describedby="login-notice"' : ''
-  return `<div class="login-page"><form class="login-form" id="login-form" novalidate><div class="login-brand"><img src="/favicon.svg" alt=""><h1>VulnLab</h1><p>本地靶场控制台</p></div><div class="login-mode">登录</div><label><span class="sr-only">账号</span><input name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label><span class="sr-only">密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '进入靶场'}</button></form>${notice}</div>`
+  return `<div class="login-page"><form class="login-form" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>VulnLab</h1><p>攻防控制台</p></div><div class="login-mode">登录</div><label><span class="sr-only">账号</span><input name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></label><label><span class="sr-only">密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '进入靶场'}</button></form>${notice}</div>`
 }
 
 function scheduleImportPolling() {
@@ -277,6 +264,74 @@ async function waitForStartedInstance(labId) {
   throw new ApiError('靶场准备超时，请稍后重新查看。', 504)
 }
 
+function patchLabs() {
+  const canvas = app.querySelector('.lab-canvas')
+  const visibleLabs = state.labs.slice(0, 9)
+  if (state.error && !visibleLabs.length) {
+    const content = `<div class="empty-state lab-empty-state"><p>${esc(state.error)}</p><button class="button button-primary" type="button" data-action="refresh-labs">重新连接</button></div>`
+    if (canvas.innerHTML !== content) canvas.innerHTML = content
+    return
+  }
+  if (!visibleLabs.length) {
+    const content = '<div class="empty-state lab-empty-state"><p>暂无可用靶场。</p><button class="button button-primary" type="button" data-action="refresh-labs">重新检查</button></div>'
+    if (canvas.innerHTML !== content) canvas.innerHTML = content
+    return
+  }
+  let grid = canvas.querySelector('.lab-grid')
+  if (!grid) {
+    canvas.innerHTML = '<h1 class="sr-only">靶场</h1><div class="lab-grid" aria-label="靶场列表"></div>'
+    grid = canvas.querySelector('.lab-grid')
+  }
+  const cards = new Map([...grid.querySelectorAll('.lab-card')].map(card => [card.querySelector('[data-id]')?.dataset.id, card]))
+  visibleLabs.forEach((lab, index) => {
+    let card = cards.get(lab.id)
+    if (!card) {
+      const template = document.createElement('template')
+      template.innerHTML = labCard(lab)
+      card = template.content.firstElementChild
+    }
+    if (grid.children[index] !== card) grid.insertBefore(card, grid.children[index] ?? null)
+    cards.delete(lab.id)
+    const view = labCardView(lab)
+    card.dataset.state = view.cardState
+    card.dataset.runtime = lab.runtimeKind ?? ''
+    card.setAttribute('aria-label', `${lab.title}，${view.statusLabel}`)
+    if (view.busy) card.setAttribute('aria-busy', 'true')
+    else card.removeAttribute('aria-busy')
+  })
+  cards.forEach(card => card.remove())
+}
+
+function patchSlot(name, content, { focus = false, key = content } = {}) {
+  const slot = app.querySelector(`[data-overlay-slot="${name}"]`)
+  if (slot.__vulnlabKey === key && slot.__vulnlabContent === content) return
+  const hadDialog = focus && Boolean(slot.querySelector('[role="dialog"]'))
+  const active = focus && slot.contains(document.activeElement)
+    ? { action: document.activeElement.dataset.action ?? '', id: document.activeElement.dataset.id ?? '' }
+    : null
+  slot.innerHTML = content
+  slot.__vulnlabKey = key
+  slot.__vulnlabContent = content
+  if (!focus || !content) return
+  if (hadDialog) {
+    slot.querySelector('.dialog-backdrop')?.style.setProperty('animation', 'none')
+    slot.querySelector('[role="dialog"]')?.style.setProperty('animation', 'none')
+  }
+  window.queueMicrotask(() => {
+    const focusable = [...slot.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.offsetParent !== null)
+    const target = active && focusable.find(item => item.dataset.action === active.action && (item.dataset.id ?? '') === active.id)
+    ;(target || focusable[0])?.focus()
+  })
+}
+
+function patchOverlays() {
+  const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
+  patchSlot('success', successNotice, { key: state.successNotice ?? '' })
+  patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
+  patchSlot('detail', labDetailModal(), { focus: true })
+  patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
+}
+
 function render() {
   document.body.classList.toggle('has-workspace', Boolean(state.session))
   document.body.classList.toggle('has-login-success-notice', Boolean(state.successNotice && state.session))
@@ -288,15 +343,9 @@ function render() {
   if (!state.session) { clearLoginSuccessNoticeTimer(); app.innerHTML = loginPage(); scheduleLoginNoticeDismiss(); return }
   clearLoginNoticeTimer()
   scheduleLoginSuccessNoticeDismiss()
-  app.innerHTML = labsShell(labsPage())
-  window.queueMicrotask(() => {
-    const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1)
-    if (!dialog) return
-    const selector = state.dialogFocusSelector
-    state.dialogFocusSelector = ''
-    const focusable = (selector && dialog.querySelector(selector)) || dialog.querySelector('button, a[href], input, select, textarea')
-    focusable?.focus()
-  })
+  if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
+  patchLabs()
+  patchOverlays()
   scheduleImportPolling()
 }
 

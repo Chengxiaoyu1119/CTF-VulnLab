@@ -566,7 +566,7 @@ app.post('/api/auth/login', async (request, reply) => {
   const csrfToken = randomBytes(24).toString('hex')
   database.createSession(sessionId, user.userName, user.role, csrfToken, Date.now() + 8 * 60 * 60 * 1000)
   database.clearLoginAttempts(clientKey)
-  reply.setCookie('vulnlab_session', sessionId, { path: '/', httpOnly: true, sameSite: 'lax', secure: secureCookies, signed: true, maxAge: 8 * 60 * 60 })
+  reply.setCookie('vulnlab_session', sessionId, { path: '/api', httpOnly: true, sameSite: 'lax', secure: secureCookies, signed: true, maxAge: 8 * 60 * 60 })
   database.addAudit(user.userName, 'login', 'session', '登录 VulnLab')
   return { userName: user.userName, role: user.role, csrfToken }
 })
@@ -578,7 +578,7 @@ app.post('/api/auth/logout', async (request, reply) => {
   const rawSessionId = request.cookies.vulnlab_session
   const sessionId = rawSessionId ? request.unsignCookie(rawSessionId) : null
   if (sessionId?.valid) database.deleteSession(sessionId.value)
-  reply.clearCookie('vulnlab_session', { path: '/' })
+  reply.clearCookie('vulnlab_session', { path: '/api' })
   database.addAudit(session.userName, 'logout', 'session', '退出 VulnLab')
   return { ok: true }
 })

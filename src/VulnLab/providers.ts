@@ -419,16 +419,19 @@ define('DB_PORT', (int)(getenv('DB_PORT') ?: 3306));
   return sourceRoot
 }
 
-const configureXvwa = async (root: string) => {
+const configureXvwa = async (root: string, appUrlRoot = '') => {
   const configPath = join(root, 'config.php')
   const setupPath = join(root, 'setup', 'home.php')
   const uploadRoot = join(root, 'img', 'uploads')
+  if (appUrlRoot && !/^\/lab-runtime\/[A-Za-z0-9-]+$/.test(appUrlRoot)) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'XVWA 运行入口路径无效。', 409)
+  }
   if (!(await stat(configPath).catch(() => null))?.isFile() || !(await stat(setupPath).catch(() => null))?.isFile()) {
     throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'XVWA 缺少 config.php 或数据库初始化文件。', 409)
   }
   const config = [
     '<?php',
-    "$XVWA_WEBROOT = '';",
+    `$XVWA_WEBROOT = ${JSON.stringify(appUrlRoot)};`,
     "$host = getenv('DB_SERVER') ?: '127.0.0.1';",
     "$port = (int)(getenv('DB_PORT') ?: 3306);",
     "$dbname = getenv('DB_DATABASE') ?: 'vulnlab';",
@@ -445,10 +448,25 @@ const configureXvwa = async (root: string) => {
   let setup = await readFile(setupPath, 'utf8')
   setup = setup.replace("$sql = 'DROP TABLE '. $tables[$i].';';", "$sql = 'DROP TABLE IF EXISTS '. $tables[$i].';';")
   setup = setup.replaceAll('mysql_error()', 'mysqli_error($conn)')
+  setup = setup.replaceAll('/xvwa/', `${appUrlRoot}/xvwa/`)
   if (/DROP TABLE(?! IF EXISTS)/i.test(setup) || /mysql_error\s*\(/i.test(setup)) {
     throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'XVWA 初始化脚本仍包含不兼容的数据库语句。', 409)
   }
   await writeFile(setupPath, setup, 'utf8')
+
+  for (const relativePath of ['header.php', 'sidepanel.php', 'login.php', 'logout.php', join('vulnerabilities', 'index.php')]) {
+    const path = join(root, relativePath)
+    const contents = await readFile(path, 'utf8').catch(() => null)
+    if (contents === null) continue
+    const rewritten = contents.split('\n').map(line => line.includes('$XVWA_WEBROOT') ? line : line.replaceAll('/xvwa/', `${appUrlRoot}/xvwa/`)).join('\n')
+    await writeFile(path, rewritten, 'utf8')
+  }
+
+  const uploadPath = join(root, 'vulnerabilities', 'fileupload', 'home.php')
+  const upload = await readFile(uploadPath, 'utf8').catch(() => null)
+  if (upload !== null) {
+    await writeFile(uploadPath, upload.replaceAll("$rpath = '/xvwa/", `$rpath = '${appUrlRoot}/xvwa/`), 'utf8')
+  }
   await mkdir(uploadRoot, { recursive: true })
 }
 
@@ -595,7 +613,7 @@ export class NativePhpProvider implements LabProvider {
     return values.map(value => value.split(';', 1)[0]).filter(Boolean).join('; ')
   }
 
-  private async initializeDatabase(profile: DatabaseLabProfile, input: ProviderStartInput, root: string, resource: MySqlResource) {
+  private async initializeDatabase(profile: DatabaseLabProfile, input: ProviderStartInput, root: string, resource: MySqlResource, appUrlRoot: string) {
     const bootstrapRoot = `${root}-bootstrap`
     let processInfo: { child: ChildProcess; port: number } | null = null
     try {
@@ -611,7 +629,7 @@ export class NativePhpProvider implements LabProvider {
         await configurePikachuInstallerPort(bootstrapRoot)
       }
       const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(bootstrapRoot) : null
-      if (profile === 'xvwa') await configureXvwa(sourceRoot)
+      if (profile === 'xvwa') await configureXvwa(sourceRoot, appUrlRoot)
       const phpInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(bootstrapRoot) }
         : input
@@ -688,6 +706,7 @@ export class NativePhpProvider implements LabProvider {
     const runtimeRoot = join(dataRoot, 'runtime', input.instanceId)
     const profile = databaseProfile(input.lab)
     const sourceTarget = profile === 'xvwa' ? join(runtimeRoot, 'xvwa') : runtimeRoot
+    const appUrlRoot = input.proxyEndpoint ? new URL(input.proxyEndpoint).pathname.replace(/\/$/, '') : ''
     let processInfo: { child: ChildProcess; port: number } | null = null
     let database: MySqlResource | null = null
     try {
@@ -695,15 +714,14 @@ export class NativePhpProvider implements LabProvider {
       if (profile) {
         if (!input.runtime.mysql) throw new ProviderError('NATIVE_PHP_MYSQL_NOT_CONFIGURED', 'PHP 数据库靶场运行需要配置 MySQL 管理账号。', 409)
         database = await this.mysqlManager.provision({ labSlug: input.lab.slug, instanceId: input.instanceId, config: input.runtime.mysql })
-        await this.initializeDatabase(profile, input, runtimeRoot, database)
+        await this.initializeDatabase(profile, input, runtimeRoot, database, appUrlRoot)
       }
       await cp(sourcePath, sourceTarget, { recursive: true, force: true })
       if (profile === 'dvwa') await configureDvwa(sourceTarget)
       if (profile === 'pikachu') await configurePikachu(sourceTarget)
       const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(runtimeRoot) : null
-      if (profile === 'xvwa') await configureXvwa(sourceTarget)
+      if (profile === 'xvwa') await configureXvwa(sourceTarget, appUrlRoot)
       if (input.lab.slug === 'upload-labs') {
-        const appUrlRoot = input.proxyEndpoint ? new URL(input.proxyEndpoint).pathname.replace(/\/$/, '') : ''
         await configureUploadLabs(sourceTarget, appUrlRoot)
       }
       const runtimeInput = profile === 'sqli-labs'
