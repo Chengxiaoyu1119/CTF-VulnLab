@@ -203,7 +203,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .lab-card-media[data-cover="upload-labs"] .lab-card-cover { object-position: top center; }
 .lab-card-media[data-cover="webgoat"] .lab-card-cover { object-position: top left; }
 .lab-card-media[data-cover="mutillidae"] .lab-card-cover { object-fit: cover; padding: 0; }
-.lab-card-media.lab-detail-cover[data-cover="mutillidae"] .lab-card-cover { object-position: center 32%; }
+.lab-card-media.lab-detail-cover[data-cover="mutillidae"] .lab-card-cover { object-position: center top; }
 .lab-card-media[data-cover="pygoat"] .lab-card-cover { object-fit: contain; padding: 19px 38px; }
 .lab-card-media.cover-load-failed { background-color: #1b1b1b; }
 .lab-card-media.cover-load-failed::after { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; content: '封面暂不可用'; color: #8f8f8f; background: radial-gradient(circle at center, rgba(255, 127, 42, .08), transparent 48%); font-size: 11px; }

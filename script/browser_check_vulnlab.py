@@ -144,7 +144,7 @@ def main() -> None:
         ).evaluate(
             "element => ({ objectFit: getComputedStyle(element).objectFit, objectPosition: getComputedStyle(element).objectPosition })"
         )
-        assert mutillidae_cover_style == {"objectFit": "cover", "objectPosition": "50% 32%"}, mutillidae_cover_style
+        assert mutillidae_cover_style == {"objectFit": "cover", "objectPosition": "50% 0%"}, mutillidae_cover_style
         page.get_by_role("button", name="关闭靶场信息").click()
         expect(mutillidae_trigger).to_be_focused()
         page.evaluate(
@@ -181,6 +181,28 @@ def main() -> None:
         page.keyboard.press("Escape")
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
         expect(notice_detail_trigger).to_be_focused()
+        poll_requests = {"count": 0}
+
+        def track_detail_poll(route, request):
+            if request.method == "GET":
+                poll_requests["count"] += 1
+                route.fulfill(status=200, content_type="application/json", body="[]")
+            else:
+                route.continue_()
+
+        page.route("**/api/instances", track_detail_poll)
+        poll_trigger = page.locator(".lab-card-media").first
+        poll_trigger.click()
+        expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        initial_poll_requests = poll_requests["count"]
+        page.wait_for_timeout(5200)
+        assert poll_requests["count"] > initial_poll_requests, poll_requests
+        page.get_by_role("button", name="关闭靶场信息").click()
+        closed_poll_requests = poll_requests["count"]
+        page.wait_for_timeout(5200)
+        assert poll_requests["count"] == closed_poll_requests, poll_requests
+        page.unroute("**/api/instances", track_detail_poll)
+        expect(poll_trigger).to_be_focused()
         page.locator(".lab-canvas").focus()
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .workspace-account, .lab-workspace-head")).to_have_count(0)

@@ -1,10 +1,12 @@
 const app = document.querySelector('#app')
 let importPollTimer = null
+let detailPollTimer = null
 let modalReturnFocus = null
 let loginSuccessNoticeTimer = null
 let toastTimer = null
 
 const LOGIN_NOTICE_DURATION = 4200
+const DETAIL_POLL_INTERVAL = 5000
 
 const state = {
   session: null,
@@ -95,6 +97,10 @@ function setToast(message, type = 'success') {
 
 function clearLoginSuccessNoticeTimer() {
   if (loginSuccessNoticeTimer) { window.clearTimeout(loginSuccessNoticeTimer); loginSuccessNoticeTimer = null }
+}
+
+function clearDetailPolling() {
+  if (detailPollTimer) { window.clearTimeout(detailPollTimer); detailPollTimer = null }
 }
 
 function beginBusy(action, id = '') {
@@ -281,6 +287,22 @@ function scheduleImportPolling() {
   }, 1200)
 }
 
+function scheduleDetailPolling() {
+  clearDetailPolling()
+  if (!state.session || !state.labDetailId || !state.labs.some(item => item.id === state.labDetailId)) return
+  if (state.busyActions.length || state.jobs.some(job => ['queued', 'importing'].includes(job.status))) return
+  detailPollTimer = window.setTimeout(async () => {
+    detailPollTimer = null
+    if (!state.session || !state.labDetailId || state.busyActions.length) return
+    try {
+      await refresh()
+      if (state.session && state.labDetailId) render()
+    } catch {
+      if (state.session && state.labDetailId) scheduleDetailPolling()
+    }
+  }, DETAIL_POLL_INTERVAL)
+}
+
 const sleep = milliseconds => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 
 async function waitForStartedInstance(labId) {
@@ -369,6 +391,7 @@ function patchOverlays() {
 }
 
 function render() {
+  if (!state.session || !state.labDetailId) clearDetailPolling()
   document.body.classList.toggle('has-workspace', Boolean(state.session))
   document.body.classList.toggle('has-login-success-notice', Boolean(state.successNotice && state.session))
   document.body.classList.toggle('has-dialog', Boolean(state.confirm || state.labDetailId))
@@ -382,6 +405,7 @@ function render() {
   patchLabs()
   patchOverlays()
   scheduleImportPolling()
+  scheduleDetailPolling()
 }
 
 function restoreModalFocus() {
