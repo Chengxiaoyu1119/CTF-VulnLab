@@ -397,8 +397,9 @@ const configureDvwaInstallerCompatibility = async (root: string) => {
 const configureMutillidae = async (root: string) => {
   const sourceRoot = join(root, 'src')
   const configPath = join(sourceRoot, 'includes', 'database-config.inc')
+  const handlerPath = join(sourceRoot, 'classes', 'MySQLHandler.php')
   const setupPath = join(sourceRoot, 'set-up-database.php')
-  if (!(await stat(configPath).catch(() => null))?.isFile() || !(await stat(setupPath).catch(() => null))?.isFile()) {
+  if (!(await stat(configPath).catch(() => null))?.isFile() || !(await stat(handlerPath).catch(() => null))?.isFile() || !(await stat(setupPath).catch(() => null))?.isFile()) {
     throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'Mutillidae 缺少数据库配置或初始化文件。', 409)
   }
   const config = `<?php
@@ -409,6 +410,9 @@ define('DB_NAME', getenv('DB_DATABASE') ?: 'vulnlab');
 define('DB_PORT', (int)(getenv('DB_PORT') ?: 3306));
 ?>\n`
   await writeFile(configPath, config, 'utf8')
+  let handler = await readFile(handlerPath, 'utf8')
+  handler = handler.replace(/new mysqli\((\$HOSTNAME|self::\$MUTILLIDAE_DOCKER_HOSTNAME), \$USERNAME, ([^,)]+)\)/g, 'new mysqli($1, $USERNAME, $2, NULL, self::$mMySQLDatabasePort)')
+  await writeFile(handlerPath, handler, 'utf8')
   let setup = await readFile(setupPath, 'utf8')
   setup = setup.replace(/\$lQueryString\s*=\s*"DROP DATABASE IF EXISTS[^;]*;/i, '$lQueryString = "SELECT 1";')
   setup = setup.replace(/\$lQueryString\s*=\s*"CREATE DATABASE[^;]*;/i, '$lQueryString = "SELECT 1";')

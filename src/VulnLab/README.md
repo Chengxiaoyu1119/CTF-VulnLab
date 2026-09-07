@@ -47,7 +47,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 进程状态写入运行目录；正常停止、过期回收、服务关闭和服务重启都执行资源回收。点击“启动环境”时，实例 API 会先准备资源和项目运行时，再调用 Provider；确实无法满足的依赖以 `RUNTIME_DEPENDENCY_MISSING` 返回。
 
-服务运行后，`npm run smoke:runtimes` 要求 Upload-Labs、Juice Shop、WebGoat 和 PyGoat 已处于 `ready`，随后依次启动、检查真实页面并停止实例。该命令不覆盖其余五个靶场的真实运行链路。
+服务运行后，`npm run smoke:runtimes` 会依次启动九个已安装的内置靶场，检查各自入口和 WebGoat 的 WebWolf，再验证重复启动、续期、停止、入口失效和重新启动。
 
 ## 项目运行环境
 

@@ -173,7 +173,7 @@ node script/smoke_vulnlab_builtin_runtimes.mjs
 python script/browser_check_vulnlab.py
 ```
 
-运行冒烟要求 Upload-Labs、Juice Shop、WebGoat 和 PyGoat 已处于 `ready`，随后真实检查页面并停止实例。浏览器回归验证当前界面、响应式布局、交互状态和控制台错误；真实靶场页面由运行冒烟单独验证。
+运行冒烟会依次验证九个内置靶场的真实入口，并覆盖重复启动、续期、停止、入口失效和重新启动；浏览器回归验证当前界面、响应式布局、交互状态和控制台错误。
 
 GitHub CI 当前在 Ubuntu 24.04 上执行类型检查、构建、fixture/契约测试、API/服务生命周期冒烟和浏览器回归，不执行上述真实运行时下载与靶场启动冒烟，也不代表 Windows、macOS 或 Linux 原生部署已经完成实机验收。
 
