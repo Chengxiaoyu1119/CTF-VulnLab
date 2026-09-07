@@ -18,12 +18,14 @@ import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
 import { prepareInstalledLab } from './runtime-prep.js'
 import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
+import { dataPaths } from './paths.js'
 import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView } from './types.js'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
 const publicDir = join(appDir, 'public')
-const dataDir = process.env.VULNLAB_DATA_DIR ? resolve(process.env.VULNLAB_DATA_DIR) : join(appDir, 'data')
+const storage = dataPaths(process.env.VULNLAB_DATA_DIR ? process.env.VULNLAB_DATA_DIR : join(appDir, 'data'))
+const dataDir = storage.root
 const configuredHost = process.env.VULNLAB_HOST ?? '127.0.0.1'
 const configuredPort = Number(process.env.VULNLAB_PORT ?? process.env.PORT ?? 6710)
 const fallbackPort = Number.isInteger(configuredPort) && configuredPort >= 1024 && configuredPort <= 65535 ? configuredPort : 6710
@@ -258,13 +260,13 @@ const isDirectory = async (path: string) => (await stat(path).catch(() => null))
 
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
   if (!lab.builtin || manifest.adapterId === 'builtin-release') return manifest
-  const targetRoot = join(dataDir, 'labs', lab.slug, lab.version)
+  const targetRoot = storage.lab(lab.slug, lab.version)
   const targetPath = targetRoot
   if (resolve(manifest.localPath) === resolve(targetPath)) return manifest
   if (await isDirectory(targetRoot)) {
     const promoted = { ...manifest, localPath: targetPath }
     await writeFile(join(targetRoot, 'vulnlab.manifest.json'), JSON.stringify(promoted, null, 2), 'utf8')
-    await rm(join(dataDir, 'imports', jobId), { recursive: true, force: true })
+    await rm(storage.importJob(jobId), { recursive: true, force: true })
     return promoted
   }
   if (!(await isDirectory(manifest.localPath))) throw new ImporterError('内置靶场安装清单指向的资源已不存在，请重新安装。')
@@ -277,13 +279,13 @@ const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportM
   }
   const promoted = { ...manifest, localPath: targetPath }
   await writeFile(join(targetRoot, 'vulnlab.manifest.json'), JSON.stringify(promoted, null, 2), 'utf8')
-  await rm(join(dataDir, 'imports', jobId), { recursive: true, force: true })
+  await rm(storage.importJob(jobId), { recursive: true, force: true })
   return promoted
 }
 
 const cleanupOutdatedBuiltinVersions = async (lab: Lab) => {
   if (!lab.builtin || !/^[a-z0-9-]+$/.test(lab.slug) || !/^[A-Za-z0-9._-]+$/.test(lab.version)) return
-  const root = join(dataDir, 'labs', lab.slug)
+  const root = storage.labRoot(lab.slug)
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
   await Promise.allSettled(entries
     .filter(entry => entry.isDirectory() && entry.name !== lab.version)
@@ -487,7 +489,7 @@ const queueStartAfterImport = (labId: string, jobId: string, actor: string, orig
 }
 
 const bootstrapBuiltinLabs = async () => {
-  await Promise.allSettled(['vulnhub', 'vulhub', 'crapi'].map(slug => rm(join(dataDir, 'labs', slug), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
+  await Promise.allSettled(['vulnhub', 'vulhub', 'crapi'].map(slug => rm(storage.labRoot(slug), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
   for (const job of database.listJobsParsed().filter(item => item.status === 'queued')) {
     const lab = database.getLab(job.labId)
     if (!lab?.builtin) continue
@@ -754,7 +756,7 @@ app.get('/lab-cover/:slug', async (request, reply) => {
   const source = sources[slug]
   if (!source) return reply.code(404).send('Cover not found')
   const coverPath = resolve(source.path)
-  const dataRoot = resolve(dataDir)
+  const dataRoot = storage.root
   const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
   if (coverPath !== dataRoot && !coverPath.startsWith(dataPrefix)) return reply.code(404).send('Cover not found')
   try {

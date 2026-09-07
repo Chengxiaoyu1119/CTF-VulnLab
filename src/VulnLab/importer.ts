@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { unzipSync } from 'fflate'
 import type { ImportManifest } from './types.js'
+import { dataPaths } from './paths.js'
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_FILE_COUNT = 20_000
@@ -303,7 +304,7 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
   const fetchImpl = input.fetchImpl ?? fetch
   const headers = { accept: 'application/vnd.github+json', 'user-agent': USER_AGENT }
   const apiBase = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}`
-  const root = join(resolve(input.dataDir), 'imports', input.jobId)
+  const root = dataPaths(input.dataDir).importJob(input.jobId)
   const archivePath = join(root, 'source.zip')
   const extractRoot = join(root, 'source')
   try {
@@ -403,7 +404,7 @@ export const importGitLabRepository = async (input: ImportInput): Promise<Import
   const headers = { accept: 'application/json', 'user-agent': USER_AGENT }
   const encodedProject = encodeURIComponent(repository.projectPath)
   const apiBase = `https://gitlab.com/api/v4/projects/${encodedProject}`
-  const root = join(resolve(input.dataDir), 'imports', input.jobId)
+  const root = dataPaths(input.dataDir).importJob(input.jobId)
   const archivePath = join(root, 'source.zip')
   const extractRoot = join(root, 'source')
   try {

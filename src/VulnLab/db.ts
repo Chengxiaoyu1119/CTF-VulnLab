@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3'
 import { existsSync, mkdirSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
+import { dataPaths } from './paths.js'
 import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, SessionView, UserRole } from './types.js'
 
 type Row = Record<string, unknown>
@@ -59,7 +60,7 @@ const parseManifest = (value: string): ImportManifest => {
 
 const builtinRoot = (dataDir: string, slug: string, version: string) => {
   if (!/^[a-z0-9-]+$/.test(slug) || !/^[A-Za-z0-9._-]+$/.test(version)) return null
-  return join(resolve(dataDir), 'labs', slug, version)
+  return dataPaths(dataDir).lab(slug, version)
 }
 
 const builtinLocalPath = (root: string, runtimeKind: string, adapterId: string, localPath: string) => {
@@ -101,16 +102,17 @@ export class VulnLabDatabase {
   private readonly runtimeDefaults: AppSettings
 
   constructor(dataDir: string, runtimeDefaults: Partial<AppSettings> = {}) {
+    const paths = dataPaths(dataDir)
     this.runtimeDefaults = {
       bindHost: '127.0.0.1',
       port: '6710',
       maxInstances: '8',
-      dataDir: resolve(dataDir),
+      dataDir: paths.root,
       autoCleanup: 'true',
       ...runtimeDefaults,
     }
-    mkdirSync(dataDir, { recursive: true })
-    this.db = new Database(join(dataDir, 'vulnlab.sqlite'))
+    mkdirSync(paths.root, { recursive: true })
+    this.db = new Database(paths.database)
     this.db.pragma('busy_timeout = 5000')
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
@@ -365,34 +367,43 @@ export class VulnLabDatabase {
       const staleMessage = '内置靶场本地资源路径已失效，等待重新安装。'
 
       for (const lab of labs) {
-        const root = builtinRoot(dataDir, lab.slug, lab.version)
-        if (!root) continue
-        const labJobs = jobsByLab.get(lab.id) ?? []
-        const manifestEntries = labJobs
-          .filter(item => item.manifest)
-          .map(item => ({ ...item, localPath: builtinLocalPath(root, lab.runtime_kind, item.manifest?.adapterId ?? '', item.manifest?.localPath ?? '') }))
-        const recordedPath = lab.local_path ?? ''
-        const expectedPath = builtinLocalPath(root, lab.runtime_kind, manifestEntries[0]?.manifest?.adapterId ?? 'builtin-release', manifestEntries[0]?.manifest?.localPath ?? recordedPath)
-        const expectedExists = Boolean(expectedPath && existsSync(expectedPath))
+        try {
+          const root = builtinRoot(dataDir, lab.slug, lab.version)
+          if (!root) continue
+          const labJobs = jobsByLab.get(lab.id) ?? []
+          const manifestEntries = labJobs
+            .filter(item => item.manifest)
+            .map(item => ({ ...item, localPath: builtinLocalPath(root, lab.runtime_kind, item.manifest?.adapterId ?? '', item.manifest?.localPath ?? '') }))
+            .filter(item => item.localPath)
+          const recordedPath = lab.local_path ?? ''
+          const expectedPath = builtinLocalPath(root, lab.runtime_kind, manifestEntries[0]?.manifest?.adapterId ?? 'builtin-release', manifestEntries[0]?.manifest?.localPath ?? recordedPath)
+          const expectedExists = Boolean(expectedPath && existsSync(expectedPath))
 
-        if (expectedExists) {
-          if (lab.local_path !== expectedPath) {
-            updateLabPath.run(expectedPath, timestamp, lab.id)
-            repaired.add(lab.slug)
+          if (expectedExists) {
+            if (lab.local_path !== expectedPath) {
+              updateLabPath.run(expectedPath, timestamp, lab.id)
+              repaired.add(lab.slug)
+            }
+            for (const item of manifestEntries) {
+              if (!item.localPath || !existsSync(item.localPath) || item.manifest?.localPath === item.localPath) continue
+              updateManifest.run(JSON.stringify({ ...item.manifest, localPath: item.localPath }), timestamp, item.id)
+              repaired.add(lab.slug)
+            }
+            continue
           }
-          for (const item of manifestEntries) {
-            if (!item.localPath || !existsSync(item.localPath) || item.manifest?.localPath === item.localPath) continue
-            updateManifest.run(JSON.stringify({ ...item.manifest, localPath: item.localPath }), timestamp, item.id)
-            repaired.add(lab.slug)
-          }
-          continue
-        }
 
-        const usableHistoricalManifest = labJobs.some(item => Boolean(item.manifest?.localPath && existsSync(item.manifest.localPath)))
-        if (lab.status === 'ready' && !usableHistoricalManifest) {
-          resetLab.run(timestamp, lab.id)
-          for (const item of labJobs) resetJob.run(staleMessage, staleMessage, timestamp, item.id)
-          reset.add(lab.slug)
+          const usableHistoricalManifest = labJobs.some(item => typeof item.manifest?.localPath === 'string' && existsSync(item.manifest.localPath))
+          if (lab.status === 'ready' && !usableHistoricalManifest) {
+            resetLab.run(timestamp, lab.id)
+            for (const item of labJobs) resetJob.run(staleMessage, staleMessage, timestamp, item.id)
+            reset.add(lab.slug)
+          }
+        } catch {
+          if (lab.status === 'ready') {
+            resetLab.run(timestamp, lab.id)
+            for (const item of jobsByLab.get(lab.id) ?? []) resetJob.run(staleMessage, staleMessage, timestamp, item.id)
+            reset.add(lab.slug)
+          }
         }
       }
     })()

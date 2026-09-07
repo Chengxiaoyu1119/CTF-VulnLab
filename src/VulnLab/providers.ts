@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promi
 import { createServer, type AddressInfo } from 'node:net'
 import { basename, join, resolve, sep } from 'node:path'
 import { CliMySqlManager, mysqlRuntimeConfigFromEnv, type MySqlManager, type MySqlResource, type MySqlRuntimeConfig } from './mysql.js'
+import { dataPaths } from './paths.js'
 import type { Lab, LabInstance, RuntimeKind } from './types.js'
 
 export interface NativeRuntimeConfig {
@@ -699,18 +700,19 @@ export class NativePhpProvider implements LabProvider {
     if (!sourceStat?.isDirectory()) throw new ProviderError('NATIVE_PHP_SOURCE_NOT_FOUND', '靶场导入目录不存在或不是目录。', 409)
     if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError('NATIVE_PHP_INSTANCE_ID_INVALID', '运行实例 ID 格式无效。', 400)
 
-    const dataRoot = resolve(input.dataDir)
+    const paths = dataPaths(input.dataDir)
+    const dataRoot = paths.root
     const sourcePath = resolve(sourceRoot)
     const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
     if (sourcePath !== dataRoot && !sourcePath.startsWith(dataPrefix)) throw new ProviderError('NATIVE_PHP_SOURCE_OUTSIDE_DATA', '靶场目录必须位于 VulnLab 数据目录内。', 409)
-    const runtimeRoot = join(dataRoot, 'runtime', input.instanceId)
+    const runtimeRoot = paths.runtimeInstance(input.instanceId)
     const profile = databaseProfile(input.lab)
     const sourceTarget = profile === 'xvwa' ? join(runtimeRoot, 'xvwa') : runtimeRoot
     const appUrlRoot = input.proxyEndpoint ? new URL(input.proxyEndpoint).pathname.replace(/\/$/, '') : ''
     let processInfo: { child: ChildProcess; port: number } | null = null
     let database: MySqlResource | null = null
     try {
-      await mkdir(resolve(dataRoot, 'runtime'), { recursive: true })
+      await mkdir(paths.runtime, { recursive: true })
       if (profile) {
         if (!input.runtime.mysql) throw new ProviderError('NATIVE_PHP_MYSQL_NOT_CONFIGURED', 'PHP 数据库靶场运行需要配置 MySQL 管理账号。', 409)
         database = await this.mysqlManager.provision({ labSlug: input.lab.slug, instanceId: input.instanceId, config: input.runtime.mysql })
@@ -794,7 +796,7 @@ export class NativePhpProvider implements LabProvider {
 
   async recover(input: ProviderRecoverInput): Promise<void> {
     if (input.dataDir) {
-      const root = join(resolve(input.dataDir), 'runtime', input.instance.id)
+      const root = dataPaths(input.dataDir).runtimeInstance(input.instance.id)
       const state = await readFile(join(root, 'vulnlab-runtime.json'), 'utf8').then(value => JSON.parse(value) as { pid?: unknown }).catch(() => null)
       if (state && Number.isInteger(state.pid) && Number(state.pid) > 0) await terminatePid(Number(state.pid))
       await removeTree(root)
@@ -1017,17 +1019,18 @@ export class NativeProcessProvider implements LabProvider {
     const sourceRoot = input.lab.localPath
     if (!sourceRoot) throw new ProviderError(`${processErrorPrefix[this.id]}_SOURCE_NOT_READY`, '靶场资源尚未安装。', 409)
     if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError(`${processErrorPrefix[this.id]}_INSTANCE_ID_INVALID`, '运行实例 ID 格式无效。', 400)
-    const dataRoot = resolve(input.dataDir)
+    const paths = dataPaths(input.dataDir)
+    const dataRoot = paths.root
     const sourcePath = resolve(sourceRoot)
     const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
     if (sourcePath !== dataRoot && !sourcePath.startsWith(dataPrefix)) throw new ProviderError(`${processErrorPrefix[this.id]}_SOURCE_OUTSIDE_DATA`, '靶场资源必须位于 VulnLab 数据目录内。', 409)
-    const runtimeRoot = join(dataRoot, 'runtime', input.instanceId)
+    const runtimeRoot = paths.runtimeInstance(input.instanceId)
     const port = await this.claimPort(input.runtime)
     const auxiliaryPort = this.id === 'native-java' ? await this.claimFollowingPort(input.runtime, port) : undefined
     let child: ChildProcess | null = null
     let stderrTail = ''
     try {
-      await mkdir(resolve(dataRoot, 'runtime'), { recursive: true })
+      await mkdir(paths.runtime, { recursive: true })
       await rm(runtimeRoot, { recursive: true, force: true })
       await mkdir(runtimeRoot, { recursive: true })
       const sourceInfo = await stat(sourcePath)
@@ -1109,7 +1112,7 @@ export class NativeProcessProvider implements LabProvider {
 
   async recover(input: ProviderRecoverInput): Promise<void> {
     if (!input.dataDir) return
-    const root = join(resolve(input.dataDir), 'runtime', input.instance.id)
+    const root = dataPaths(input.dataDir).runtimeInstance(input.instance.id)
     const state = await readFile(join(root, 'vulnlab-runtime.json'), 'utf8').then(value => JSON.parse(value) as { pid?: unknown }).catch(() => null)
     if (state && Number.isInteger(state.pid) && Number(state.pid) > 0) await terminatePid(Number(state.pid))
     await removeTree(root)

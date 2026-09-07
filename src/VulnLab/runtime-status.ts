@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { MySqlRuntimeConfig } from './mysql.js'
 import type { Lab } from './types.js'
+import { dataPaths } from './paths.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 
@@ -87,7 +88,7 @@ export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDe
           : lab.runtimeKind === 'native-python' ? ['python'] : []
     const missing = required.filter(id => !status.get(id)?.available)
     if (lab.slug === 'pygoat' && lab.status === 'ready') {
-      const marker = join(dataDir, 'labs', lab.slug, lab.version, '.vulnlab-python-ready')
+      const marker = join(dataPaths(dataDir).lab(lab.slug, lab.version), '.vulnlab-python-ready')
       if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push('python')
     }
     return [lab.slug, { available: missing.length === 0, missing: [...new Set(missing)].map(id => status.get(id)?.label ?? id) }]

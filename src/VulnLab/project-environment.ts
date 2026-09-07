@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { MySqlRuntimeConfig } from './mysql.js'
 import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainStatus } from './runtime-toolchains.js'
+import { dataPaths } from './paths.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 
@@ -242,8 +243,9 @@ export class ProjectEnvironmentManager {
   private preparing: Promise<PreparedProjectEnvironment> | null = null
 
   constructor(options: ProjectEnvironmentOptions) {
-    this.dataDir = resolve(options.dataDir)
-    this.runtimeDir = join(this.dataDir, 'runtime')
+    const paths = dataPaths(options.dataDir)
+    this.dataDir = paths.root
+    this.runtimeDir = paths.runtime
     this.phpDir = join(this.runtimeDir, 'php')
     this.mysqlDir = join(this.runtimeDir, 'mysql')
     this.mysqlDataDir = join(this.mysqlDir, 'data')

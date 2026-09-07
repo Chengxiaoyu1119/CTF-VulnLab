@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 const { VulnLabDatabase } = await import(new URL('../src/VulnLab/dist/db.js', import.meta.url))
+const { dataPaths } = await import(new URL('../src/VulnLab/dist/paths.js', import.meta.url))
 const dataDir = await mkdtemp(join(tmpdir(), 'vulnlab-database-'))
 const database = new VulnLabDatabase(dataDir)
 try {
+  const paths = dataPaths(dataDir)
+  assert.equal(paths.root, resolve(dataDir))
+  assert.equal(paths.database, join(dataDir, 'vulnlab.sqlite'))
+  assert.equal(paths.lab('upload-labs', 'fixture'), join(dataDir, 'labs', 'upload-labs', 'fixture'))
+  assert.equal(paths.importJob('job-fixture'), join(dataDir, 'imports', 'job-fixture'))
+  assert.equal(paths.labDownload('upload-labs', 'fixture'), join(dataDir, 'downloads', 'upload-labs', 'fixture'))
+  assert.equal(paths.runtimeInstance('instance-fixture'), join(dataDir, 'runtime', 'instance-fixture'))
+  assert.throws(() => paths.lab('bad/slug', 'fixture'), /不是有效的路径片段/)
+  assert.throws(() => paths.runtimeInstance('../escape'), /不是有效的路径片段/)
+
   const lab = database.getLabBySlug('upload-labs')
   assert.ok(lab)
   const manifestFor = (item, localPath, adapterId = 'github-git') => ({
@@ -61,6 +72,30 @@ try {
   assert.equal(database.getLabBySlug('dvwa')?.localPath, null)
   assert.equal(database.getJob(dvwaJob.id)?.manifest, null)
   assert.equal(database.getJob(dvwaJob.id)?.status, 'error')
+  assert.deepEqual(database.reconcileBuiltinPaths(dataDir), { repaired: [], reset: [] })
+
+  const pikachu = database.getLabBySlug('pikachu')
+  assert.ok(pikachu)
+  await mkdir(join(dataDir, 'labs', pikachu.slug, pikachu.version), { recursive: true })
+  const pikachuJob = database.claimJob(database.createJob(pikachu.id, pikachu.sourceUrl).id)
+  assert.ok(pikachuJob)
+  database.completeJob(pikachuJob.id, manifestFor(pikachu, join(dataDir, 'old-project', 'labs', pikachu.slug, pikachu.version)))
+  const xvwa = database.getLabBySlug('xvwa')
+  assert.ok(xvwa)
+  const malformedJob = database.claimJob(database.createJob(xvwa.id, xvwa.sourceUrl).id)
+  assert.ok(malformedJob)
+  database.completeJob(malformedJob.id, { ...manifestFor(xvwa, 42), localPath: 42 })
+  database.db.prepare("UPDATE labs SET version = '.' WHERE slug = 'xvwa'").run()
+  const partialReconciliation = database.reconcileBuiltinPaths(dataDir)
+  assert.ok(partialReconciliation.repaired.includes('pikachu'))
+  assert.ok(partialReconciliation.reset.includes('xvwa'))
+  assert.equal(database.getLabBySlug('pikachu')?.localPath, join(dataDir, 'labs', 'pikachu', pikachu.version))
+  assert.equal(database.getLabBySlug('xvwa')?.status, 'cataloged')
+  assert.equal(database.getJob(malformedJob.id)?.manifest, null)
+  for (const readyLab of database.listLabs().filter(item => item.status === 'ready')) {
+    assert.ok(readyLab.localPath)
+    assert.ok(readyLab.localPath === paths.root || readyLab.localPath.startsWith(`${paths.root}${sep}`))
+  }
   assert.deepEqual(database.reconcileBuiltinPaths(dataDir), { repaired: [], reset: [] })
 
   const timestamp = new Date(Date.now() - 60_000).toISOString()

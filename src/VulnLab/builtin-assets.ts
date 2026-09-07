@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
 import { unzipSync } from 'fflate'
 import type { ImportManifest, Lab } from './types.js'
+import { dataPaths } from './paths.js'
 
 const MAX_ASSET_BYTES = 512 * 1024 ** 2
 const MAX_EXTRACTED_BYTES = 2 * 1024 ** 3
@@ -232,8 +233,9 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
   const asset = assetFactory()
   const fetchImpl = input.fetchImpl ?? fetch
   const report = input.onProgress ?? (() => undefined)
-  const installRoot = join(resolve(input.dataDir), 'labs', input.lab.slug, input.lab.version)
-  const downloadRoot = join(resolve(input.dataDir), 'downloads', input.lab.slug, input.lab.version)
+  const paths = dataPaths(input.dataDir)
+  const installRoot = paths.lab(input.lab.slug, input.lab.version)
+  const downloadRoot = paths.labDownload(input.lab.slug, input.lab.version)
   const archivePath = join(downloadRoot, asset.filename)
   await rm(installRoot, { recursive: true, force: true })
   await mkdir(installRoot, { recursive: true })
