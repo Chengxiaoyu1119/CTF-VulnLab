@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const { CliMySqlManager, mysqlResourceNames } = await import(new URL('../src/VulnLab/dist/mysql.js', import.meta.url))
+const { CliMySqlManager, mysqlClientArguments, mysqlResourceNames } = await import(new URL('../src/VulnLab/dist/mysql.js', import.meta.url))
+
+const clientRoot = await mkdtemp(join(tmpdir(), 'vulnlab-mysql-client-'))
+try {
+  await mkdir(join(clientRoot, 'lib', 'plugin'), { recursive: true })
+  const clientBinary = join(clientRoot, 'bin', 'mariadb.exe')
+  const pluginArguments = mysqlClientArguments(clientBinary)
+  assert.deepEqual(pluginArguments, process.platform === 'win32' ? [`--plugin-dir=${join(clientRoot, 'lib', 'plugin')}`] : [])
+} finally {
+  await rm(clientRoot, { recursive: true, force: true })
+}
 
 const calls = []
 const config = {

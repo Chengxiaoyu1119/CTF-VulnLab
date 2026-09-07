@@ -3,7 +3,7 @@ import { createConnection, createServer, type AddressInfo } from 'node:net'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
-import type { MySqlRuntimeConfig } from './mysql.js'
+import { mysqlClientArguments, type MySqlRuntimeConfig } from './mysql.js'
 import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainStatus } from './runtime-toolchains.js'
 import { dataPaths } from './paths.js'
 
@@ -204,7 +204,7 @@ const terminate = async (child: ChildProcess | null, pid?: number) => {
 
 const mysqlString = (value: string) => `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\0', '')}'`
 
-const mysqlStatePath = (mysqlDir: string) => join(mysqlDir, 'runtime.json')
+const mysqlStatePath = (mysqlDir: string) => join(mysqlDir, 'mariadb-runtime.json')
 
 const jsonState = async (path: string) => {
   try {
@@ -248,7 +248,7 @@ export class ProjectEnvironmentManager {
     this.runtimeDir = paths.runtime
     this.phpDir = join(this.runtimeDir, 'php')
     this.mysqlDir = join(this.runtimeDir, 'mysql')
-    this.mysqlDataDir = join(this.mysqlDir, 'data')
+    this.mysqlDataDir = join(this.mysqlDir, 'data-mariadb')
     this.mysqlLogDir = join(this.mysqlDir, 'logs')
     this.phpBinaryOverride = options.phpBinary?.trim() || undefined
     this.phpIniOverride = options.phpIni?.trim() || undefined
@@ -379,7 +379,7 @@ export class ProjectEnvironmentManager {
 
   private async executeMysql(binary: string, config: { host: string; port: number; user: string; password: string }, sql: string) {
     return await command(binary, [
-      '--no-defaults', '--protocol=tcp', '--host', config.host, '--port', String(config.port), '--user', config.user,
+      '--no-defaults', ...mysqlClientArguments(binary), '--protocol=tcp', '--host', config.host, '--port', String(config.port), '--user', config.user,
       '--batch', '--skip-column-names', '--execute', sql,
     ], { env: { MYSQL_PWD: config.password }, timeout: 15_000 })
   }

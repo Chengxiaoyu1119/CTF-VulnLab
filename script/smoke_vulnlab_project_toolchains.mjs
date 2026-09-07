@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { ProjectEnvironmentManager } from '../src/VulnLab/dist/project-environment.js'
+import { mysqlClientArguments } from '../src/VulnLab/dist/mysql.js'
 
 const execute = promisify(execFile)
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-project-toolchains-smoke-'))
@@ -37,6 +38,7 @@ try {
   const php = await execute(prepared.phpBinary, ['-c', prepared.phpIni, '-r', 'echo PHP_VERSION."|".(extension_loaded("mysqli")?"mysqli":"missing");'])
   assert.match(php.stdout, /^8\.3\.33\|mysqli$/)
   const mysql = await execute(prepared.mysql.mysqlBinary, [
+    ...mysqlClientArguments(prepared.mysql.mysqlBinary),
     '--protocol=tcp', '--host', prepared.mysql.host, '--port', String(prepared.mysql.port), '--user', prepared.mysql.adminUser,
     '--batch', '--skip-column-names', '--execute', 'SELECT VERSION();',
   ], { env: { ...process.env, MYSQL_PWD: prepared.mysql.adminPassword } })

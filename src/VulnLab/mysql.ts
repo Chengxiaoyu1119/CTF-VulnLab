@@ -1,5 +1,7 @@
 import { execFile, type ExecFileOptions } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 export interface MySqlRuntimeConfig {
   host: string
@@ -73,6 +75,14 @@ export interface CliMySqlManagerOptions {
 const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``
 const mysqlString = (value: string) => `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\0', '')}'`
 
+export const mysqlClientArguments = (binary: string): string[] => {
+  if (process.platform !== 'win32' || !/[\\/]/.test(binary)) return []
+  const binDir = dirname(binary)
+  const baseDir = basename(binDir).toLowerCase() === 'bin' ? dirname(binDir) : binDir
+  const pluginDir = join(baseDir, 'lib', 'plugin')
+  return existsSync(pluginDir) ? [`--plugin-dir=${pluginDir}`] : []
+}
+
 const normalizedToken = (value: string, fallback: string) => value
   .replace(/[^a-z0-9]+/gi, '_')
   .replace(/^_+|_+$/g, '')
@@ -111,6 +121,7 @@ export class CliMySqlManager implements MySqlManager {
   private async execute(config: MySqlRuntimeConfig, user: string, password: string, sql: string) {
     validateConfig(config)
     const args = [
+      ...mysqlClientArguments(config.mysqlBinary),
       '--protocol=tcp',
       '--host', config.host,
       '--port', String(config.port),

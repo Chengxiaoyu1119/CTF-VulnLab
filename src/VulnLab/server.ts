@@ -20,6 +20,7 @@ import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-sta
 import { autoInstallLabs } from './seed.js'
 import { dataPaths } from './paths.js'
 import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView } from './types.js'
+import type { RuntimeToolchainId } from './runtime-toolchains.js'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
@@ -56,6 +57,15 @@ const nativeRuntime: NativeRuntimeConfig = {
   mysql: runtimeMySql,
 }
 const projectEnvironment = projectEnvironmentOptionsFromEnv(dataDir, process.env.VULNLAB_PHP_BIN?.trim(), runtimePhpIni, runtimeMySql, process.env.VULNLAB_NODE_BIN?.trim())
+const useProjectToolchainsByDefault = process.platform === 'win32' && process.arch === 'x64'
+const explicitExternalRuntime = {
+  php: Boolean(process.env.VULNLAB_PHP_BIN?.trim()),
+  mysql: Boolean(runtimeMySql || (process.env.VULNLAB_MYSQL_BIN?.trim() && process.env.VULNLAB_MYSQLD_BIN?.trim())),
+  node: Boolean(process.env.VULNLAB_NODE_BIN?.trim()),
+  java: Boolean(process.env.VULNLAB_JAVA_BIN?.trim()),
+  python: Boolean(process.env.VULNLAB_PYTHON_BIN?.trim()),
+}
+const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae', 'xvwa'])
 const isProduction = process.env.NODE_ENV === 'production'
 const secureCookies = isProduction
 const configuredPublicUrl = process.env.VULNLAB_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
@@ -131,6 +141,35 @@ const runtimeDependencies = async () => {
   })
   runtimeStatusCache = { expiresAt: Date.now() + 15_000, value }
   return value
+}
+
+const projectToolchainsForLab = (lab: Lab): RuntimeToolchainId[] => {
+  if (!useProjectToolchainsByDefault) return []
+  if (lab.runtimeKind === 'native-php') return [
+    ...(explicitExternalRuntime.php ? [] : ['php' as const]),
+    ...(databaseLabs.has(lab.slug) && !explicitExternalRuntime.mysql ? ['mariadb' as const] : []),
+  ]
+  if (lab.runtimeKind === 'native-node') return explicitExternalRuntime.node ? [] : ['node']
+  if (lab.runtimeKind === 'native-java') return explicitExternalRuntime.java ? [] : ['java']
+  if (lab.runtimeKind === 'native-python') return explicitExternalRuntime.python ? [] : ['python']
+  return []
+}
+
+const missingProjectToolchains = (lab: Lab, project: ReturnType<typeof projectEnvironment.getStatus>) => {
+  const statuses = new Map(project.toolchains.map(item => [item.id, item]))
+  return projectToolchainsForLab(lab)
+    .filter(id => statuses.get(id)?.state !== 'ready')
+    .map(id => statuses.get(id)?.label ?? ({ php: 'PHP', mariadb: 'MariaDB', node: 'Node.js', java: 'Java', python: 'Python' }[id]))
+}
+
+const runtimeReadiness = async (labs: Lab[], dependencies: Awaited<ReturnType<typeof runtimeDependencies>>) => {
+  const readiness = await runtimeReadinessByLab(labs, dependencies, dataDir)
+  if (!useProjectToolchainsByDefault) return readiness
+  const project = projectEnvironment.getStatus()
+  return Object.fromEntries(labs.map(lab => {
+    const missing = [...new Set([...(readiness[lab.slug]?.missing ?? []), ...missingProjectToolchains(lab, project)])]
+    return [lab.slug, { available: missing.length === 0, missing }]
+  }))
 }
 
 const prepareProjectEnvironment = async (force = false, installMissing = false) => {
@@ -421,12 +460,12 @@ const startLabInstance = (lab: Lab, actor: string, origin: string): Promise<LabI
     if (existingInstance) return existingInstance
     if (lab.status !== 'ready') throw new ProviderError('LAB_NOT_READY', '靶场资源正在准备，请稍候。', 409)
     let dependencies = await runtimeDependencies()
-    let readiness = await runtimeReadinessByLab([lab], dependencies, dataDir)
-    if (!readiness[lab.slug]?.available) {
+    let readiness = await runtimeReadiness([lab], dependencies)
+    if (missingProjectToolchains(lab, projectEnvironment.getStatus()).length || !readiness[lab.slug]?.available) {
       await prepareProjectEnvironment(true, true)
       runtimeStatusCache = null
       dependencies = await runtimeDependencies()
-      readiness = await runtimeReadinessByLab([lab], dependencies, dataDir)
+      readiness = await runtimeReadiness([lab], dependencies)
     }
     if (!readiness[lab.slug]?.available) throw new ProviderError('RUNTIME_DEPENDENCY_MISSING', `本机缺少运行依赖：${readiness[lab.slug]?.missing.join('、') || '未知依赖'}。`, 409)
     const provider = providerRegistry.resolve(lab.providerId, lab.runtimeKind)
@@ -709,7 +748,7 @@ app.get('/api/runtime-status', async (request, reply) => {
   const project = projectEnvironment.getStatus()
   return {
     dependencies,
-    labs: await runtimeReadinessByLab(database.listLabs(), dependencies, dataDir),
+    labs: await runtimeReadiness(database.listLabs(), dependencies),
     project,
   }
 })
@@ -719,8 +758,14 @@ app.post('/api/runtime/prepare', async (request, reply) => {
   if (!session) return
   const project = await prepareProjectEnvironment(true, true)
   database.addAudit(session.userName, 'runtime.prepare', 'project', projectEnvironment.getStatus().runtimeDir)
-  const failed = project.toolchains.find(item => item.state === 'error')
-  return { ok: !failed, message: failed?.detail, project }
+  const dependencies = await runtimeDependencies()
+  const activeLabs = database.listLabs().filter(lab => lab.builtin && lab.status !== 'disabled')
+  const readiness = await runtimeReadiness(activeLabs, dependencies)
+  const missing = [...new Set(activeLabs.flatMap(lab => readiness[lab.slug]?.missing ?? []))]
+  const failed = project.toolchains.filter(item => item.state === 'error').map(item => item.label)
+  const problems = [...new Set([...missing, ...failed])]
+  const ok = activeLabs.every(lab => readiness[lab.slug]?.available) && problems.length === 0
+  return { ok, message: ok ? '项目运行环境已就绪。' : `项目运行环境未就绪：${problems.join('、') || '请重试准备。'}。`, project }
 })
 
 app.put('/api/settings', async (request, reply) => {
