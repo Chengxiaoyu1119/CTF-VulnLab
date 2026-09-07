@@ -1,12 +1,15 @@
-# Dependencies and build output
+# Git 忽略规则：只排除本地生成物、运行状态和敏感配置，不忽略源代码、测试、部署文件或文档。
+
+# 依赖与构建产物
 **/node_modules/
 src/VulnLab/dist/
 
-# Runtime state and downloaded artifacts
+# 运行数据与下载资源
+# 统一运行数据根目录：src/VulnLab/data/。其中包含靶场资源、数据库、运行时和临时下载内容。
 src/VulnLab/data/
 operations/deploy/backups/
 
-# Local environment and secrets
+# 本地环境配置与敏感凭据
 **/.env
 **/.env.local
 **/.env.*.local
@@ -15,7 +18,7 @@ operations/deploy/backups/
 **/*.crt
 **/*.key
 
-# Test, browser and coverage output
+# 测试、浏览器与覆盖率输出
 /output/
 /coverage/
 /.playwright-mcp/
@@ -26,7 +29,7 @@ operations/deploy/backups/
 __pycache__/
 .pytest_cache/
 
-# Local agent and editor instructions
+# 本地 Agent 与编辑器配置
 AGENTS.md
 CLAUDE.md
 .codex/
@@ -34,7 +37,7 @@ CLAUDE.md
 .idea/
 .vscode/
 
-# Operating-system and editor metadata
+# 操作系统与编辑器元数据
 .DS_Store
 Thumbs.db
 Desktop.ini
