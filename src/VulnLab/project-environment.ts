@@ -510,7 +510,7 @@ export class ProjectEnvironmentManager {
     if (force) this.prepared = null
     await mkdir(this.runtimeDir, { recursive: true })
     await this.toolchains.inspect()
-    if (installMissing) await this.toolchains.installMissing().catch(() => undefined)
+    if (installMissing) await this.toolchains.installMissing()
     this.toolchainBinaries = await this.toolchains.binaries()
     const phpCandidate = await this.phpCandidate()
     const php = await this.preparePhp(phpCandidate)

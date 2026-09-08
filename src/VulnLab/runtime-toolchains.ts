@@ -71,6 +71,13 @@ interface RuntimeToolchainInstallerOptions {
 const MAX_FILES = 100_000
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 
+const errorDetail = (error: unknown) => {
+  if (!(error instanceof Error)) return String(error ?? '未知错误')
+  const cause = (error as Error & { cause?: unknown }).cause
+  const causeMessage = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : ''
+  return causeMessage && causeMessage !== error.message ? `${error.message}：${causeMessage}` : error.message
+}
+
 const defaultPackages: RuntimeToolchainPackage[] = [
   {
     id: 'node',
@@ -483,7 +490,7 @@ export class RuntimeToolchainInstaller {
         sha256Verified: true,
       })
     } catch (error) {
-      const detail = error instanceof Error ? error.message : `${input.label} 安装失败。`
+      const detail = errorDetail(error) || `${input.label} 安装失败。`
       this.updateStatus(input.id, { state: 'error', detail })
       throw error instanceof RuntimeToolchainError ? error : new RuntimeToolchainError(detail)
     } finally {

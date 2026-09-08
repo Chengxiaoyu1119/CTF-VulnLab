@@ -143,6 +143,13 @@ const runtimeDependencies = async () => {
   return value
 }
 
+const readableRuntimeError = (error: unknown) => String(error instanceof Error ? error.message : error ?? '项目运行环境准备失败。')
+  .replace(/[A-Za-z]:[\\/][^\s"'<>]*/g, '本地运行时路径')
+  .replace(/\/(?:Users|home|tmp|var|opt|workspace)\/[^\s"'<>]*/g, '本地运行时路径')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 240)
+
 const projectToolchainsForLab = (lab: Lab): RuntimeToolchainId[] => {
   if (!useProjectToolchainsByDefault) return []
   if (lab.runtimeKind === 'native-php') return [
@@ -187,7 +194,11 @@ const prepareProjectEnvironment = async (force = false, installMissing = false) 
   } catch (error) {
     runtimeMySql = mysqlRuntimeConfigFromEnv()
     nativeRuntime.mysql = runtimeMySql
+    runtimeStatusCache = null
     app.log.error(error, '项目运行环境准备失败，服务仍会启动，并在对应靶场启动时返回具体依赖错误。')
+    if (installMissing) {
+      throw new ProviderError('RUNTIME_PREPARE_FAILED', `项目运行环境准备失败：${readableRuntimeError(error)}`, 503)
+    }
   }
   return projectEnvironment.getStatus()
 }
@@ -756,14 +767,21 @@ app.get('/api/runtime-status', async (request, reply) => {
 app.post('/api/runtime/prepare', async (request, reply) => {
   const session = requireAdmin(request, reply)
   if (!session) return
-  const project = await prepareProjectEnvironment(true, true)
+  let project = projectEnvironment.getStatus()
+  let preparationError = ''
+  try {
+    project = await prepareProjectEnvironment(true, true)
+  } catch (error) {
+    preparationError = readableRuntimeError(error)
+    project = projectEnvironment.getStatus()
+  }
   database.addAudit(session.userName, 'runtime.prepare', 'project', projectEnvironment.getStatus().runtimeDir)
   const dependencies = await runtimeDependencies()
   const activeLabs = database.listLabs().filter(lab => lab.builtin && lab.status !== 'disabled')
   const readiness = await runtimeReadiness(activeLabs, dependencies)
   const missing = [...new Set(activeLabs.flatMap(lab => readiness[lab.slug]?.missing ?? []))]
   const failed = project.toolchains.filter(item => item.state === 'error').map(item => item.label)
-  const problems = [...new Set([...missing, ...failed])]
+  const problems = [...new Set([...missing, ...failed, ...(preparationError ? [preparationError] : [])])]
   const ok = activeLabs.every(lab => readiness[lab.slug]?.available) && problems.length === 0
   return { ok, message: ok ? '项目运行环境已就绪。' : `项目运行环境未就绪：${problems.join('、') || '请重试准备。'}。`, project }
 })

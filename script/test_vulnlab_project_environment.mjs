@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ProjectEnvironmentManager } from '../src/VulnLab/dist/project-environment.js'
+import { RuntimeToolchainInstaller } from '../src/VulnLab/dist/runtime-toolchains.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-project-environment-'))
 try {
@@ -31,6 +32,18 @@ try {
   assert.equal(externalPrepared.status.mysql.managed, false)
   assert.equal(externalPrepared.mysql?.adminUser, 'fixture')
   await external.stop()
+
+  const originalInstallMissing = RuntimeToolchainInstaller.prototype.installMissing
+  RuntimeToolchainInstaller.prototype.installMissing = async () => {
+    throw new Error('fixture toolchain download failed')
+  }
+  const failed = new ProjectEnvironmentManager({ dataDir: join(root, 'failed') })
+  try {
+    await assert.rejects(failed.prepare(true, true), /fixture toolchain download failed/)
+  } finally {
+    await failed.stop()
+    RuntimeToolchainInstaller.prototype.installMissing = originalInstallMissing
+  }
   console.log('VulnLab project environment test passed: project paths, missing dependencies, cache, and external override.')
 } finally {
   await rm(root, { recursive: true, force: true })
