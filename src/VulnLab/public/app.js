@@ -1,15 +1,12 @@
 const app = document.querySelector('#app')
 let importPollTimer = null
 let detailPollTimer = null
-let runtimePollTimer = null
-let runtimePollInFlight = false
 let modalReturnFocus = null
 let loginSuccessNoticeTimer = null
 let toastTimer = null
 
 const LOGIN_NOTICE_DURATION = 4200
 const DETAIL_POLL_INTERVAL = 5000
-const RUNTIME_POLL_INTERVAL = 900
 
 const state = {
   session: null,
@@ -22,9 +19,6 @@ const state = {
   busyActions: [],
   busyAction: null,
   error: '',
-  runtimeStatus: null,
-  runtimeStatusLoading: false,
-  runtimeStatusError: '',
   loginErrorFields: [],
   loginPasswordVisible: false,
   successNotice: null,
@@ -62,7 +56,7 @@ async function request(path, options = {}) {
   return payload
 }
 
-async function refresh({ includeRuntime = false } = {}) {
+async function refresh() {
   const [labs, jobs, instances] = await Promise.all([
     request('/api/labs'), request('/api/import-jobs'), request('/api/instances'),
   ])
@@ -70,31 +64,6 @@ async function refresh({ includeRuntime = false } = {}) {
   state.jobs = jobs
   state.instances = instances
   state.error = ''
-  if (includeRuntime && state.labDetailId) await loadRuntimeStatus(state.labDetailId, { renderAfter: false })
-}
-
-async function loadRuntimeStatus(labId, { showLoading = false, renderAfter = true } = {}) {
-  if (!state.session || state.labDetailId !== labId || runtimePollInFlight) return
-  runtimePollInFlight = true
-  if (showLoading) {
-    state.runtimeStatusLoading = true
-    state.runtimeStatusError = ''
-  }
-  try {
-    const runtimeStatus = await request('/api/runtime-status')
-    if (state.session && state.labDetailId === labId) {
-      state.runtimeStatus = runtimeStatus
-      state.runtimeStatusError = ''
-    }
-  } catch (error) {
-    if (state.session && state.labDetailId === labId) state.runtimeStatusError = readableError(error.message)
-  } finally {
-    runtimePollInFlight = false
-    if (state.session && state.labDetailId === labId) {
-      if (showLoading) state.runtimeStatusLoading = false
-      if (renderAfter) render()
-    }
-  }
 }
 
 async function bootstrap() {
@@ -132,13 +101,6 @@ function clearLoginSuccessNoticeTimer() {
 
 function clearDetailPolling() {
   if (detailPollTimer) { window.clearTimeout(detailPollTimer); detailPollTimer = null }
-  if (runtimePollTimer) { window.clearTimeout(runtimePollTimer); runtimePollTimer = null }
-}
-
-function clearRuntimeStatus() {
-  state.runtimeStatus = null
-  state.runtimeStatusLoading = false
-  state.runtimeStatusError = ''
 }
 
 function beginBusy(action, id = '') {
@@ -238,27 +200,6 @@ function labCard(lab) {
   </article>`
 }
 
-function runtimeDetailInfo(lab, starting) {
-  const runtime = state.runtimeStatus
-  const projectToolchains = runtime?.project?.toolchains ?? []
-  const failedToolchains = projectToolchains.filter(item => item.state === 'error')
-  const installingToolchains = projectToolchains.filter(item => item.state === 'installing')
-  const readiness = runtime?.labs?.[lab.slug]
-  if (state.runtimeStatusError) return { state: 'error', title: '运行环境状态不可用', message: state.runtimeStatusError }
-  if (state.runtimeStatusLoading && !runtime) return { state: 'checking', title: '检测运行环境', message: '正在检查项目运行时。' }
-  if (failedToolchains.length) return { state: 'error', title: '运行环境准备失败', message: '请重试准备运行环境。' }
-  if (starting && installingToolchains.length) return { state: 'preparing', title: '准备运行环境', message: `正在准备 ${installingToolchains[0].label}。` }
-  if (readiness?.available) return { state: 'ready', title: '运行环境已就绪', message: '' }
-  if (readiness && !readiness.available) return { state: 'error', title: '运行环境需要重试', message: `缺少 ${readiness.missing?.join('、') || '必要依赖'}。` }
-  if (starting) return { state: 'checking', title: '准备运行环境', message: '正在确认运行条件。' }
-  return { state: 'checking', title: '检测运行环境', message: '正在检查项目运行时。' }
-}
-
-function runtimeDetailMarkup(lab, starting) {
-  const info = runtimeDetailInfo(lab, starting)
-  return `<div class="lab-detail-runtime" data-state="${info.state}" role="status" aria-live="polite"><div class="lab-detail-runtime-head"><span>运行环境</span><strong>${esc(info.title)}</strong></div>${info.message ? `<p>${esc(info.message)}</p>` : ''}</div>`
-}
-
 function labDetailModal() {
   const lab = state.labs.find(item => item.id === state.labDetailId)
   if (!lab) return ''
@@ -274,13 +215,12 @@ function labDetailModal() {
   const failureMessage = readableError(failedJob?.error ?? (lab.status === 'error' ? '靶场准备失败，请重试。' : ''))
   const instance = state.instances.find(item => item.labId === lab.id && item.status === 'running')
   const starting = busyFor('start-instance', lab.id)
-  const runtimeInfo = runtimeDetailInfo(lab, starting)
   const preparing = importing || queued
   let primaryAction = ''
   if (instance) {
     primaryAction = `<a class="button button-primary lab-detail-action lab-detail-open" href="${esc(instance.endpoint)}" target="_blank" rel="noreferrer" data-action="open-instance-page">打开页面</a>`
   } else if (starting) {
-    primaryAction = `<span class="button button-quiet lab-detail-action" aria-busy="true">${runtimeInfo.state === 'preparing' ? '准备运行环境…' : '启动中…'}</span>`
+    primaryAction = '<span class="button button-quiet lab-detail-action" aria-busy="true">启动中…</span>'
   } else if (preparing) {
     primaryAction = '<span class="button button-quiet lab-detail-action" aria-busy="true">准备中…</span>'
   } else if (admin) {
@@ -300,7 +240,7 @@ function labDetailModal() {
   const managementActions = instance && admin
     ? `<button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button><button class="button button-quiet lab-detail-stop" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button>`
     : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${runtimeDetailMarkup(lab, starting)}${preparationInfo}${errorInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${errorInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
 }
 
 function passwordToggleIcon(visible) {
@@ -355,24 +295,12 @@ function scheduleDetailPolling() {
     detailPollTimer = null
     if (!state.session || !state.labDetailId || state.busyActions.length) return
     try {
-      await refresh({ includeRuntime: true })
+      await refresh()
       if (state.session && state.labDetailId) render()
     } catch {
       if (state.session && state.labDetailId) scheduleDetailPolling()
     }
   }, DETAIL_POLL_INTERVAL)
-}
-
-function scheduleRuntimePolling() {
-  if (runtimePollTimer) { window.clearTimeout(runtimePollTimer); runtimePollTimer = null }
-  const labId = state.labDetailId
-  if (!state.session || !labId || !busyFor('start-instance', labId)) return
-  runtimePollTimer = window.setTimeout(async () => {
-    runtimePollTimer = null
-    if (!state.session || state.labDetailId !== labId || !busyFor('start-instance', labId)) return
-    await loadRuntimeStatus(labId)
-    if (state.session && state.labDetailId === labId && busyFor('start-instance', labId)) scheduleRuntimePolling()
-  }, RUNTIME_POLL_INTERVAL)
 }
 
 const sleep = milliseconds => new Promise(resolve => window.setTimeout(resolve, milliseconds))
@@ -478,7 +406,6 @@ function render() {
   patchOverlays()
   scheduleImportPolling()
   scheduleDetailPolling()
-  scheduleRuntimePolling()
 }
 
 function restoreModalFocus() {
@@ -524,15 +451,11 @@ async function runAction(action, element) {
     if (!state.labs.some(item => item.id === element.dataset.id)) return
     rememberModalFocus(element)
     state.labDetailId = element.dataset.id
-    clearRuntimeStatus()
-    state.runtimeStatusLoading = true
     render()
-    void loadRuntimeStatus(state.labDetailId, { showLoading: true })
     return
   }
   if (action === 'close-lab-details') {
     state.labDetailId = null
-    clearRuntimeStatus()
     render()
     restoreModalFocus()
     return
@@ -560,7 +483,7 @@ async function runAction(action, element) {
   }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; clearRuntimeStatus(); state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {

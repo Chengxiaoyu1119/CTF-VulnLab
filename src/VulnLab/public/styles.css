@@ -121,13 +121,6 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .lab-detail-progress-track { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 999px; background-color: #303030; }
 .lab-detail-progress-fill { display: block; width: var(--progress); height: 100%; border-radius: inherit; background-color: var(--workspace-warm); transition: width 220ms ease; }
 .lab-detail-progress-message { margin: 8px 0 0; overflow: hidden; color: #929292; font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-.lab-detail-runtime { margin-top: 13px; border: 1px solid #343434; border-radius: 6px; padding: 9px 10px; background-color: #191919; }
-.lab-detail-runtime-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--workspace-muted); font-size: 11px; }
-.lab-detail-runtime-head strong { color: #d7d7d7; font-size: 11px; font-weight: 600; }
-.lab-detail-runtime p { margin: 6px 0 0; color: #929292; font-size: 11px; line-height: 1.45; }
-.lab-detail-runtime[data-state="ready"] .lab-detail-runtime-head strong { color: var(--workspace-success); }
-.lab-detail-runtime[data-state="preparing"] .lab-detail-runtime-head strong { color: var(--workspace-warm); }
-.lab-detail-runtime[data-state="error"] .lab-detail-runtime-head strong { color: #f0aaa4; }
 .lab-detail-error { margin: 13px 0 0; border: 1px solid #4c2f2c; border-radius: 6px; padding: 8px 10px; color: #f0aaa4; background-color: #241918; font-size: 11px; line-height: 1.45; }
 .lab-detail-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .lab-detail-tags span { border: 1px solid #373737; border-radius: 999px; padding: 3px 8px; color: #aaa; background-color: #242424; font-size: 10px; line-height: 1.2; }

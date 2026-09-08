@@ -108,52 +108,6 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_text("DVWA", exact=True)).to_have_count(1)
         expect(page.locator(".labs-screen")).to_be_visible()
-        runtime_status_state = {"mode": "ready", "requests": 0}
-
-        def runtime_status(route, request):
-            if request.method != "GET":
-                route.continue_()
-                return
-            runtime_status_state["requests"] += 1
-            if runtime_status_state["mode"] == "failed":
-                route.fulfill(
-                    status=200,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {
-                            "dependencies": [],
-                            "labs": {"dvwa": {"available": False, "missing": ["PHP"]}},
-                            "project": {
-                                "toolchains": [
-                                    {"id": "php", "label": "PHP", "state": "error", "detail": "本地运行时准备失败"}
-                                ]
-                            },
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-                return
-            route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=json.dumps(
-                    {
-                        "dependencies": [],
-                        "labs": {
-                            "dvwa": {"available": True, "missing": []},
-                            "mutillidae": {"available": True, "missing": []},
-                        },
-                        "project": {
-                            "toolchains": [
-                                {"id": "php", "label": "PHP", "state": "ready", "detail": "已就绪"}
-                            ]
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-
-        page.route("**/api/runtime-status", runtime_status)
         page.set_viewport_size({"width": 390, "height": 844})
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
@@ -183,7 +137,7 @@ def main() -> None:
         mutillidae_trigger = page.locator(".lab-card-media").nth(7)
         mutillidae_trigger.click()
         expect(page.get_by_role("heading", name="OWASP Mutillidae II", exact=True)).to_be_visible()
-        expect(page.locator(".lab-detail-runtime")).to_contain_text("运行环境已就绪")
+        expect(page.locator(".lab-detail-runtime")).to_have_count(0)
         if mutillidae_lab.get("version"):
             expect(page.get_by_text(mutillidae_lab["version"], exact=True)).to_have_count(0)
         mutillidae_cover_style = page.locator(
@@ -244,13 +198,10 @@ def main() -> None:
         initial_poll_requests = poll_requests["count"]
         page.wait_for_timeout(5200)
         assert poll_requests["count"] > initial_poll_requests, poll_requests
-        assert runtime_status_state["requests"] > 1, runtime_status_state
         page.get_by_role("button", name="关闭靶场信息").click()
         closed_poll_requests = poll_requests["count"]
-        closed_runtime_requests = runtime_status_state["requests"]
         page.wait_for_timeout(5200)
         assert poll_requests["count"] == closed_poll_requests, poll_requests
-        assert runtime_status_state["requests"] == closed_runtime_requests, runtime_status_state
         page.unroute("**/api/instances", track_detail_poll)
         expect(poll_trigger).to_be_focused()
         page.locator(".lab-canvas").focus()
@@ -571,7 +522,6 @@ def main() -> None:
         expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
         expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
         page.wait_for_timeout(1200)
-        assert runtime_status_state["requests"] > closed_runtime_requests, runtime_status_state
         expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
         assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
         assert "route" in pending_start
@@ -618,12 +568,11 @@ def main() -> None:
         page.unroute("**/api/labs", labs_with_ready_dvwa)
         page.route("**/api/labs", labs_with_failed_dvwa)
         page.route("**/api/import-jobs", failed_jobs)
-        runtime_status_state["mode"] = "failed"
         page.reload(wait_until="networkidle")
         expect(page.locator(".lab-grid")).to_be_visible()
         page.locator('.lab-card-media[data-id]').first.click()
         expect(page.locator(".lab-detail-error")).to_contain_text("内置靶场本地资源路径已失效")
-        expect(page.locator(".lab-detail-runtime")).to_contain_text("运行环境准备失败")
+        expect(page.locator(".lab-detail-runtime")).to_have_count(0)
         expect(page.locator(".lab-detail-error")).not_to_contain_text("C:\\Users\\")
         failed_detail_style = page.locator(".lab-detail-error").evaluate(
             "element => ({ borderLeftWidth: getComputedStyle(element).borderLeftWidth, borderRadius: getComputedStyle(element).borderRadius })"
@@ -634,7 +583,6 @@ def main() -> None:
         page.get_by_role("button", name="关闭靶场信息").click()
         page.unroute("**/api/import-jobs", failed_jobs)
         page.unroute("**/api/labs", labs_with_failed_dvwa)
-        runtime_status_state["mode"] = "ready"
         page.wait_for_timeout(3800)
         page.unroute("**/api/instances", instances_after_start)
         page.evaluate("location.hash = 'labs'")
