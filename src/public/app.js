@@ -1,3 +1,19 @@
+const consoleBanner = [
+  '   ____ _                           _',
+  '  / ___| |__   ___ _ __   __ ___  _(_) __ _  ___  _   _ _   _',
+  " | |   | '_ \\ / _ \\ '_ \\ / _` \\ \\/ / |/ _` |/ _ \\| | | | | | |",
+  ' | |___| | | |  __/ | | | (_| |>  <| | (_| | (_) | |_| | |_| |',
+  '  \\____|_| |_|\\___|_| |_|\\__, /_/\\_\\_|\\__,_|\\___/ \\__, |\\__,_|',
+  '                         |___/                    |___/',
+].join('\n')
+
+console.info('%c何辰风的主页', 'color:#ff8a3d;font-size:18px;font-weight:700;')
+console.info('%c%s', 'color:#ff8a3d;line-height:1.35;', consoleBanner)
+console.info(
+  '%c版本: 0.1.0\nGithub: https://github.com/Chengxiaoyu1119/CTF-VulnLab',
+  'color:#55a8ff;font-weight:500;',
+)
+
 const app = document.querySelector('#app')
 let importPollTimer = null
 let detailPollTimer = null
