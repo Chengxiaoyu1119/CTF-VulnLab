@@ -1,8 +1,8 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 
 $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$app = Join-Path $root 'src\VulnLab'
+$app = Join-Path $root 'src'
 $runtime = Join-Path $app 'data\runtime'
 $version = '22.23.1'
 $platform = 'win32-x64'

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { VulnLabDatabase } from './db.js'
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
-import { importGitHubRepository, importGitLabRepository, ImporterError } from './importer.js'
+import { importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
@@ -29,6 +29,8 @@ const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : modul
 const publicDir = join(appDir, 'public')
 const storage = dataPaths(process.env.VULNLAB_DATA_DIR ? process.env.VULNLAB_DATA_DIR : join(appDir, 'data'))
 const dataDir = storage.root
+const bundleDir = process.env.VULNLAB_BUNDLE_DIR?.trim() ? resolve(process.env.VULNLAB_BUNDLE_DIR) : undefined
+const offlineMode = process.env.VULNLAB_OFFLINE === '1'
 const configuredHost = process.env.VULNLAB_HOST ?? '127.0.0.1'
 const configuredPort = Number(process.env.VULNLAB_PORT ?? process.env.PORT ?? 6710)
 const fallbackPort = Number.isInteger(configuredPort) && configuredPort >= 1024 && configuredPort <= 65535 ? configuredPort : 6710
@@ -323,6 +325,15 @@ const publicOrigin = (request: FastifyRequest) => {
 
 const isDirectory = async (path: string) => (await stat(path).catch(() => null))?.isDirectory() ?? false
 
+const bundledLabArchive = async (lab: Lab) => {
+  if (!bundleDir || !/^[a-z0-9-]+$/.test(lab.slug) || !/^[A-Za-z0-9._-]+$/.test(lab.version)) return null
+  const root = resolve(bundleDir)
+  const archive = resolve(root, 'labs', lab.slug, lab.version, 'source.zip')
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+  if (archive !== root && !archive.startsWith(prefix)) return null
+  return (await stat(archive).catch(() => null))?.isFile() ? archive : null
+}
+
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
   if (!lab.builtin || manifest.adapterId === 'builtin-release') return manifest
   const targetRoot = storage.lab(lab.slug, lab.version)
@@ -413,10 +424,24 @@ const runImportJob = (jobId: string, actor: string) => {
     try {
       const progress = (value: number, stage: string, message: string) => database.updateJob(jobId, { status: 'importing', progress: value, stage, message })
       const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
-      if (!hasBuiltinAsset(lab.slug) && !adapter) throw new ImporterError('当前来源没有可用的 Source Adapter。')
-      if (!hasBuiltinAsset(lab.slug) && adapter && !adapter.implemented) throw new ImporterError(`${adapter.label} 已登记，但当前版本还未实现下载与运行适配。`)
-      const importedManifest = hasBuiltinAsset(lab.slug)
-        ? await installBuiltinAsset({ lab, jobId, dataDir, signal: controller.signal, onProgress: progress })
+      const localArchive = hasBuiltinAsset(lab.slug) ? null : await bundledLabArchive(lab)
+      if (!hasBuiltinAsset(lab.slug) && !localArchive && !adapter) throw new ImporterError('当前来源没有可用的 Source Adapter。')
+      if (!hasBuiltinAsset(lab.slug) && !localArchive && adapter && !adapter.implemented) throw new ImporterError(`${adapter.label} 已登记，但当前版本还未实现下载与运行适配。`)
+      if (!hasBuiltinAsset(lab.slug) && !localArchive && offlineMode) throw new ImporterError('当前处于离线模式，未找到该靶场的本地发行包。')
+      const importedManifest = localArchive
+        ? await importLocalArchive({
+          sourceUrl: lab.sourceUrl,
+          sourceRef: lab.sourceRef,
+          jobId,
+          dataDir,
+          archivePath: localArchive,
+          sourceLabel: '本地',
+          signal: controller.signal,
+          portablePathPolicy: lab.slug === 'sqli-labs' ? 'case-collision-lowercase' : 'strict',
+          onProgress: progress,
+        })
+        : hasBuiltinAsset(lab.slug)
+        ? await installBuiltinAsset({ lab, jobId, dataDir, signal: controller.signal, bundleDir, offline: offlineMode, onProgress: progress })
         : adapter?.id === 'github-git'
         ? await importGitHubRepository({
           sourceUrl: lab.sourceUrl,

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../src/VulnLab/dist/providers.js'
+import { NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../src/dist/providers.js'
 
 const lab = {
   id: 'lab-dvwa',

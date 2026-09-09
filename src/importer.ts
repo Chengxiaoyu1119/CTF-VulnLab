@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
@@ -297,6 +297,31 @@ const importRepositoryArchive = async (input: ImportInput, options: ArchiveImpor
   await rm(options.archivePath, { force: true })
   report(input, 100, 'completed', `${options.sourceLabel} 导入完成，共 ${manifest.fileCount} 个文件。`)
   return manifest
+}
+
+export const importLocalArchive = async (input: ImportInput & { archivePath: string; sourceLabel?: string }): Promise<ImportManifest> => {
+  const root = dataPaths(input.dataDir).importJob(input.jobId)
+  const archivePath = join(root, 'source.zip')
+  try {
+    const archive = await readFile(resolve(input.archivePath))
+    if (archive.byteLength > MAX_ARCHIVE_BYTES) throw new ImporterError(`本地发行包超过 ${Math.round(MAX_ARCHIVE_BYTES / 1024 / 1024)} MiB 限制。`)
+    report(input, 20, 'local', `读取项目离线发行包 ${Math.round(archive.byteLength / 1024 / 1024)} MiB。`)
+    return await importRepositoryArchive(input, {
+      archive,
+      root,
+      archivePath,
+      extractRoot: join(root, 'source'),
+      adapterId: 'local-archive',
+      branch: 'local',
+      revision: '',
+      apiFallback: true,
+      sourceLabel: input.sourceLabel ?? '本地',
+    })
+  } catch (error) {
+    await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    if (error instanceof ImporterError) throw error
+    throw new ImporterError(error instanceof Error ? error.message : '读取本地发行包失败。')
+  }
 }
 
 export const importGitHubRepository = async (input: ImportInput): Promise<ImportManifest> => {

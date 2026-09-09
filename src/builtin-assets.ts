@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
 import { unzipSync } from 'fflate'
@@ -96,6 +96,27 @@ const download = async (url: string, destination: string, signal: AbortSignal | 
   }
   if (declaredLength > 0 && received !== declaredLength) throw new BuiltinAssetError('官方发行包下载不完整。')
   return { bytes: received, sha256: sha256.digest('hex'), md5: md5.digest('hex') }
+}
+
+const bundledArchive = async (bundleDir: string | undefined, lab: Lab, asset: BuiltinAsset, destination: string, onProgress: (progress: number, stage: string, message: string) => void) => {
+  if (!bundleDir) return null
+  const bundleRoot = resolve(bundleDir)
+  const source = resolve(bundleRoot, 'labs', lab.slug, lab.version, asset.filename)
+  const prefix = bundleRoot.endsWith(sep) ? bundleRoot : `${bundleRoot}${sep}`
+  if (source !== bundleRoot && !source.startsWith(prefix)) throw new BuiltinAssetError('离线发行包路径超出 bundle 目录。')
+  const sourceStat = await stat(source).catch(() => null)
+  if (!sourceStat?.isFile()) return null
+  const archive = await readFile(source)
+  if (archive.byteLength > MAX_ASSET_BYTES) throw new BuiltinAssetError('项目离线发行包超过 512 MiB 安装上限。')
+  await mkdir(dirname(destination), { recursive: true })
+  await writeFile(destination, archive)
+  onProgress(35, 'download', `已读取项目离线发行包 ${Math.round(archive.byteLength / 1024 / 1024)} MiB。`)
+  return {
+    bytes: archive.byteLength,
+    sha256: createHash('sha256').update(archive).digest('hex'),
+    md5: createHash('md5').update(archive).digest('hex'),
+    checksumPath: `${source}.md5`,
+  }
 }
 
 const extractZip = async (archivePath: string, targetRoot: string, onProgress: (progress: number, stage: string, message: string) => void) => {
@@ -214,6 +235,8 @@ export interface InstallBuiltinAssetInput {
   signal?: AbortSignal
   onProgress?: (progress: number, stage: string, message: string) => void
   fetchImpl?: typeof fetch
+  bundleDir?: string
+  offline?: boolean
 }
 
 export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Promise<ImportManifest> => {
@@ -230,10 +253,15 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
   await mkdir(installRoot, { recursive: true })
   try {
     report(5, 'metadata', '正在读取官方发行信息。')
-    const expectedMd5 = asset.checksumUrl
-      ? (await fetchText(asset.checksumUrl, input.signal, fetchImpl)).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
-      : ''
-    const downloaded = await download(asset.url, archivePath, input.signal, report, fetchImpl)
+    const bundled = await bundledArchive(input.bundleDir, input.lab, asset, archivePath, report)
+    const expectedMd5 = bundled?.checksumPath
+      ? (await readFile(bundled.checksumPath, 'utf8').catch(() => '')).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
+      : asset.checksumUrl && !input.offline
+        ? (await fetchText(asset.checksumUrl, input.signal, fetchImpl)).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
+        : ''
+    const downloaded = bundled ?? (input.offline
+      ? (() => { throw new BuiltinAssetError(`${asset.filename} 离线模式未找到发行包。`) })()
+      : await download(asset.url, archivePath, input.signal, report, fetchImpl))
     if (expectedMd5 && downloaded.md5 !== expectedMd5) throw new BuiltinAssetError('官方发行包 MD5 校验不一致。')
     if (asset.sha256 && downloaded.sha256 !== asset.sha256) throw new BuiltinAssetError('官方发行包 SHA-256 校验不一致。')
     let localPath = installRoot

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { zipSync, strToU8 } from '../src/VulnLab/node_modules/fflate/esm/index.mjs'
-import { RuntimeToolchainInstaller } from '../src/VulnLab/dist/runtime-toolchains.js'
+import { zipSync, strToU8 } from '../src/node_modules/fflate/esm/index.mjs'
+import { RuntimeToolchainInstaller } from '../src/dist/runtime-toolchains.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-toolchains-'))
 try {
@@ -83,6 +83,25 @@ try {
   await assert.rejects(bad.installMissing(), /SHA-256 校验失败/)
   assert.equal(bad.getStatuses()[0]?.state, 'error')
   await assert.rejects(stat(join(badRoot, 'toolchains', 'php', fixturePackage.version, 'win32-x64', 'php.exe')))
+
+  const bundleRoot = join(root, 'bundle')
+  await mkdir(join(bundleRoot, 'runtime'), { recursive: true })
+  await writeFile(join(bundleRoot, 'runtime', fixturePackage.filename), archive)
+  const offline = new RuntimeToolchainInstaller(join(root, 'offline-runtime'), {
+    packages: [fixturePackage],
+    bundleDir: bundleRoot,
+    offline: true,
+    fetchImpl: async () => { throw new Error('离线模式不应联网') },
+  })
+  assert.equal((await offline.installMissing())[0]?.state, 'ready')
+  assert.equal(await readFile((await offline.binaries()).php, 'utf8'), 'fixture-php')
+
+  const offlineMissing = new RuntimeToolchainInstaller(join(root, 'offline-missing'), {
+    packages: [fixturePackage],
+    offline: true,
+    fetchImpl: async () => { throw new Error('离线模式不应联网') },
+  })
+  await assert.rejects(offlineMissing.installMissing(), /离线模式未找到/)
 
   console.log('VulnLab Windows runtime toolchain test passed: ZIP/TGZ download, checksum, safe extraction, manifest reuse, and failure cleanup.')
 } finally {

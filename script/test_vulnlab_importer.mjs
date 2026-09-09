@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const require = createRequire(resolve(root, 'src/VulnLab/package.json'))
+const require = createRequire(resolve(root, 'src/package.json'))
 const { zipSync } = require('fflate')
-const { importGitHubRepository, importGitLabRepository, importerInternals, ImporterError } = await import(new URL('../src/VulnLab/dist/importer.js', import.meta.url))
+const { importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../src/dist/importer.js', import.meta.url))
 
 const archive = zipSync({
   'DVWA-main/README.md': new TextEncoder().encode('# DVWA fixture'),
@@ -38,6 +38,19 @@ try {
   assert.equal(manifest.licenseFiles.length, 1)
   assert.equal(await readFile(join(manifest.localPath, 'README.md'), 'utf8'), '# DVWA fixture')
   assert.ok(calls.some(url => url.includes('/zip/' + 'a'.repeat(40))))
+  const localArchivePath = join(dataDir, 'offline-source.zip')
+  await writeFile(localArchivePath, archive)
+  const localManifest = await importLocalArchive({
+    sourceUrl: 'bundle://dvwa/source.zip',
+    sourceRef: 'offline',
+    jobId: 'local-fixture-job',
+    dataDir,
+    archivePath: localArchivePath,
+    sourceLabel: '本地夹具',
+  })
+  assert.equal(localManifest.adapterId, 'local-archive')
+  assert.equal(localManifest.resolvedRef, `local@archive-sha256:${localManifest.archiveSha256}`)
+  assert.equal(await readFile(join(localManifest.localPath, 'README.md'), 'utf8'), '# DVWA fixture')
   assert.deepEqual(importerInternals.parseGitLabRepository('https://gitlab.com/group/subgroup/project'), { projectPath: 'group/subgroup/project' })
   assert.throws(() => importerInternals.parseGitLabRepository('https://gitlab.com/group/project.git'), ImporterError)
 

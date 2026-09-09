@@ -64,6 +64,8 @@ interface InstalledRuntimeManifest {
 interface RuntimeToolchainInstallerOptions {
   packages?: RuntimeToolchainPackage[]
   fetchImpl?: typeof fetch
+  bundleDir?: string
+  offline?: boolean
 }
 
 const MAX_FILES = 100_000
@@ -277,6 +279,8 @@ export class RuntimeToolchainInstaller {
   private readonly runtimeDir: string
   private readonly packages: RuntimeToolchainPackage[]
   private readonly fetchImpl: typeof fetch
+  private readonly bundleDir?: string
+  private readonly offline: boolean
   private statuses: RuntimeToolchainStatus[] = []
   private installPromise: Promise<RuntimeToolchainStatus[]> | null = null
 
@@ -284,6 +288,8 @@ export class RuntimeToolchainInstaller {
     this.runtimeDir = resolve(runtimeDir)
     this.packages = options.packages ?? defaultPackages
     this.fetchImpl = options.fetchImpl ?? fetch
+    this.bundleDir = options.bundleDir?.trim() ? resolve(options.bundleDir) : undefined
+    this.offline = options.offline === true
   }
 
   private installRoot(input: RuntimeToolchainPackage) {
@@ -376,6 +382,23 @@ export class RuntimeToolchainInstaller {
     return downloadedBytes
   }
 
+  private async copyBundledArchive(input: RuntimeToolchainPackage, destination: string) {
+    if (!this.bundleDir) return null
+    const bundleRoot = resolve(this.bundleDir)
+    const archivePath = resolve(bundleRoot, 'runtime', input.filename)
+    const prefix = bundleRoot.endsWith(sep) ? bundleRoot : `${bundleRoot}${sep}`
+    if (archivePath !== bundleRoot && !archivePath.startsWith(prefix)) throw new RuntimeToolchainError('离线运行时包路径超出 bundle 目录。')
+    if (!await fileExists(archivePath)) return null
+    const archive = await readFile(archivePath)
+    if (archive.byteLength > input.maxArchiveBytes) throw new RuntimeToolchainError(`${input.label} 离线发行包超过大小限制。`)
+    const actual = createHash('sha256').update(archive).digest('hex')
+    if (actual !== input.sha256) throw new RuntimeToolchainError(`${input.label} 离线发行包 SHA-256 校验失败。`)
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, archive)
+    this.updateStatus(input.id, { detail: '已读取项目离线运行时包', downloadedBytes: archive.byteLength, sha256Verified: true })
+    return archive.byteLength
+  }
+
   private async installPackage(input: RuntimeToolchainPackage) {
     const finalRoot = this.installRoot(input)
     const stagingRoot = join(this.runtimeDir, 'toolchains', `.staging-${input.id}-${randomUUID()}`)
@@ -383,9 +406,12 @@ export class RuntimeToolchainInstaller {
     await mkdir(dirname(downloadPath), { recursive: true })
     await mkdir(dirname(finalRoot), { recursive: true })
     await mkdir(stagingRoot, { recursive: true })
-    this.updateStatus(input.id, { state: 'installing', detail: '正在连接官方下载源', downloadedBytes: 0 })
+    this.updateStatus(input.id, { state: 'installing', detail: '正在准备运行时包', downloadedBytes: 0 })
     try {
-      const downloadedBytes = await this.download(input, downloadPath)
+      const bundledBytes = await this.copyBundledArchive(input, downloadPath)
+      const downloadedBytes = bundledBytes ?? (this.offline
+        ? (() => { throw new RuntimeToolchainError(`${input.label} 离线模式未找到已校验发行包。`) })()
+        : await this.download(input, downloadPath))
       this.updateStatus(input.id, { detail: '校验通过，正在安全解压', downloadedBytes, sha256Verified: true })
       const extracted = input.kind === 'zip'
         ? await extractZip(downloadPath, stagingRoot, input)

@@ -11,7 +11,7 @@ process.env.VULNLAB_HOST = '127.0.0.1'
 process.env.VULNLAB_PORT = '6791'
 process.env.VULNLAB_INSTANCE_MINUTES = '0.01'
 
-const { app, database } = await import(new URL('../src/VulnLab/dist/server.js', import.meta.url))
+const { app, database } = await import(new URL('../src/dist/server.js', import.meta.url))
 try {
   const lab = database.createLab({
     slug: 'expiration-fixture',

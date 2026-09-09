@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/vulnlab-ci.yml"
-      - "src/VulnLab/**"
+      - "src/**"
       - "script/check_vulnlab_node.mjs"
       - "script/smoke_vulnlab.mjs"
       - "script/smoke_vulnlab_native_php.mjs"
@@ -26,7 +26,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/vulnlab-ci.yml"
-      - "src/VulnLab/**"
+      - "src/**"
       - "script/check_vulnlab_node.mjs"
       - "script/smoke_vulnlab.mjs"
       - "script/smoke_vulnlab_native_php.mjs"
@@ -68,31 +68,31 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: src/VulnLab/package-lock.json
+          cache-dependency-path: src/package-lock.json
 
       - name: Install dependencies
-        working-directory: src/VulnLab
+        working-directory: src
         run: npm ci
 
       - name: Audit production dependencies
-        working-directory: src/VulnLab
+        working-directory: src
         run: npm audit --omit=dev --audit-level=high
 
       - name: Type check
-        working-directory: src/VulnLab
+        working-directory: src
         run: npm run check
 
       - name: Build Node app
-        working-directory: src/VulnLab
+        working-directory: src
         run: npm run build
 
       - name: Test importer and Provider fixtures
-        working-directory: src/VulnLab
+        working-directory: src
         run: npm test
 
       - name: Check structure and scripts
         run: |
-          node --check src/VulnLab/public/app.js
+          node --check src/public/app.js
           node --check script/check_vulnlab_node.mjs
           node --check script/smoke_vulnlab.mjs
           node --check script/smoke_vulnlab_native_php.mjs
@@ -119,7 +119,7 @@ jobs:
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'vulnlab.log'
           $errorLog = Join-Path $env:RUNNER_TEMP 'vulnlab-error.log'
-          $process = Start-Process -FilePath node -ArgumentList 'src/VulnLab/dist/server.js' -WorkingDirectory $env:GITHUB_WORKSPACE -RedirectStandardOutput $log -RedirectStandardError $errorLog -PassThru
+          $process = Start-Process -FilePath node -ArgumentList 'src/dist/server.js' -WorkingDirectory $env:GITHUB_WORKSPACE -RedirectStandardOutput $log -RedirectStandardError $errorLog -PassThru
           $process.Id | Set-Content -Path (Join-Path $env:RUNNER_TEMP 'vulnlab.pid')
           for ($attempt = 0; $attempt -lt 30; $attempt++) {
             try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:6710/healthz | Out-Null; exit 0 } catch { Start-Sleep -Seconds 1 }

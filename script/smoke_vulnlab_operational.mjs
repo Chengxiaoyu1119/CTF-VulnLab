@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-const appDir = resolve(import.meta.dirname, '..', 'src', 'VulnLab')
+const appDir = resolve(import.meta.dirname, '..', 'src')
 const serverPath = resolve(appDir, 'dist', 'server.js')
 const wait = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds))
 
@@ -49,7 +49,7 @@ const stopServer = async child => {
 }
 
 const seedRelocatedState = async dataDir => {
-  const { VulnLabDatabase } = await import(new URL('../src/VulnLab/dist/db.js', import.meta.url))
+  const { VulnLabDatabase } = await import(new URL('../src/dist/db.js', import.meta.url))
   const database = new VulnLabDatabase(dataDir)
   const manifestFor = (lab, localPath) => ({
     adapterId: 'github-git',

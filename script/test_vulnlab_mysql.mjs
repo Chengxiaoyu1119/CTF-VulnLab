@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const { CliMySqlManager, mysqlClientArguments, mysqlResourceNames } = await import(new URL('../src/VulnLab/dist/mysql.js', import.meta.url))
+const { CliMySqlManager, mysqlClientArguments, mysqlResourceNames } = await import(new URL('../src/dist/mysql.js', import.meta.url))
 
 const clientRoot = await mkdtemp(join(tmpdir(), 'vulnlab-mysql-client-'))
 try {

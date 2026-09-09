@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { cp, mkdtemp, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
-import { NativePhpProvider } from '../src/VulnLab/dist/providers.js'
+import { NativePhpProvider } from '../src/dist/providers.js'
 
 const required = (name) => {
   const value = process.env[name]?.trim()

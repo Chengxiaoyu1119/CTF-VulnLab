@@ -82,6 +82,8 @@ export interface ProjectEnvironmentOptions {
   nodeBinary?: string
   javaBinary?: string
   pythonBinary?: string
+  bundleDir?: string
+  offline?: boolean
 }
 
 const sleep = (milliseconds: number) => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds))
@@ -253,7 +255,7 @@ export class ProjectEnvironmentManager {
     this.nodeBinaryOverride = options.nodeBinary?.trim() || undefined
     this.javaBinaryOverride = options.javaBinary?.trim() || undefined
     this.pythonBinaryOverride = options.pythonBinary?.trim() || undefined
-    this.toolchains = new RuntimeToolchainInstaller(this.runtimeDir)
+    this.toolchains = new RuntimeToolchainInstaller(this.runtimeDir, { bundleDir: options.bundleDir, offline: options.offline })
   }
 
   private async phpCandidate() {
@@ -581,4 +583,6 @@ export const projectEnvironmentOptionsFromEnv = (dataDir: string, phpBinary?: st
   nodeBinary: process.env.VULNLAB_NODE_BIN?.trim() || nodeBinary,
   javaBinary: process.env.VULNLAB_JAVA_BIN?.trim() || undefined,
   pythonBinary: process.env.VULNLAB_PYTHON_BIN?.trim() || undefined,
+  bundleDir: process.env.VULNLAB_BUNDLE_DIR?.trim() || undefined,
+  offline: process.env.VULNLAB_OFFLINE === '1',
 })

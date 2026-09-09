@@ -17,6 +17,7 @@
 - `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
 - `public/`：原生 JavaScript / CSS 工作台；主界面只呈现靶场卡片，详情弹窗承载启动、打开和实例管理。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
+- `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
 
 ## 开发
 
@@ -27,11 +28,13 @@ npm test
 npm run dev
 ```
 
-默认地址是 `http://127.0.0.1:6710`。`VULNLAB_HOST`、`VULNLAB_PORT` 和 `VULNLAB_DATA_DIR` 可以覆盖服务参数。
+默认地址是 `http://127.0.0.1:6710`。`VULNLAB_HOST`、`VULNLAB_PORT`、`VULNLAB_DATA_DIR`、`VULNLAB_BUNDLE_DIR` 和 `VULNLAB_OFFLINE=1` 可以覆盖服务参数。
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务在内部把资源下载到 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程限制下载与解压体积，检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后清理下载缓存。设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部内置资源。
+`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程限制下载与解压体积，检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后清理下载缓存。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部内置资源。
+
+离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
 Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。
 

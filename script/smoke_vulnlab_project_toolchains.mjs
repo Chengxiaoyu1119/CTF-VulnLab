@@ -5,8 +5,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { ProjectEnvironmentManager } from '../src/VulnLab/dist/project-environment.js'
-import { mysqlClientArguments } from '../src/VulnLab/dist/mysql.js'
+import { ProjectEnvironmentManager } from '../src/dist/project-environment.js'
+import { mysqlClientArguments } from '../src/dist/mysql.js'
 
 const execute = promisify(execFile)
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-project-toolchains-smoke-'))

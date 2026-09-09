@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { ProjectEnvironmentManager } from '../src/VulnLab/dist/project-environment.js'
-import { RuntimeToolchainInstaller } from '../src/VulnLab/dist/runtime-toolchains.js'
+import { ProjectEnvironmentManager } from '../src/dist/project-environment.js'
+import { RuntimeToolchainInstaller } from '../src/dist/runtime-toolchains.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-project-environment-'))
 try {

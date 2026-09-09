@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runtimeReadinessByLab } from '../src/VulnLab/dist/runtime-status.js'
+import { runtimeReadinessByLab } from '../src/dist/runtime-status.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-status-'))
 const lab = (slug, runtimeKind, version = 'fixture') => ({

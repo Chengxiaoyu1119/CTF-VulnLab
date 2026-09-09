@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { zipSync } from '../src/VulnLab/node_modules/fflate/esm/index.mjs'
-import { installBuiltinAsset } from '../src/VulnLab/dist/builtin-assets.js'
+import { zipSync } from '../src/node_modules/fflate/esm/index.mjs'
+import { installBuiltinAsset } from '../src/dist/builtin-assets.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-assets-'))
 try {
@@ -33,6 +33,25 @@ try {
   assert.ok(stages.includes('download'))
   assert.ok(stages.includes('extract'))
   assert.ok(stages.includes('completed'))
+
+  const bundleDir = join(root, 'bundle')
+  const bundleArchive = join(bundleDir, 'labs', 'juice-shop', 'offline', 'juice-shop-20.2.0_node22_win32_x64.zip')
+  await mkdir(join(bundleDir, 'labs', 'juice-shop', 'offline'), { recursive: true })
+  await writeFile(bundleArchive, archive)
+  const offlineManifest = await installBuiltinAsset({
+    lab: {
+      id: 'offline', slug: 'juice-shop', title: 'OWASP Juice Shop', category: 'Web', difficulty: '中等', sourceType: 'git',
+      sourceUrl: 'https://github.com/juice-shop/juice-shop', sourceRef: 'fixture', license: 'MIT', runtimeKind: 'native-node',
+      providerId: 'native-node', builtin: true, version: 'offline', status: 'importing', summary: '', tags: [], localPath: null,
+      importedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    },
+    jobId: 'offline-job',
+    dataDir: root,
+    bundleDir,
+    offline: true,
+    fetchImpl: async () => { throw new Error('离线模式不应联网') },
+  })
+  assert.equal(await readFile(join(offlineManifest.localPath, 'build', 'app.js'), 'utf8'), content)
 
   const unsafeArchive = Buffer.from(zipSync({ '../outside.txt': Buffer.from('blocked') }))
   const unsafeMd5 = createHash('md5').update(unsafeArchive).digest('hex')

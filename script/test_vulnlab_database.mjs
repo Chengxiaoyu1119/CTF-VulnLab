@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
-const { VulnLabDatabase } = await import(new URL('../src/VulnLab/dist/db.js', import.meta.url))
-const { dataPaths } = await import(new URL('../src/VulnLab/dist/paths.js', import.meta.url))
+const { VulnLabDatabase } = await import(new URL('../src/dist/db.js', import.meta.url))
+const { dataPaths } = await import(new URL('../src/dist/paths.js', import.meta.url))
 const dataDir = await mkdtemp(join(tmpdir(), 'vulnlab-database-'))
 const database = new VulnLabDatabase(dataDir)
 try {

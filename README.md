@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
 <div align="center">
-  <img src="src/VulnLab/public/favicon.png" width="88" alt="VulnLab Logo">
+  <img src="src/public/favicon.png" width="88" alt="VulnLab Logo">
   <h1>VulnLab · 攻防控制台</h1>
   <p><strong>把主流开源安全训练环境装进一个真正可启动的单机工作台。</strong></p>
   <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 单服务器部署</p>
@@ -31,7 +31,9 @@ VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面
 
 当前代码处于开发基线，暂未发布正式发行版；`0.3.0` 仅是当前内部版本号，首个公开版本号另行确定。主服务采用 Node.js 原生运行，当前只维护 Windows x64 本地运行链路。
 
-大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务会记录每次下载的 SHA-256，并在上游提供固定校验值时先完成比对。靶场资源进入 `src/VulnLab/data/labs`，PHP/MariaDB 运行时进入 `src/VulnLab/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
+大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务会记录每次下载的 SHA-256，并在上游提供固定校验值时先完成比对。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
+
+项目支持半联网和离线准备：设置 `VULNLAB_BUNDLE_DIR` 指向本地发行包目录后，启动流程按“本地 bundle → 已有 data 缓存 → 官方网络来源”选择资源；设置 `VULNLAB_OFFLINE=1` 后禁止联网，只使用本地发行包和已有缓存。发行包目录不提交到 Git。
 
 ## 快速开始
 
@@ -75,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | OWASP Mutillidae II | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
 
-九个靶场的目录、版本和运行方式内置在 VulnLab 中。源码和发行包在首次启动时由服务自动下载、校验并保存到项目数据目录；也可以设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 在服务启动时批量准备全部资源。
+九个靶场的目录、版本和运行方式内置在 VulnLab 中。源码和发行包在首次启动时由服务自动下载、校验并保存到项目数据目录；也可以设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 在服务启动时批量准备全部资源。离线包约定为 `<bundle>/runtime/<运行时文件名>`、`<bundle>/labs/<slug>/<version>/source.zip` 或内置发行包固定文件名。
 
 ## 运行依赖
 
@@ -119,7 +121,7 @@ flowchart LR
 
 ```text
 CTF-VulnLab/
-├─ src/VulnLab/
+├─ src/
 │  ├─ public/                 页面、样式与封面
 │  ├─ builtin-assets.ts       官方发行包安装器
 │  ├─ importer.ts             GitHub / GitLab 下载与安全解包
@@ -130,6 +132,7 @@ CTF-VulnLab/
 │  ├─ project-environment.ts  项目内 PHP 配置与 MariaDB 生命周期
 │  ├─ db.ts                   SQLite 数据层
 │  └─ data/                   本地资源与状态，Git 忽略
+├─ bundle/                   可选离线发行包目录，不提交到 Git
 ├─ script/                    启动、单元测试、冒烟与浏览器回归
 └─ .github/workflows/         持续集成
 ```
@@ -137,18 +140,18 @@ CTF-VulnLab/
 ## 测试
 
 ```powershell
-cd src/VulnLab
+cd src
 npm ci
 npm run check
 npm test
-cd ../..
+cd ..
 node script/check_vulnlab_node.mjs
 ```
 
 Windows x64 可额外验证真实官方下载链路；测试会下载约 230 MiB，完成后自动清理临时目录：
 
 ```powershell
-cd src/VulnLab
+cd src
 npm run smoke:toolchains
 ```
 
@@ -175,6 +178,6 @@ GitHub CI 当前在 Windows runner 上执行类型检查、构建、fixture 测�
 
 ## 许可证
 
-项目自有代码采用 [Apache License 2.0](LICENSE)。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/VulnLab/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
+项目自有代码采用 [Apache License 2.0](LICENSE)。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
 
 安全问题请通过 [GitHub Private Vulnerability Reporting](SECURITY.md) 提交。
