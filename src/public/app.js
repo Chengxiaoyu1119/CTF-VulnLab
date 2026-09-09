@@ -266,8 +266,30 @@ function passwordToggleIcon(visible) {
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.8"/></svg>'
 }
 
+function passwordToggleMarkup(visible) {
+  const label = visible ? '隐藏密码' : '显示密码'
+  return `<button class="password-toggle" type="button" data-action="toggle-password" aria-label="${label}" aria-pressed="${visible}">${passwordToggleIcon(visible)}</button>`
+}
+
+function syncPasswordToggle() {
+  if (state.authMode !== 'login') return
+  const input = document.querySelector('#login-password')
+  const wrap = input?.closest('.login-input-wrap')
+  if (!input || !wrap) return
+  const toggle = wrap.querySelector('.password-toggle')
+  if (input.value) {
+    if (!toggle) wrap.insertAdjacentHTML('beforeend', passwordToggleMarkup(state.loginPasswordVisible))
+    return
+  }
+  toggle?.remove()
+  if (state.loginPasswordVisible) {
+    state.loginPasswordVisible = false
+    input.type = 'password'
+  }
+}
+
 function loginErrorMarkup() {
-  return `<p class="login-form-error" id="login-error" role="alert" aria-live="polite">${esc(state.error)}</p>`
+  return `<div class="login-form-error" id="login-error" role="alert" aria-live="polite"><span class="login-error-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"></circle><path d="m8.5 8.5 7 7m0-7-7 7"></path></svg></span><span class="login-error-message">${esc(state.error)}</span><button class="login-error-close" type="button" data-action="dismiss-login-error" aria-label="关闭提示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12m0-12L6 18"></path></svg></button></div>`
 }
 
 function loginPage() {
@@ -276,10 +298,9 @@ function loginPage() {
   const passwordInvalid = state.loginErrorFields.includes('password')
   const describedBy = state.error ? 'aria-describedby="login-error"' : ''
   const passwordType = state.loginPasswordVisible ? 'text' : 'password'
-  const toggleLabel = state.loginPasswordVisible ? '隐藏密码' : '显示密码'
   const fields = registerMode
     ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="false"></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="password" autocomplete="new-password" placeholder="请输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="password"><input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite"><input id="login-invite-code" name="inviteCode" autocomplete="off" placeholder="请输入邀请码" required aria-invalid="false"></span></label>`
-    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}><button class="password-toggle" type="button" data-action="toggle-password" aria-label="${toggleLabel}" aria-pressed="${state.loginPasswordVisible}">${passwordToggleIcon(state.loginPasswordVisible)}</button></span></label>`
+    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></span></label>`
   const submit = registerMode
     ? '<button class="button button-primary" type="submit" disabled>注册功能暂未开放</button>'
     : `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录系统'}</button>`
@@ -426,7 +447,12 @@ function render() {
     app.innerHTML = '<div class="loading-screen" role="status" aria-live="polite"><div class="loading-mark" aria-hidden="true"><span></span><span></span><span></span></div><span>正在打开 VulnLab…</span></div>'
     return
   }
-  if (!state.session) { clearLoginSuccessNoticeTimer(); app.innerHTML = loginPage(); return }
+  if (!state.session) {
+    clearLoginSuccessNoticeTimer()
+    app.innerHTML = loginPage()
+    window.queueMicrotask(syncPasswordToggle)
+    return
+  }
   scheduleLoginSuccessNoticeDismiss()
   if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
   patchLabs()
@@ -490,13 +516,19 @@ async function runAction(action, element) {
   if (action === 'toggle-password') {
     const input = document.querySelector('#login-password')
     const toggle = document.querySelector('[data-action="toggle-password"]')
-    if (!input || !toggle) return
+    if (!input || !toggle || !input.value) return
     state.loginPasswordVisible = !state.loginPasswordVisible
     input.type = state.loginPasswordVisible ? 'text' : 'password'
     toggle.setAttribute('aria-label', state.loginPasswordVisible ? '隐藏密码' : '显示密码')
     toggle.setAttribute('aria-pressed', String(state.loginPasswordVisible))
     toggle.innerHTML = passwordToggleIcon(state.loginPasswordVisible)
     input.focus()
+    return
+  }
+  if (action === 'dismiss-login-error') {
+    state.error = ''
+    state.loginErrorFields = []
+    updateLoginFormView()
     return
   }
   if (action === 'switch-auth-mode') {
@@ -618,7 +650,9 @@ app.addEventListener('submit', async event => {
 
 app.addEventListener('input', event => {
   const input = event.target
-  if (!input.form || input.form.id !== 'login-form' || !state.error) return
+  if (!input.form || input.form.id !== 'login-form') return
+  if (input.name === 'password' && state.authMode === 'login') syncPasswordToggle()
+  if (!state.error) return
   state.error = ''
   state.loginErrorFields = []
   input.form.querySelector('#login-error')?.remove()

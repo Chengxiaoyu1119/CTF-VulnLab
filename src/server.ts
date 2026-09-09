@@ -663,7 +663,7 @@ app.post('/api/auth/login', async (request, reply) => {
   const userName = typeof body.userName === 'string' ? body.userName.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
   const user = adminAccount.userName === userName && sameSecret(adminAccount.password, password) ? adminAccount : null
-  if (!user) return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码不正确。' })
+  if (!user) return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码错误' })
   const sessionId = randomUUID()
   const csrfToken = randomBytes(24).toString('hex')
   database.createSession(sessionId, user.userName, user.role, csrfToken, Date.now() + 8 * 60 * 60 * 1000)

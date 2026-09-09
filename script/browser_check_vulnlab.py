@@ -21,12 +21,22 @@ def main() -> None:
         browser = playwright.chromium.launch(headless=True)
         # Desktop reference viewport for the fixed 3×3 workspace.
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+        page.emulate_media(reduced_motion="no-preference")
+        page.add_init_script(
+            """window.__vulnlabLoginAnimationStarts = 0;
+            window.__vulnlabLoginNoticeAnimationStarts = 0;
+            document.addEventListener('animationstart', event => {
+                if (event.animationName === 'login-form-in') window.__vulnlabLoginAnimationStarts += 1
+                if (event.animationName === 'login-notice-in') window.__vulnlabLoginNoticeAnimationStarts += 1
+            }, true)"""
+        )
         console_errors: list[str] = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and not message.text.startswith("Failed to load resource:") else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.goto(BASE_URL, wait_until="networkidle")
-        assert page.title() == "VulnLab · 攻防控制台"
+        assert page.title() == "攻防控制台"
         expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
+        assert page.evaluate("window.__vulnlabLoginAnimationStarts >= 1")
         expect(page.get_by_text("网络攻防靶场管理系统", exact=True)).to_be_visible()
         assert page.locator(".login-brand img").evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.get_by_text("安装、启动和管理本机靶场。", exact=True)).to_have_count(0)
@@ -35,13 +45,17 @@ def main() -> None:
         page.get_by_role("button", name="登录系统").click()
         expect(page.locator("#login-error")).to_contain_text("请输入账号和密码")
         expect(page.locator("#login-error")).to_be_visible()
+        expect(page.locator(".login-error-icon")).to_be_visible()
+        expect(page.locator(".login-error-close")).to_be_visible()
         expect(page.locator("#login-notice")).to_have_count(0)
         login_error_style = page.locator("#login-error").evaluate(
-            "element => ({ borderLeftWidth: getComputedStyle(element).borderLeftWidth, borderRadius: getComputedStyle(element).borderRadius })"
+            "element => ({ display: getComputedStyle(element).display, backgroundColor: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).border, borderRadius: getComputedStyle(element).borderRadius, minHeight: getComputedStyle(element).minHeight })"
         )
-        assert login_error_style == {"borderLeftWidth": "1px", "borderRadius": "6px"}, login_error_style
-        expect(page.get_by_text("账号", exact=True)).to_be_visible()
-        expect(page.get_by_text("密码", exact=True)).to_be_visible()
+        assert login_error_style == {"display": "flex", "backgroundColor": "rgb(42, 29, 29)", "border": "0px none rgb(245, 108, 108)", "borderRadius": "4px", "minHeight": "40px"}, login_error_style
+        expect(page.locator(".login-field-label")).to_have_count(2)
+        assert page.locator(".login-field-label").evaluate_all(
+            "elements => elements.every(element => getComputedStyle(element).position === 'absolute' && getComputedStyle(element).width === '1px')"
+        )
         assert page.locator(".login-form input[aria-invalid='true']").evaluate_all(
             "elements => elements.every(element => getComputedStyle(element).borderColor !== 'rgb(201, 80, 74)')"
         )
@@ -53,6 +67,8 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-error-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.locator(".login-error-close").click()
+        expect(page.locator("#login-error")).to_have_count(0)
         page.set_viewport_size({"width": 1440, "height": 900})
         register_requests = []
 
@@ -76,9 +92,11 @@ def main() -> None:
         page.get_by_role("tab", name="登录", exact=True).click()
         expect(page.get_by_role("button", name="登录系统", exact=True)).to_be_visible()
         expect(page.get_by_label("确认密码", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="显示密码")).to_have_count(0)
         page.unroute("**/api/auth/register")
 
         page.get_by_label("密码", exact=True).fill("secret")
+        expect(page.get_by_role("button", name="显示密码")).to_have_count(1)
         page.get_by_role("button", name="显示密码").click()
         expect(page.get_by_label("密码", exact=True)).to_have_attribute("type", "text")
         expect(page.get_by_role("button", name="隐藏密码")).to_have_attribute("aria-pressed", "true")
@@ -86,30 +104,69 @@ def main() -> None:
         page.get_by_role("button", name="隐藏密码").click()
         expect(page.get_by_label("密码", exact=True)).to_have_attribute("type", "password")
         page.get_by_label("密码", exact=True).fill("")
+        expect(page.get_by_role("button", name="显示密码")).to_have_count(0)
         page.get_by_label("账号", exact=True).fill("v")
         expect(page.locator("#login-error")).to_have_count(0)
         expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
         page.get_by_label("账号", exact=True).focus()
         page.wait_for_timeout(220)
         login_input_style = page.get_by_label("账号", exact=True).evaluate(
-            "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
+            "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle, backgroundColor: getComputedStyle(element).backgroundColor, fontFamily: getComputedStyle(element).fontFamily })"
         )
         assert login_input_style["borderColor"] == "rgb(76, 77, 79)", login_input_style
         assert login_input_style["boxShadow"] == "none", login_input_style
         assert login_input_style["outline"] == "none", login_input_style
         assert login_input_style["backgroundColor"] == "rgb(0, 0, 0)", login_input_style
+        assert login_input_style["fontFamily"].startswith("Arial"), login_input_style
         login_mode_style = page.locator(".login-mode").evaluate(
-            "element => ({ borderBottomWidth: getComputedStyle(element).borderBottomWidth, paddingBottom: getComputedStyle(element).paddingBottom })"
+            "element => ({ borderBottomWidth: getComputedStyle(element).borderBottomWidth, paddingBottom: getComputedStyle(element).paddingBottom, fontFamily: getComputedStyle(element).fontFamily })"
         )
-        assert login_mode_style == {"borderBottomWidth": "0px", "paddingBottom": "0px"}, login_mode_style
+        assert login_mode_style["borderBottomWidth"] == "0px", login_mode_style
+        assert login_mode_style["paddingBottom"] == "10px", login_mode_style
+        assert "Noto Sans SC" in login_mode_style["fontFamily"], login_mode_style
+        login_mode_button_style = page.locator(".login-mode button[aria-selected='true']").evaluate(
+            "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontWeight: getComputedStyle(element).fontWeight })"
+        )
+        assert login_mode_button_style["fontFamily"].startswith("Arial"), login_mode_button_style
+        assert login_mode_button_style["fontWeight"] == "600", login_mode_button_style
+        separator_content = page.locator(".login-mode").evaluate(
+            "element => getComputedStyle(element, '::before').content"
+        )
+        assert separator_content == '"|"', separator_content
+        login_box = page.locator(".login-form").bounding_box()
+        assert login_box and round(login_box["width"]) == 480 and round(login_box["height"]) == 514, login_box
+        brand_box = page.locator(".login-brand").bounding_box()
+        mode_box = page.locator(".login-mode").bounding_box()
+        field_boxes = [locator.bounding_box() for locator in page.locator(".login-field").all()]
+        button_box = page.locator(".login-form .button-primary").bounding_box()
+        button_style = page.locator(".login-form .button-primary").evaluate(
+            "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontSize: getComputedStyle(element).fontSize, fontWeight: getComputedStyle(element).fontWeight })"
+        )
+        assert brand_box and round(brand_box["height"]) == 154, brand_box
+        assert mode_box and round(mode_box["height"]) == 52, mode_box
+        assert all(box and round(box["height"]) == 40 for box in field_boxes), field_boxes
+        assert button_box and round(button_box["height"]) == 44, button_box
+        assert button_style["fontFamily"].startswith("Arial"), button_style
+        assert button_style["fontSize"] == "15px" and button_style["fontWeight"] == "600", button_style
         login_animation_style = page.locator(".login-form").evaluate(
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
         )
         assert login_animation_style["animationName"] == "login-form-in", login_animation_style
+        assert login_animation_style["animationDuration"] == "0.5s", login_animation_style
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.reload(wait_until="networkidle")
+        page.wait_for_timeout(520)
+        mobile_login_box = page.locator(".login-form").bounding_box()
+        mobile_brand_box = page.locator(".login-brand").bounding_box()
+        mobile_logo_box = page.locator(".login-brand img").bounding_box()
+        assert mobile_login_box and mobile_login_box["x"] == 0 and round(mobile_login_box["width"]) == 390 and round(mobile_login_box["height"]) == 482, mobile_login_box
+        assert mobile_brand_box and round(mobile_brand_box["height"]) == 142, mobile_brand_box
+        assert mobile_logo_box and round(mobile_logo_box["width"]) == 60 and round(mobile_logo_box["height"]) == 60, mobile_logo_box
+        page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_label("账号", exact=True).fill("wrong")
         page.get_by_label("密码", exact=True).fill("wrong")
         page.get_by_label("密码", exact=True).press("Enter")
-        expect(page.locator("#login-error")).to_contain_text("账号或密码不正确")
+        expect(page.locator("#login-error")).to_contain_text("账号或密码错误")
         expect(page.get_by_label("账号", exact=True)).to_be_focused()
         pending_login = {}
 
@@ -138,6 +195,11 @@ def main() -> None:
         assert success_notice_style["borderLeftWidth"] == "1px", success_notice_style
         assert success_notice_style["borderRadius"] == "10px", success_notice_style
         assert success_notice_style["boxShadow"] != "none", success_notice_style
+        assert page.evaluate("window.__vulnlabLoginNoticeAnimationStarts >= 1")
+        success_notice_animation = page.locator("#login-success-notice").evaluate(
+            "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
+        )
+        assert success_notice_animation == {"animationName": "login-notice-in", "animationDuration": "0.32s"}, success_notice_animation
         page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_text("DVWA", exact=True)).to_have_count(1)
         expect(page.locator(".labs-screen")).to_be_visible()
@@ -698,6 +760,24 @@ def main() -> None:
             "element => ({ transitionDuration: getComputedStyle(element).transitionDuration, hoverTransform: getComputedStyle(element).transform })"
         )
         assert float(reduced_motion["transitionDuration"].replace("s", "")) <= 0.001, reduced_motion
+        reduced_context = browser.new_context(viewport={"width": 739, "height": 953}, device_scale_factor=1)
+        reduced_page = reduced_context.new_page()
+        reduced_page.emulate_media(reduced_motion="reduce")
+        reduced_page.add_init_script(
+            """window.__vulnlabReducedLoginAnimationStarts = 0;
+            document.addEventListener('animationstart', event => {
+                if (event.animationName === 'login-form-in') window.__vulnlabReducedLoginAnimationStarts += 1
+            }, true)"""
+        )
+        reduced_page.goto(BASE_URL, wait_until="networkidle")
+        expect(reduced_page.locator(".login-form")).to_be_visible()
+        reduced_login_animation = reduced_page.locator(".login-form").evaluate(
+            "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
+        )
+        assert reduced_login_animation == {"animationName": "login-form-in", "animationDuration": "0.5s"}, reduced_login_animation
+        assert reduced_page.evaluate("window.__vulnlabReducedLoginAnimationStarts >= 1")
+        reduced_page.close()
+        reduced_context.close()
         assert not console_errors, console_errors
         browser.close()
     print(f"VulnLab browser check passed; screenshots: {OUTPUT_DIR}")
