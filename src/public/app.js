@@ -36,6 +36,7 @@ const state = {
   busyAction: null,
   error: '',
   loginErrorFields: [],
+  authMode: 'login',
   loginPasswordVisible: false,
   successNotice: null,
   toast: null,
@@ -270,12 +271,19 @@ function loginErrorMarkup() {
 }
 
 function loginPage() {
+  const registerMode = state.authMode === 'register'
   const userNameInvalid = state.loginErrorFields.includes('userName')
   const passwordInvalid = state.loginErrorFields.includes('password')
   const describedBy = state.error ? 'aria-describedby="login-error"' : ''
   const passwordType = state.loginPasswordVisible ? 'text' : 'password'
   const toggleLabel = state.loginPasswordVisible ? '隐藏密码' : '显示密码'
-  return `<div class="login-page"><form class="login-form" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>攻防控制台</h1><p>本地靶场训练平台</p></div><div class="login-mode">登录</div>${state.error ? loginErrorMarkup() : ''}<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}><button class="password-toggle" type="button" data-action="toggle-password" aria-label="${toggleLabel}" aria-pressed="${state.loginPasswordVisible}">${passwordToggleIcon(state.loginPasswordVisible)}</button></span></label><button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '进入靶场'}</button></form></div>`
+  const fields = registerMode
+    ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="false"></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="password" autocomplete="new-password" placeholder="请输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="password"><input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite"><input id="login-invite-code" name="inviteCode" autocomplete="off" placeholder="请输入邀请码" required aria-invalid="false"></span></label>`
+    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}><button class="password-toggle" type="button" data-action="toggle-password" aria-label="${toggleLabel}" aria-pressed="${state.loginPasswordVisible}">${passwordToggleIcon(state.loginPasswordVisible)}</button></span></label>`
+  const submit = registerMode
+    ? '<button class="button button-primary" type="submit" disabled>注册功能暂未开放</button>'
+    : `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录系统'}</button>`
+  return `<div class="login-page"><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${state.error ? loginErrorMarkup() : ''}${fields}${submit}</form></div>`
 }
 
 function updateLoginFormView() {
@@ -291,7 +299,10 @@ function updateLoginFormView() {
     else input.removeAttribute('aria-describedby')
   })
   const submit = form.querySelector('button[type="submit"]')
-  if (submit) { submit.disabled = state.busy; submit.textContent = state.busy ? '登录中…' : '进入靶场' }
+  if (submit) {
+    submit.disabled = state.authMode === 'register' || state.busy
+    submit.textContent = state.authMode === 'register' ? '注册功能暂未开放' : state.busy ? '登录中…' : '登录系统'
+  }
 }
 
 function scheduleImportPolling() {
@@ -454,7 +465,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'dismiss-login-success', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -486,6 +497,17 @@ async function runAction(action, element) {
     toggle.setAttribute('aria-pressed', String(state.loginPasswordVisible))
     toggle.innerHTML = passwordToggleIcon(state.loginPasswordVisible)
     input.focus()
+    return
+  }
+  if (action === 'switch-auth-mode') {
+    const mode = element.dataset.mode === 'register' ? 'register' : 'login'
+    if (state.authMode === mode || state.busy) return
+    state.authMode = mode
+    state.error = ''
+    state.loginErrorFields = []
+    state.loginPasswordVisible = false
+    render()
+    window.queueMicrotask(() => document.querySelector('[name="userName"]')?.focus())
     return
   }
   if (action === 'dismiss-login-success') { clearLoginSuccessNoticeTimer(); state.successNotice = null; render(); return }
@@ -555,6 +577,7 @@ app.addEventListener('submit', async event => {
   if (form.id === 'login-form' && state.busy) return
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
+    if (state.authMode !== 'login') return
     state.busy = true; state.error = ''; state.loginErrorFields = []
     updateLoginFormView()
     const userName = typeof values.userName === 'string' ? values.userName.trim() : ''

@@ -27,12 +27,12 @@ def main() -> None:
         page.goto(BASE_URL, wait_until="networkidle")
         assert page.title() == "VulnLab · 攻防控制台"
         expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
-        expect(page.get_by_text("本地靶场训练平台", exact=True)).to_be_visible()
+        expect(page.get_by_text("网络攻防靶场管理系统", exact=True)).to_be_visible()
         assert page.locator(".login-brand img").evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.get_by_text("安装、启动和管理本机靶场。", exact=True)).to_have_count(0)
-        expect(page.get_by_label("账号")).to_have_value("")
+        expect(page.get_by_label("账号", exact=True)).to_have_value("")
         expect(page.get_by_label("密码", exact=True)).to_have_value("")
-        page.get_by_role("button", name="进入靶场").click()
+        page.get_by_role("button", name="登录系统").click()
         expect(page.locator("#login-error")).to_contain_text("请输入账号和密码")
         expect(page.locator("#login-error")).to_be_visible()
         expect(page.locator("#login-notice")).to_have_count(0)
@@ -45,7 +45,7 @@ def main() -> None:
         assert page.locator(".login-form input[aria-invalid='true']").evaluate_all(
             "elements => elements.every(element => getComputedStyle(element).borderColor !== 'rgb(201, 80, 74)')"
         )
-        expect(page.get_by_label("账号")).to_have_attribute("aria-describedby", "login-error")
+        expect(page.get_by_label("账号", exact=True)).to_have_attribute("aria-describedby", "login-error")
         page.screenshot(path=str(OUTPUT_DIR / "login-error-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
         expect(page.locator("#login-error")).to_be_visible()
@@ -54,7 +54,30 @@ def main() -> None:
         page.set_viewport_size({"width": 320, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.set_viewport_size({"width": 1440, "height": 900})
+        register_requests = []
+
+        def block_register(route, request):
+            register_requests.append(request.url)
+            route.abort()
+
+        page.route("**/api/auth/register", block_register)
+        page.get_by_role("tab", name="注册", exact=True).click()
+        expect(page.get_by_role("tab", name="注册", exact=True)).to_have_attribute("aria-selected", "true")
+        expect(page.get_by_role("tab", name="登录", exact=True)).to_have_attribute("aria-selected", "false")
+        expect(page.get_by_label("确认密码", exact=True)).to_be_visible()
+        expect(page.get_by_label("邀请码", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="注册功能暂未开放", exact=True)).to_be_disabled()
+        page.get_by_label("账号", exact=True).fill("new-user")
+        page.get_by_label("密码", exact=True).fill("secret")
+        page.get_by_label("确认密码", exact=True).fill("secret")
+        page.get_by_label("邀请码", exact=True).fill("INVITE-TEST")
+        page.get_by_label("邀请码", exact=True).press("Enter")
+        assert not register_requests
+        page.get_by_role("tab", name="登录", exact=True).click()
+        expect(page.get_by_role("button", name="登录系统", exact=True)).to_be_visible()
+        expect(page.get_by_label("确认密码", exact=True)).to_have_count(0)
+        page.unroute("**/api/auth/register")
+
         page.get_by_label("密码", exact=True).fill("secret")
         page.get_by_role("button", name="显示密码").click()
         expect(page.get_by_label("密码", exact=True)).to_have_attribute("type", "text")
@@ -63,12 +86,12 @@ def main() -> None:
         page.get_by_role("button", name="隐藏密码").click()
         expect(page.get_by_label("密码", exact=True)).to_have_attribute("type", "password")
         page.get_by_label("密码", exact=True).fill("")
-        page.get_by_label("账号").fill("v")
+        page.get_by_label("账号", exact=True).fill("v")
         expect(page.locator("#login-error")).to_have_count(0)
         expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
-        page.get_by_label("账号").focus()
+        page.get_by_label("账号", exact=True).focus()
         page.wait_for_timeout(220)
-        login_input_style = page.get_by_label("账号").evaluate(
+        login_input_style = page.get_by_label("账号", exact=True).evaluate(
             "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
         assert login_input_style["borderColor"] == "rgb(76, 77, 79)", login_input_style
@@ -83,18 +106,18 @@ def main() -> None:
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
         )
         assert login_animation_style["animationName"] == "login-form-in", login_animation_style
-        page.get_by_label("账号").fill("wrong")
+        page.get_by_label("账号", exact=True).fill("wrong")
         page.get_by_label("密码", exact=True).fill("wrong")
         page.get_by_label("密码", exact=True).press("Enter")
         expect(page.locator("#login-error")).to_contain_text("账号或密码不正确")
-        expect(page.get_by_label("账号")).to_be_focused()
+        expect(page.get_by_label("账号", exact=True)).to_be_focused()
         pending_login = {}
 
         def hold_login(route, request):
             pending_login["route"] = route
 
         page.route("**/api/auth/login", hold_login)
-        page.get_by_label("账号").fill("network")
+        page.get_by_label("账号", exact=True).fill("network")
         page.get_by_label("密码", exact=True).fill("network")
         page.get_by_label("密码", exact=True).press("Enter")
         expect(page.get_by_role("button", name="登录中…", exact=True)).to_be_disabled()
@@ -102,7 +125,7 @@ def main() -> None:
         pending_login["route"].abort()
         expect(page.locator("#login-error")).to_contain_text("本地服务连接失败")
         page.unroute("**/api/auth/login")
-        page.get_by_label("账号").fill("vulnlab")
+        page.get_by_label("账号", exact=True).fill("vulnlab")
         page.get_by_label("密码", exact=True).fill("vulnlab")
         page.get_by_label("密码", exact=True).press("Enter")
         expect(page.locator("#login-success-notice")).to_contain_text("登录成功")

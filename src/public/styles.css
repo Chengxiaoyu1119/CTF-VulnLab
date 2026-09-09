@@ -150,7 +150,12 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .login-brand img { width: 64px; height: 64px; margin-bottom: 18px; border-radius: 18px; box-shadow: none; }
 .login-brand h1 { margin: 0 0 6px; color: #fff; font-family: var(--font-display); font-size: 25px; font-weight: 700; letter-spacing: -.035em; }
 .login-brand p { margin: 0; color: #858585; font-size: 13px; }
-.login-mode { align-self: center; padding: 0; color: var(--workspace-accent); font-size: 13px; font-weight: 700; animation: login-item-in 380ms 130ms cubic-bezier(.22, .61, .36, 1) both; }
+.login-mode { align-self: center; display: inline-flex; gap: 22px; padding: 0; color: #858585; font-size: 13px; font-weight: 700; animation: login-item-in 380ms 130ms cubic-bezier(.22, .61, .36, 1) both; }
+.login-mode button { border: 0; padding: 0; color: #858585; background: transparent; font: inherit; cursor: pointer; }
+.login-mode button[aria-selected="true"] { color: var(--workspace-accent); }
+.login-mode button:hover { color: #f0f0f0; }
+.login-mode button:focus-visible { outline: 1px solid #4c4d4f; outline-offset: 4px; }
+.login-mode button:disabled { cursor: default; opacity: .55; }
 .login-form-error { margin: -2px 0 0; border: 1px solid #4c2f2c; border-radius: 6px; padding: 9px 11px; color: #f0aaa4; background-color: #241918; font-size: 11px; line-height: 1.45; }
 .login-field { position: relative; gap: 7px; animation: login-item-in 380ms cubic-bezier(.22, .61, .36, 1) both; }
 .login-field:nth-of-type(1) { animation-delay: 170ms; }
@@ -159,6 +164,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .login-input-wrap { position: relative; display: block; }
 .login-input-wrap::before { position: absolute; z-index: 2; top: 50%; left: 15px; width: 15px; height: 15px; background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='1.7'%3E%3Ccircle cx='12' cy='8' r='3.2'/%3E%3Cpath d='M5.5 20c.5-4 2.7-6 6.5-6s6 2 6.5 6'/%3E%3C/svg%3E"); content: ''; pointer-events: none; transform: translateY(-50%); }
 .login-input-wrap[data-field="password"]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='1.7'%3E%3Crect x='5.5' y='10' width='13' height='10' rx='2'/%3E%3Cpath d='M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10'/%3E%3C/svg%3E"); }
+.login-input-wrap[data-field="invite"]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='1.7'%3E%3Ccircle cx='8.2' cy='15.8' r='3.2'/%3E%3Cpath d='m10.5 13.5 8-8m-2.7 2.7 2 2m-4.6.6 2 2'/%3E%3C/svg%3E"); }
 .login-form input { min-height: 44px; border-color: #4c4d4f; border-radius: 4px; padding-left: 43px; color: #eee; background-color: #000; }
 .login-input-wrap[data-field="password"] input { padding-right: 45px; }
 .login-form input:hover { border-color: #555; }
@@ -170,6 +176,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .password-toggle svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
 .login-input-wrap:focus-within::before { filter: brightness(1.25); }
 .login-form .button-primary { min-height: 44px; border-radius: 6px; margin-top: 0; font-size: 13px; animation: login-item-in 380ms 250ms cubic-bezier(.22, .61, .36, 1) both; }
+.login-form-register { gap: 14px; }
 .login-notice { position: fixed; top: 22px; right: 22px; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) 20px; align-items: center; gap: 10px; width: min(300px, calc(100vw - 44px)); min-height: 56px; border: 1px solid #3a3a3a; border-radius: 10px; padding: 10px 10px 10px 13px; color: #f0f0f0; background-color: var(--surface); box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.4; animation: login-notice-in 190ms ease-out both; }
 .login-notice::before { display: none; }
 .login-notice-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
