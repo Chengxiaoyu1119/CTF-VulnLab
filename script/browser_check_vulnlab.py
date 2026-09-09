@@ -26,7 +26,8 @@ def main() -> None:
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.goto(BASE_URL, wait_until="networkidle")
         assert page.title() == "VulnLab · 攻防控制台"
-        expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
+        expect(page.get_by_text("本地靶场训练平台", exact=True)).to_be_visible()
         assert page.locator(".login-brand img").evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.get_by_text("安装、启动和管理本机靶场。", exact=True)).to_have_count(0)
         expect(page.get_by_label("账号")).to_have_value("")
@@ -64,15 +65,24 @@ def main() -> None:
         page.get_by_label("密码", exact=True).fill("")
         page.get_by_label("账号").fill("v")
         expect(page.locator("#login-error")).to_have_count(0)
-        expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
         page.get_by_label("账号").focus()
         page.wait_for_timeout(220)
         login_input_style = page.get_by_label("账号").evaluate(
-            "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle })"
+            "element => ({ borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow, outline: getComputedStyle(element).outlineStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
-        assert login_input_style["borderColor"] == "rgb(255, 127, 42)", login_input_style
-        assert "61, 91, 194" not in login_input_style["boxShadow"], login_input_style
+        assert login_input_style["borderColor"] == "rgb(76, 77, 79)", login_input_style
+        assert login_input_style["boxShadow"] == "none", login_input_style
         assert login_input_style["outline"] == "none", login_input_style
+        assert login_input_style["backgroundColor"] == "rgb(0, 0, 0)", login_input_style
+        login_mode_style = page.locator(".login-mode").evaluate(
+            "element => ({ borderBottomWidth: getComputedStyle(element).borderBottomWidth, paddingBottom: getComputedStyle(element).paddingBottom })"
+        )
+        assert login_mode_style == {"borderBottomWidth": "0px", "paddingBottom": "0px"}, login_mode_style
+        login_animation_style = page.locator(".login-form").evaluate(
+            "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
+        )
+        assert login_animation_style["animationName"] == "login-form-in", login_animation_style
         page.get_by_label("账号").fill("wrong")
         page.get_by_label("密码", exact=True).fill("wrong")
         page.get_by_label("密码", exact=True).press("Enter")
