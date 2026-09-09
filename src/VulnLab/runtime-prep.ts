@@ -49,13 +49,11 @@ export const prepareInstalledLab = async (lab: Lab, onProgress: Progress = () =>
   const root = lab.localPath
   const readyMarker = join(root, '.vulnlab-python-ready')
   if (await exists(readyMarker)) return
-  const configured = pythonBinary?.trim() || process.env.VULNLAB_PYTHON_BIN?.trim() || (process.platform === 'win32' ? 'py' : 'python3')
-  const launcherArgs = process.platform === 'win32' && basename(configured).toLowerCase() === 'py' ? ['-3'] : []
+  const configured = pythonBinary?.trim() || process.env.VULNLAB_PYTHON_BIN?.trim() || 'py'
+  const launcherArgs = basename(configured).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
   onProgress(91, 'runtime', '正在创建 PyGoat 独立 Python 环境。')
   await run(configured, [...launcherArgs, '-m', 'venv', '.vulnlab-venv'], root)
-  const python = process.platform === 'win32'
-    ? join(root, '.vulnlab-venv', 'Scripts', 'python.exe')
-    : join(root, '.vulnlab-venv', 'bin', 'python')
+  const python = join(root, '.vulnlab-venv', 'Scripts', 'python.exe')
   const requirements = await pygoatRequirements(root)
   onProgress(94, 'runtime', '正在安装 PyGoat 运行依赖。')
   await run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', requirements], root)

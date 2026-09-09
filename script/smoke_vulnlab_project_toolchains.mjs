@@ -49,7 +49,7 @@ try {
   assert.match(python.stdout, /^Python 3\.11\.16/)
   const venvRoot = join(root, 'python-venv-check')
   await execute(prepared.pythonBinary, ['-m', 'venv', venvRoot])
-  const venvPython = process.platform === 'win32' ? join(venvRoot, 'Scripts', 'python.exe') : join(venvRoot, 'bin', 'python')
+  const venvPython = join(venvRoot, 'Scripts', 'python.exe')
   const pip = await execute(venvPython, ['-m', 'pip', '--version'])
   assert.match(pip.stdout, /^pip /)
   assert.equal(await tcp(prepared.mysql.host, prepared.mysql.port), true)

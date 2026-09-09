@@ -22,6 +22,8 @@ import { dataPaths } from './paths.js'
 import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView } from './types.js'
 import type { RuntimeToolchainId } from './runtime-toolchains.js'
 
+if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('VulnLab 当前仅支持 Windows x64。')
+
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
 const publicDir = join(appDir, 'public')
@@ -52,12 +54,12 @@ const nativeRuntime: NativeRuntimeConfig = {
   phpIni: runtimePhpIni,
   nodeBinary: process.env.VULNLAB_NODE_BIN?.trim() || process.execPath,
   javaBinary: process.env.VULNLAB_JAVA_BIN?.trim() || 'java',
-  pythonBinary: process.env.VULNLAB_PYTHON_BIN?.trim() || (process.platform === 'win32' ? 'py' : 'python3'),
+  pythonBinary: process.env.VULNLAB_PYTHON_BIN?.trim() || 'py',
   publicOriginTemplate: runtimePublicOrigin,
   mysql: runtimeMySql,
 }
 const projectEnvironment = projectEnvironmentOptionsFromEnv(dataDir, process.env.VULNLAB_PHP_BIN?.trim(), runtimePhpIni, runtimeMySql, process.env.VULNLAB_NODE_BIN?.trim())
-const useProjectToolchainsByDefault = process.platform === 'win32' && process.arch === 'x64'
+const useProjectToolchainsByDefault = true
 const explicitExternalRuntime = {
   php: Boolean(process.env.VULNLAB_PHP_BIN?.trim()),
   mysql: Boolean(runtimeMySql || (process.env.VULNLAB_MYSQL_BIN?.trim() && process.env.VULNLAB_MYSQLD_BIN?.trim())),
@@ -149,6 +151,19 @@ const readableRuntimeError = (error: unknown) => String(error instanceof Error ?
   .replace(/\s+/g, ' ')
   .trim()
   .slice(0, 240)
+
+const publicRuntimeStatus = (status: ReturnType<typeof projectEnvironment.getStatus>) => ({
+  platform: status.platform,
+  toolchains: status.toolchains.map(item => {
+    const { installedPath: _installedPath, ...publicItem } = item
+    return { ...publicItem, detail: readableRuntimeError(publicItem.detail) }
+  }),
+  php: { source: status.php.source, available: status.php.available, detail: readableRuntimeError(status.php.detail) },
+  mysql: { source: status.mysql.source, available: status.mysql.available, managed: status.mysql.managed, detail: readableRuntimeError(status.mysql.detail) },
+  node: { source: status.node.source, available: status.node.available, detail: readableRuntimeError(status.node.detail) },
+  java: { source: status.java.source, available: status.java.available, detail: readableRuntimeError(status.java.detail) },
+  python: { source: status.python.source, available: status.python.available, detail: readableRuntimeError(status.python.detail) },
+})
 
 const projectToolchainsForLab = (lab: Lab): RuntimeToolchainId[] => {
   if (!useProjectToolchainsByDefault) return []
@@ -760,7 +775,7 @@ app.get('/api/runtime-status', async (request, reply) => {
   return {
     dependencies,
     labs: await runtimeReadiness(database.listLabs(), dependencies),
-    project,
+    project: publicRuntimeStatus(project),
   }
 })
 
@@ -783,7 +798,7 @@ app.post('/api/runtime/prepare', async (request, reply) => {
   const failed = project.toolchains.filter(item => item.state === 'error').map(item => item.label)
   const problems = [...new Set([...missing, ...failed, ...(preparationError ? [preparationError] : [])])]
   const ok = activeLabs.every(lab => readiness[lab.slug]?.available) && problems.length === 0
-  return { ok, message: ok ? '项目运行环境已就绪。' : `项目运行环境未就绪：${problems.join('、') || '请重试准备。'}。`, project }
+  return { ok, message: ok ? '项目运行环境已就绪。' : `项目运行环境未就绪：${problems.join('、') || '请重试准备。'}。`, project: publicRuntimeStatus(project) }
 })
 
 app.put('/api/settings', async (request, reply) => {

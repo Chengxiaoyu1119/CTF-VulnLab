@@ -27,21 +27,10 @@ interface BuiltinAsset {
 }
 
 const juiceShopAsset = (): BuiltinAsset => {
-  const platform = process.platform
-  const arch = process.arch
-  const suffix = platform === 'win32' && arch === 'x64'
-    ? 'win32_x64.zip'
-    : platform === 'linux' && arch === 'x64'
-      ? 'linux_x64.tgz'
-      : platform === 'linux' && arch === 'arm64'
-        ? 'linux_arm64.tgz'
-        : platform === 'darwin' && arch === 'arm64'
-          ? 'darwin_arm64.zip'
-          : ''
-  if (!suffix) throw new BuiltinAssetError(`Juice Shop 暂未提供 ${platform}/${arch} 的内置发行包。`)
+  const suffix = 'win32_x64.zip'
   const filename = `juice-shop-20.2.0_node22_${suffix}`
   const url = `https://github.com/juice-shop/juice-shop/releases/download/v20.2.0/${filename}`
-  return { url, checksumUrl: `${url}.md5`, kind: suffix.endsWith('.tgz') ? 'tgz' : 'zip', filename }
+  return { url, checksumUrl: `${url}.md5`, kind: 'zip', filename }
 }
 
 const assets: Record<string, () => BuiltinAsset> = {

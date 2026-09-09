@@ -54,7 +54,7 @@ export const inspectRuntimeDependencies = async (input: {
     command(input.phpBinary, [...(input.phpIni ? ['-c', input.phpIni] : []), '-r', 'echo PHP_VERSION."|".(extension_loaded("mysqli")?"mysqli":"no-mysqli")."|".(extension_loaded("pdo_mysql")?"pdo_mysql":"no-pdo_mysql");']),
     command(input.nodeBinary, ['--version']),
     command(input.javaBinary, ['-version']),
-    command(input.pythonBinary, [...(process.platform === 'win32' && /(?:^|[\\/])py(?:\.exe)?$/i.test(input.pythonBinary) ? ['-3'] : []), '--version']),
+    command(input.pythonBinary, [/(?:^|[\\/])py(?:\.exe)?$/i.test(input.pythonBinary) ? '-3' : '', '--version'].filter(Boolean)),
     input.mysql ? tcp(input.mysql.host, input.mysql.port) : Promise.resolve(false),
   ])
   const phpParts = php.output.split('|')

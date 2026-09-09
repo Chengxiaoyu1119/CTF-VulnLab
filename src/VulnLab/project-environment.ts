@@ -106,7 +106,7 @@ const resolveCommandPath = async (value: string, source: Exclude<RuntimeSource, 
   if (candidate.includes('\\') || candidate.includes('/') || extname(candidate)) {
     return await fileExists(candidate) ? { path: resolve(candidate), source } : null
   }
-  const resolver = process.platform === 'win32' ? 'where.exe' : 'which'
+  const resolver = 'where.exe'
   try {
     const result = await command(resolver, [candidate], { timeout: 3_000 })
     const path = result.stdout.split(/\r?\n/).map(item => item.trim()).find(Boolean)
@@ -186,20 +186,14 @@ const waitForChildExit = async (child: ChildProcess | null, timeoutMs = 5_000) =
 const terminate = async (child: ChildProcess | null, pid?: number) => {
   const targetPid = pid ?? child?.pid
   if (!targetPid || targetPid <= 0) return
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(targetPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
-  } else {
-    try { process.kill(targetPid, 'SIGTERM') } catch { return }
-  }
+  spawnSync('taskkill', ['/PID', String(targetPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     if (child?.exitCode !== null && child?.exitCode !== undefined) return
     try { process.kill(targetPid, 0) } catch { return }
     await sleep(100)
   }
-  if (child?.exitCode === null || child?.exitCode === undefined) {
-    try { process.kill(targetPid, 'SIGKILL') } catch { /* process already exited */ }
-  }
+  if (child?.exitCode === null || child?.exitCode === undefined) spawnSync('taskkill', ['/PID', String(targetPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
 }
 
 const mysqlString = (value: string) => `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\0', '')}'`
@@ -267,7 +261,7 @@ export class ProjectEnvironmentManager {
     const projectRoot = join(this.runtimeDir, 'bin', 'php')
     return await firstExistingExecutable([
       ...(this.toolchainBinaries.php ? [{ value: this.toolchainBinaries.php, source: 'project' as const }] : []),
-      { value: join(projectRoot, process.platform === 'win32' ? 'php.exe' : 'php'), source: 'project' },
+      { value: join(projectRoot, 'php.exe'), source: 'project' },
       { value: 'php', source: 'system' },
     ])
   }
@@ -278,8 +272,8 @@ export class ProjectEnvironmentManager {
       ? await resolveCommandPath(this.mysqlServerBinaryOverride, 'external')
       : await firstExistingExecutable([
         ...(this.toolchainBinaries.mysqlServer ? [{ value: this.toolchainBinaries.mysqlServer, source: 'project' as const }] : []),
-        { value: join(projectRoot, process.platform === 'win32' ? 'mysqld.exe' : 'mysqld'), source: 'project' },
-        { value: join(projectRoot, process.platform === 'win32' ? 'mariadbd.exe' : 'mariadbd'), source: 'project' },
+        { value: join(projectRoot, 'mysqld.exe'), source: 'project' },
+        { value: join(projectRoot, 'mariadbd.exe'), source: 'project' },
         { value: 'mysqld', source: 'system' },
         { value: 'mariadbd', source: 'system' },
       ])
@@ -287,7 +281,7 @@ export class ProjectEnvironmentManager {
       ? await resolveCommandPath(this.mysqlBinaryOverride, 'external')
       : await firstExistingExecutable([
         ...(this.toolchainBinaries.mysqlClient ? [{ value: this.toolchainBinaries.mysqlClient, source: 'project' as const }] : []),
-        { value: join(projectRoot, process.platform === 'win32' ? 'mysql.exe' : 'mysql'), source: 'project' },
+        { value: join(projectRoot, 'mysql.exe'), source: 'project' },
         { value: 'mysql', source: 'system' },
         { value: 'mariadb', source: 'system' },
       ])
@@ -298,7 +292,7 @@ export class ProjectEnvironmentManager {
     const override = kind === 'node' ? this.nodeBinaryOverride : kind === 'java' ? this.javaBinaryOverride : this.pythonBinaryOverride
     if (override) return await resolveCommandPath(override, 'external')
     const projectBinary = kind === 'node' ? this.toolchainBinaries.node : kind === 'java' ? this.toolchainBinaries.java : this.toolchainBinaries.python
-    const systemBinary = kind === 'node' ? 'node' : kind === 'java' ? 'java' : process.platform === 'win32' ? 'py' : 'python3'
+    const systemBinary = kind === 'node' ? 'node' : kind === 'java' ? 'java' : 'py'
     return await firstExistingExecutable([
       ...(projectBinary ? [{ value: projectBinary, source: 'project' as const }] : []),
       { value: systemBinary, source: 'system' },
@@ -308,7 +302,7 @@ export class ProjectEnvironmentManager {
   private async runtimeVersion(kind: 'node' | 'java' | 'python', binary: ExecutableCandidate | null) {
     if (!binary) return { binary: kind, source: 'missing' as const, available: false, detail: '未检测到' }
     try {
-      const launcher = kind === 'python' && process.platform === 'win32' && basename(binary.path).toLowerCase() === 'py.exe' ? ['-3'] : []
+      const launcher = kind === 'python' && basename(binary.path).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
       const result = await command(binary.path, [...launcher, kind === 'java' ? '-version' : '--version'], { timeout: 5_000 })
       const detail = `${result.stdout} ${result.stderr}`.replace(/\s+/g, ' ').trim() || '已检测'
       const version = detail.match(/\d+(?:\.\d+){0,3}/)?.[0] ?? ''
@@ -330,7 +324,6 @@ export class ProjectEnvironmentManager {
   }
 
   private async phpExtensionDir(binary: string) {
-    if (process.platform !== 'win32') return undefined
     const sibling = join(dirname(binary), 'ext')
     if (await directoryExists(sibling)) return sibling
     try {
@@ -403,20 +396,12 @@ export class ProjectEnvironmentManager {
     if (await directoryExists(join(this.mysqlDataDir, 'mysql'))) return
     if (basename(server).toLowerCase().startsWith('mariadbd')) {
       const baseDir = baseDirFor(server)
-      const installer = await firstExistingExecutable(process.platform === 'win32'
-        ? [
-          { value: join(baseDir, 'bin', 'mariadb-install-db.exe'), source: 'project' },
-          { value: join(baseDir, 'bin', 'mysql_install_db.exe'), source: 'project' },
-        ]
-        : [
-          { value: join(baseDir, 'scripts', 'mariadb-install-db'), source: 'project' },
-          { value: join(baseDir, 'bin', 'mariadb-install-db'), source: 'project' },
-          { value: join(baseDir, 'scripts', 'mysql_install_db'), source: 'project' },
-        ])
+      const installer = await firstExistingExecutable([
+        { value: join(baseDir, 'bin', 'mariadb-install-db.exe'), source: 'project' },
+        { value: join(baseDir, 'bin', 'mysql_install_db.exe'), source: 'project' },
+      ])
       if (!installer) throw new Error('MariaDB 发行包缺少数据目录初始化工具。')
-      const args = process.platform === 'win32'
-        ? [`--datadir=${this.mysqlDataDir}`]
-        : ['--no-defaults', `--basedir=${baseDir}`, `--datadir=${this.mysqlDataDir}`, '--auth-root-authentication-method=normal', '--skip-test-db']
+      const args = [`--datadir=${this.mysqlDataDir}`]
       await command(installer.path, args, { timeout: 120_000 })
       return
     }
@@ -572,7 +557,7 @@ export class ProjectEnvironmentManager {
       mysql: { source: 'missing' as const, available: false, managed: false, detail: '尚未准备项目运行环境' },
       node: { binary: this.nodeBinaryOverride ?? 'node', source: 'missing' as const, available: false, detail: '尚未准备项目运行环境' },
       java: { binary: this.javaBinaryOverride ?? 'java', source: 'missing' as const, available: false, detail: '尚未准备项目运行环境' },
-      python: { binary: this.pythonBinaryOverride ?? (process.platform === 'win32' ? 'py' : 'python3'), source: 'missing' as const, available: false, detail: '尚未准备项目运行环境' },
+      python: { binary: this.pythonBinaryOverride ?? 'py', source: 'missing' as const, available: false, detail: '尚未准备项目运行环境' },
     }
   }
 

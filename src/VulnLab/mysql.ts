@@ -76,7 +76,7 @@ const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``
 const mysqlString = (value: string) => `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\0', '')}'`
 
 export const mysqlClientArguments = (binary: string): string[] => {
-  if (process.platform !== 'win32' || !/[\\/]/.test(binary)) return []
+  if (!/[\\/]/.test(binary)) return []
   const binDir = dirname(binary)
   const baseDir = basename(binDir).toLowerCase() === 'bin' ? dirname(binDir) : binDir
   const pluginDir = join(baseDir, 'lib', 'plugin')

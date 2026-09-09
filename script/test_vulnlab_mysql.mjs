@@ -11,7 +11,7 @@ try {
   await mkdir(join(clientRoot, 'lib', 'plugin'), { recursive: true })
   const clientBinary = join(clientRoot, 'bin', 'mariadb.exe')
   const pluginArguments = mysqlClientArguments(clientBinary)
-  assert.deepEqual(pluginArguments, process.platform === 'win32' ? [`--plugin-dir=${join(clientRoot, 'lib', 'plugin')}`] : [])
+  assert.deepEqual(pluginArguments, [`--plugin-dir=${join(clientRoot, 'lib', 'plugin')}`])
 } finally {
   await rm(clientRoot, { recursive: true, force: true })
 }

@@ -11,7 +11,7 @@
 - `providers.ts`：`native-php`、`native-node`、`native-java`、`native-python` 生命周期；XVWA 与其他 PHP 靶场共用 `native-php`。
 - `runtime-prep.ts`：PyGoat 私有 Python 环境与依赖准备。
 - `runtime-status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
-- `runtime-toolchains.ts`：按平台选择官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
+- `runtime-toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
@@ -51,7 +51,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 ## 项目运行环境
 
-启动时，VulnLab 会在 `data/runtime/` 创建运行状态。用户点击“启动环境”后，Windows x64 会自动准备当前靶场需要的 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 或 Python 3.11.16；Linux x64 按需准备 Node.js、MariaDB、Java 和 Python。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，准备通过临时目录原子切换；成功后压缩包立即清理。
+启动时，VulnLab 会在 `data/runtime/` 创建运行状态。用户点击“启动环境”后，Windows x64 会自动准备当前靶场需要的 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 或 Python 3.11.16。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，准备通过临时目录原子切换；成功后压缩包立即清理。
 
 运行时目录结构为 `toolchains/`、`manifests/`、`downloads/`、`php/` 和 `mysql/`。PHP 使用项目生成的 `php.ini`；Windows 会启用发行包内存在的 `mysqli`、`pdo_mysql`、`mbstring`、`gd`、`curl`、`openssl` 扩展。MariaDB 只绑定 `127.0.0.1`，默认端口 `7330`，数据、日志、PID 和随机管理凭据均留在项目数据目录，服务关闭时回收进程。
 
@@ -81,10 +81,10 @@ npm run build
 npm run smoke:toolchains
 ```
 
-该回归在全新临时目录完成“官方下载 → SHA-256 → 安全解压 → Node.js → PHP mysqli → MariaDB 连接 → Java 启动 → Python venv/pip → 停止回收”，随后删除临时目录。`npm test` 另外覆盖 Linux TAR.XZ 解压 fixture 和原生 systemd 部署文件契约；这些 fixture 与契约检查不等同于 Linux 或 macOS 实机运行验收。
+该回归在全新临时目录完成“官方下载 → SHA-256 → 安全解压 → Node.js → PHP mysqli → MariaDB 连接 → Java 启动 → Python venv/pip → 停止回收”，随后删除临时目录。`npm test` 使用 Windows ZIP/TGZ fixture 和 Provider 契约完成快速回归。
 
 ## 生产配置
 
 生产环境必须显式设置管理员密码和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。VulnLab 只保留一个最高权限管理员账号，会话保存在 SQLite；Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录失败有持久化速率限制。
 
-部署说明见 [`operations/deploy/vulnlab/native/README.zh-CN.md`](../../operations/deploy/vulnlab/native/README.zh-CN.md)。
+当前仅维护 Windows x64 本地启动流程，不提供独立服务器部署入口。

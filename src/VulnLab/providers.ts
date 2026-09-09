@@ -200,20 +200,15 @@ type TerminatePid = (pid: number) => Promise<void>
 
 const terminatePid: TerminatePid = async pid => {
   if (!Number.isInteger(pid) || pid <= 0 || !processAlive(pid)) return
-  if (process.platform === 'win32') {
-    await new Promise<void>(resolveTerminate => {
-      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
-      killer.once('error', () => resolveTerminate())
-      killer.once('exit', () => resolveTerminate())
-    })
-  } else {
-    try { process.kill(pid, 'SIGTERM') } catch { return }
-  }
+  const killProcessTree = () => new Promise<void>(resolveTerminate => {
+    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    killer.once('error', () => resolveTerminate())
+    killer.once('exit', () => resolveTerminate())
+  })
+  await killProcessTree()
   const deadline = Date.now() + 3_000
   while (Date.now() < deadline && processAlive(pid)) await sleep(80)
-  if (processAlive(pid)) {
-    try { process.kill(pid, 'SIGKILL') } catch { /* process exited between probes */ }
-  }
+  if (processAlive(pid)) await killProcessTree()
 }
 
 const removeTree = async (root: string) => {
@@ -939,9 +934,7 @@ export class NativeProcessProvider implements LabProvider {
     }
     const manage = await findExistingFile(root, ['manage.py'])
     if (!manage) throw new ProviderError('NATIVE_PYTHON_ENTRY_NOT_FOUND', 'PyGoat 源码缺少 manage.py。', 409)
-    const venvPython = process.platform === 'win32'
-      ? await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/Scripts/python.exe'])
-      : await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/bin/python'])
+    const venvPython = await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/Scripts/python.exe'])
     const settingsPath = join(root, 'pygoat', 'settings.py')
     let settings = await readFile(settingsPath, 'utf8').catch(() => '')
     if (!settings) throw new ProviderError('NATIVE_PYTHON_SETTINGS_NOT_FOUND', 'PyGoat 缺少 Django 设置文件。', 409)
@@ -952,7 +945,7 @@ export class NativeProcessProvider implements LabProvider {
     settings += `\nALLOWED_HOSTS = ['*']\nCSRF_TRUSTED_ORIGINS = [${JSON.stringify(trustedOrigin)}]\n`
     await writeFile(settingsPath, settings, 'utf8')
     const binary = venvPython ?? input.runtime.pythonBinary
-    const prefix = !venvPython && process.platform === 'win32' && basename(input.runtime.pythonBinary).toLowerCase() === 'py' ? ['-3'] : []
+    const prefix = !venvPython && basename(input.runtime.pythonBinary).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
     await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root)
     return {
       binary,
@@ -999,7 +992,7 @@ export class NativeProcessProvider implements LabProvider {
       },
     })
     if ((await stat(modulesRoot).catch(() => null))?.isDirectory()) {
-      await symlink(modulesRoot, join(runtimeRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+      await symlink(modulesRoot, join(runtimeRoot, 'node_modules'), 'junction')
     }
   }
 

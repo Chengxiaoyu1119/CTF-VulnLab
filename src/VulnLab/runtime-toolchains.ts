@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, createReadStream, mkdirSync, openSync, writeSync } from 'node:fs'
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate'
 
@@ -35,12 +35,12 @@ export interface RuntimeToolchainPackage {
   id: RuntimeToolchainId
   label: string
   version: string
-  platform: NodeJS.Platform
-  arch: string
+  platform: 'win32'
+  arch: 'x64'
   url: string
   sha256: string
   filename: string
-  kind: 'zip' | 'tgz' | 'txz'
+  kind: 'zip' | 'tgz'
   stripComponents: number
   maxArchiveBytes: number
   maxExtractedBytes: number
@@ -62,8 +62,6 @@ interface InstalledRuntimeManifest {
 }
 
 interface RuntimeToolchainInstallerOptions {
-  platform?: NodeJS.Platform
-  arch?: string
   packages?: RuntimeToolchainPackage[]
   fetchImpl?: typeof fetch
 }
@@ -110,21 +108,6 @@ const defaultPackages: RuntimeToolchainPackage[] = [
     executables: { php: 'php.exe' },
   },
   {
-    id: 'node',
-    label: 'Node.js',
-    version: '22.23.1',
-    platform: 'linux',
-    arch: 'x64',
-    url: 'https://nodejs.org/dist/v22.23.1/node-v22.23.1-linux-x64.tar.xz',
-    sha256: '9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578',
-    filename: 'node-v22.23.1-linux-x64.tar.xz',
-    kind: 'txz',
-    stripComponents: 1,
-    maxArchiveBytes: 64 * 1024 ** 2,
-    maxExtractedBytes: 256 * 1024 ** 2,
-    executables: { node: 'bin/node' },
-  },
-  {
     id: 'mariadb',
     label: 'MariaDB',
     version: '11.4.10',
@@ -168,51 +151,6 @@ const defaultPackages: RuntimeToolchainPackage[] = [
     maxArchiveBytes: 96 * 1024 ** 2,
     maxExtractedBytes: 256 * 1024 ** 2,
     executables: { python: 'python.exe' },
-  },
-  {
-    id: 'mariadb',
-    label: 'MariaDB',
-    version: '11.4.10',
-    platform: 'linux',
-    arch: 'x64',
-    url: 'https://dlm.mariadb.com/4574296/MariaDB/mariadb-11.4.10/bintar-linux-systemd-x86_64/mariadb-11.4.10-linux-systemd-x86_64.tar.gz',
-    sha256: '9bb5b4292201eb64617ff5286be25a6e9b76dc2898a8fa27a994e27f80ac28ac',
-    filename: 'mariadb-11.4.10-linux-systemd-x86_64.tar.gz',
-    kind: 'tgz',
-    stripComponents: 1,
-    maxArchiveBytes: 512 * 1024 ** 2,
-    maxExtractedBytes: 2 * 1024 ** 3,
-    executables: { mysqlClient: 'bin/mariadb', mysqlServer: 'bin/mariadbd' },
-  },
-  {
-    id: 'java',
-    label: 'Eclipse Temurin JRE',
-    version: '21.0.12.1',
-    platform: 'linux',
-    arch: 'x64',
-    url: 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_linux_hotspot_21.0.12.1_1.tar.gz',
-    sha256: '2413149700df0f7d440500a84a8f764c535f21e5a5e87d38328b64eec2c5b500',
-    filename: 'OpenJDK21U-jre_x64_linux_hotspot_21.0.12.1_1.tar.gz',
-    kind: 'tgz',
-    stripComponents: 1,
-    maxArchiveBytes: 96 * 1024 ** 2,
-    maxExtractedBytes: 256 * 1024 ** 2,
-    executables: { java: 'bin/java' },
-  },
-  {
-    id: 'python',
-    label: 'Python',
-    version: '3.11.16',
-    platform: 'linux',
-    arch: 'x64',
-    url: 'https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.11.16%2B20260814-x86_64-unknown-linux-gnu-install_only.tar.gz',
-    sha256: '33994fad90145ba559ebbe8a18d69fa7e56653502f7ba14ba07199b52cde3775',
-    filename: 'cpython-3.11.16+20260814-x86_64-unknown-linux-gnu-install_only.tar.gz',
-    kind: 'tgz',
-    stripComponents: 1,
-    maxArchiveBytes: 96 * 1024 ** 2,
-    maxExtractedBytes: 256 * 1024 ** 2,
-    executables: { python: 'bin/python3' },
   },
 ]
 
@@ -278,7 +216,7 @@ const extractZip = async (archivePath: string, targetRoot: string, input: Runtim
       return
     }
     const target = safeTarget(targetRoot, segments)
-    const key = process.platform === 'win32' ? target.toLowerCase() : target
+    const key = target.toLowerCase()
     if (targets.has(key)) throw new RuntimeToolchainError(`运行时压缩包包含重复路径：${segments.join('/')}。`)
     targets.add(key)
     fileCount += 1
@@ -313,16 +251,14 @@ const extractZip = async (archivePath: string, targetRoot: string, input: Runtim
 }
 
 const extractTar = async (archivePath: string, targetRoot: string, input: RuntimeToolchainPackage) => {
-  const compression = input.kind === 'txz' ? 'J' : 'z'
-  const listing = await command('tar', [`-t${compression}f`, archivePath])
+  const listing = await command('tar', ['-tzf', archivePath])
   const entries = listing.stdout.split(/\r?\n/).filter(Boolean)
   if (!entries.length || entries.length > MAX_FILES) throw new RuntimeToolchainError('运行时 TAR 文件数量异常。')
   for (const entry of entries) safeSegments(entry)
   await command('tar', [
-    `-x${compression}f`, archivePath,
+    '-xzf', archivePath,
     '-C', targetRoot,
     `--strip-components=${input.stripComponents}`,
-    ...(process.platform === 'win32' ? [] : ['--no-same-owner', '--no-same-permissions']),
   ])
   const totalBytes = await directorySize(targetRoot)
   if (totalBytes > input.maxExtractedBytes) throw new RuntimeToolchainError('运行时解压内容超过大小上限。')
@@ -339,8 +275,6 @@ const readManifest = async (path: string) => {
 
 export class RuntimeToolchainInstaller {
   private readonly runtimeDir: string
-  private readonly platform: NodeJS.Platform
-  private readonly arch: string
   private readonly packages: RuntimeToolchainPackage[]
   private readonly fetchImpl: typeof fetch
   private statuses: RuntimeToolchainStatus[] = []
@@ -348,9 +282,7 @@ export class RuntimeToolchainInstaller {
 
   constructor(runtimeDir: string, options: RuntimeToolchainInstallerOptions = {}) {
     this.runtimeDir = resolve(runtimeDir)
-    this.platform = options.platform ?? process.platform
-    this.arch = options.arch ?? process.arch
-    this.packages = (options.packages ?? defaultPackages).filter(item => item.platform === this.platform && item.arch === this.arch)
+    this.packages = options.packages ?? defaultPackages
     this.fetchImpl = options.fetchImpl ?? fetch
   }
 
@@ -461,7 +393,6 @@ export class RuntimeToolchainInstaller {
       for (const relativePath of Object.values(input.executables).filter((value): value is string => Boolean(value))) {
         const executable = join(stagingRoot, relativePath)
         if (!await fileExists(executable)) throw new RuntimeToolchainError(`${input.label} 缺少启动文件 ${relativePath}。`)
-        if (input.platform !== 'win32') await chmod(executable, 0o755)
       }
       await rm(finalRoot, { recursive: true, force: true })
       await rename(stagingRoot, finalRoot)
@@ -537,7 +468,7 @@ export class RuntimeToolchainInstaller {
   }
 
   platformLabel() {
-    return `${this.platform}/${this.arch}`
+    return 'win32/x64'
   }
 }
 
