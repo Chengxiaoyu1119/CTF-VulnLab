@@ -35,6 +35,10 @@ try {
   const revoked = database.createInvitation('revoked-invite-fixture', 'revoked-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(database.revokeInvitation(revoked.id), true)
   assert.equal(database.registerUserWithInvitation('revoked-student', 'scrypt-fixture-hash', 'revoked-code-hash-fixture'), 'invalid_invitation')
+  const expiredInvitation = database.createInvitation('expired-invite-fixture', 'expired-code-hash-fixture', 'vulnlab', new Date(Date.now() - 1_000).toISOString())
+  assert.equal(database.registerUserWithInvitation('expired-student', 'scrypt-fixture-hash', 'expired-code-hash-fixture'), 'invalid_invitation')
+  assert.equal(database.revokeInvitation(expiredInvitation.id), true)
+  assert.equal(database.revokeInvitation(expiredInvitation.id), false)
 
   const lab = database.getLabBySlug('upload-labs')
   assert.ok(lab)

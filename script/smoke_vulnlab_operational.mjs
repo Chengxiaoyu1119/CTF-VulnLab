@@ -48,6 +48,32 @@ const stopServer = async child => {
   await Promise.race([exited, wait(5000).then(() => { child.kill(); return undefined })])
 }
 
+const assertStartupRejected = async ({ port, dataDir, overrides = {} }) => {
+  const env = {
+    ...process.env,
+    NODE_ENV: 'production',
+    VULNLAB_HOST: '127.0.0.1',
+    VULNLAB_PORT: String(port),
+    VULNLAB_DATA_DIR: dataDir,
+    VULNLAB_AUTO_INSTALL_BUILTINS: '0',
+    VULNLAB_MYSQLD_BIN: 'vulnlab-test-missing-mysqld',
+    ...overrides,
+  }
+  const child = spawn(process.execPath, [serverPath], { cwd: appDir, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', chunk => { stderr += String(chunk) })
+  const result = await Promise.race([
+    new Promise(resolvePromise => child.once('exit', (code, signal) => resolvePromise({ code, signal }))),
+    wait(10_000).then(() => null),
+  ])
+  if (!result) {
+    child.kill('SIGTERM')
+    throw new Error(`VulnLab accepted invalid production configuration on ${port}`)
+  }
+  assert.notEqual(result.code, 0, `VulnLab unexpectedly accepted invalid production configuration: ${stderr}`)
+  return stderr
+}
+
 const seedRelocatedState = async dataDir => {
   const { VulnLabDatabase } = await import(new URL('../src/dist/db.js', import.meta.url))
   const database = new VulnLabDatabase(dataDir)
@@ -127,10 +153,14 @@ try {
   const session = await login(server.baseUrl)
   const invitation = await request(server.baseUrl, '/api/auth/invitations', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.match(invitation.body.code, /^[A-Za-z0-9_-]{32}$/)
+  let audits = (await request(server.baseUrl, '/api/audit', { headers: { cookie: session.cookie } })).body
+  assert.ok(audits.some(item => item.action === 'invitation.create' && item.detail === invitation.body.id))
   const registeredUserName = 'student-' + Date.now()
   const registration = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: registeredUserName, password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: invitation.body.code }) })
   assert.equal(registration.status, 200)
   assert.deepEqual(await registration.json(), { ok: true, message: '注册成功' })
+  audits = (await request(server.baseUrl, '/api/audit', { headers: { cookie: session.cookie } })).body
+  assert.ok(audits.some(item => item.action === 'register' && item.actor === registeredUserName))
   const registeredLogin = await fetch(server.baseUrl + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: registeredUserName, password: 'Student-2026!' }) })
   assert.equal(registeredLogin.status, 200)
   assert.equal((await registeredLogin.json()).userName, registeredUserName)
@@ -144,9 +174,14 @@ try {
   assert.deepEqual(await reservedRegistration.json(), unavailableBody)
   const reusedInvitation = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'second-student', password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: invitation.body.code }) })
   assert.equal(reusedInvitation.status, 400)
+  const malformedInvitation = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'malformed-student', password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: 'x'.repeat(129) }) })
+  assert.equal(malformedInvitation.status, 400)
+  assert.deepEqual(await malformedInvitation.json(), { code: 'INVALID_INVITATION', message: '邀请码无效。' })
   const revocableInvitation = await request(server.baseUrl, '/api/auth/invitations', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   const revoke = await fetch(server.baseUrl + '/api/auth/invitations/' + revocableInvitation.body.id, { method: 'DELETE', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.equal(revoke.status, 200)
+  audits = (await request(server.baseUrl, '/api/audit', { headers: { cookie: session.cookie } })).body
+  assert.ok(audits.some(item => item.action === 'invitation.revoke' && item.detail === revocableInvitation.body.id))
   const revokedRegistration = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'revoked-student', password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: revocableInvitation.body.code }) })
   assert.equal(revokedRegistration.status, 400)
   const sessionCookiePath = getCookiePath(session.setCookie)
@@ -212,6 +247,12 @@ try {
   await stopServer(server.child)
 
   const productionDir = join(root, 'production')
+  const invalidProductionOutput = await assertStartupRejected({
+    port: 6745,
+    dataDir: join(root, 'invalid-production'),
+    overrides: { VULNLAB_COOKIE_SECRET: 'short', VULNLAB_ADMIN_PASSWORD: 'ProductionAdmin-2026!' },
+  })
+  assert.match(invalidProductionOutput, /VULNLAB_COOKIE_SECRET/)
   server = await startServer({ port: 6743, dataDir: productionDir, nodeEnv: 'production', production: true })
   const productionLogin = await fetch(`${server.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'vulnlab', password: 'ProductionAdmin-2026!' }) })
   assert.equal(productionLogin.status, 200)
@@ -230,4 +271,4 @@ try {
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 }
 
-console.log('VulnLab operational smoke passed: SQLite sessions, runtime readiness guard, secure production cookie and persistent login limit.')
+console.log('VulnLab operational smoke passed: invitation lifecycle and audit, SQLite sessions, runtime readiness guard, secure production cookie and persistent login limit.')

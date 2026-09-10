@@ -25,9 +25,11 @@ def main() -> None:
         page.add_init_script(
             """window.__vulnlabLoginAnimationStarts = 0;
             window.__vulnlabLoginNoticeAnimationStarts = 0;
+            window.__vulnlabLoginFieldErrorAnimationStarts = 0;
             document.addEventListener('animationstart', event => {
                 if (event.animationName === 'login-form-in') window.__vulnlabLoginAnimationStarts += 1
                 if (event.animationName === 'login-notice-in') window.__vulnlabLoginNoticeAnimationStarts += 1
+                if (event.animationName === 'login-field-error-in') window.__vulnlabLoginFieldErrorAnimationStarts += 1
             }, true)"""
         )
         console_errors: list[str] = []
@@ -47,6 +49,12 @@ def main() -> None:
         expect(page.locator(".login-field-error")).to_have_count(2)
         expect(page.locator('[data-field-error="userName"]')).to_contain_text("请输入账号")
         expect(page.locator('[data-field-error="password"]')).to_contain_text("请输入密码")
+        page.wait_for_timeout(50)
+        assert page.evaluate("window.__vulnlabLoginFieldErrorAnimationStarts >= 2")
+        field_error_animation = page.locator(".login-field-error").first.evaluate(
+            "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
+        )
+        assert field_error_animation == {"animationName": "login-field-error-in", "animationDuration": "0.32s"}, field_error_animation
         expect(page.locator("#login-notice")).to_have_count(0)
         expect(page.get_by_label("账号", exact=True)).to_have_attribute("aria-describedby", "login-error-field-userName")
         expect(page.get_by_label("密码", exact=True)).to_have_attribute("aria-describedby", "login-error-field-password")
@@ -98,6 +106,8 @@ def main() -> None:
         expect(page.get_by_role("button", name="注册账号", exact=True)).to_be_enabled()
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_count(1)
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_attribute("viewBox", "0 0 1024 1024")
+        page.wait_for_timeout(520)
+        assert page.evaluate("window.__vulnlabLoginAnimationStarts >= 2")
         page.get_by_role("button", name="注册账号", exact=True).click()
         expect(page.locator("#login-error")).to_have_count(0)
         expect(page.locator(".login-field-error")).to_have_count(4)
@@ -105,6 +115,8 @@ def main() -> None:
         expect(page.locator('[data-field-error="password"]')).to_contain_text("请输入密码")
         expect(page.locator('[data-field-error="passwordConfirm"]')).to_contain_text("请确认密码")
         expect(page.locator('[data-field-error="inviteCode"]')).to_contain_text("请输入邀请码")
+        page.wait_for_timeout(50)
+        assert page.evaluate("window.__vulnlabLoginFieldErrorAnimationStarts >= 6")
         page.screenshot(path=str(OUTPUT_DIR / "register-validation-desktop.png"), full_page=True)
         assert not register_requests
         page.get_by_label("账号", exact=True).fill("new-user")
@@ -838,8 +850,10 @@ def main() -> None:
         reduced_page.emulate_media(reduced_motion="reduce")
         reduced_page.add_init_script(
             """window.__vulnlabReducedLoginAnimationStarts = 0;
+            window.__vulnlabReducedFieldErrorAnimationStarts = 0;
             document.addEventListener('animationstart', event => {
                 if (event.animationName === 'login-form-in') window.__vulnlabReducedLoginAnimationStarts += 1
+                if (event.animationName === 'login-field-error-in') window.__vulnlabReducedFieldErrorAnimationStarts += 1
             }, true)"""
         )
         reduced_page.goto(BASE_URL, wait_until="networkidle")
@@ -849,6 +863,14 @@ def main() -> None:
         )
         assert reduced_login_animation == {"animationName": "login-form-in", "animationDuration": "0.5s"}, reduced_login_animation
         assert reduced_page.evaluate("window.__vulnlabReducedLoginAnimationStarts >= 1")
+        reduced_page.get_by_role("button", name="登录系统", exact=True).click()
+        expect(reduced_page.locator(".login-field-error")).to_have_count(2)
+        reduced_page.wait_for_timeout(50)
+        assert reduced_page.evaluate("window.__vulnlabReducedFieldErrorAnimationStarts >= 2")
+        reduced_field_error_animation = reduced_page.locator(".login-field-error").first.evaluate(
+            "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
+        )
+        assert reduced_field_error_animation == {"animationName": "login-field-error-in", "animationDuration": "0.32s"}, reduced_field_error_animation
         reduced_page.close()
         reduced_context.close()
         assert not console_errors, console_errors
