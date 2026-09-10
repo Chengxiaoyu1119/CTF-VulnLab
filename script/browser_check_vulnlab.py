@@ -244,6 +244,7 @@ def main() -> None:
         expect(page.locator(".labs-screen")).to_be_visible()
         expect(page.locator(".workspace-account")).to_have_count(0)
         expect(page.get_by_role("button", name="vulnlab", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="邀请码管理", exact=True)).to_be_visible()
         page.set_viewport_size({"width": 390, "height": 844})
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
@@ -318,6 +319,23 @@ def main() -> None:
         page.keyboard.press("Escape")
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
         expect(notice_detail_trigger).to_be_focused()
+        admin_trigger = page.get_by_role("button", name="邀请码管理", exact=True)
+        admin_trigger.click()
+        expect(page.get_by_role("dialog", name="邀请码管理")).to_be_visible()
+        expect(page.get_by_text("当前没有可用的邀请码。", exact=True)).to_be_visible()
+        page.get_by_role("button", name="生成邀请码", exact=True).click()
+        invitation_code = page.locator(".invitation-card code")
+        expect(invitation_code).to_have_count(1)
+        assert len(invitation_code.inner_text()) == 32
+        page.get_by_role("button", name="复制邀请码", exact=True).click()
+        expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
+        page.get_by_role("button", name="撤销", exact=True).click()
+        expect(page.get_by_role("dialog", name="撤销邀请码")).to_be_visible()
+        page.get_by_role("button", name="撤销邀请码", exact=True).click()
+        expect(page.locator(".invitation-card")).to_have_count(0)
+        page.get_by_role("button", name="关闭邀请码管理", exact=True).click()
+        expect(admin_trigger).to_be_focused()
+        expect(page.locator(".toast")).to_have_count(0, timeout=5000)
         poll_requests = {"count": 0}
 
         def track_detail_poll(route, request):
@@ -344,6 +362,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .lab-workspace-head")).to_have_count(0)
         expect(page.locator(".workspace-account")).to_have_count(0)
+        expect(page.get_by_role("button", name="邀请码管理", exact=True)).to_be_visible()
         expect(page.locator(".lab-card-head")).to_have_count(0)
         expect(page.locator(".lab-card-status")).to_have_count(0)
         expect(page.locator(".lab-card-title")).to_have_count(9)
@@ -415,7 +434,7 @@ def main() -> None:
         desktop_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(desktop_columns.split()) == 3, desktop_columns
         workspace_display = page.locator(".labs-screen").evaluate("element => getComputedStyle(element).display")
-        assert workspace_display == "block", workspace_display
+        assert workspace_display == "flex", workspace_display
         screen_box = page.locator(".labs-screen").bounding_box()
         assert screen_box and abs(screen_box["x"] - 160) <= 1 and abs(screen_box["y"] - 90) <= 1, screen_box
         assert screen_box and abs(screen_box["width"] - 1120) <= 1 and abs(screen_box["height"] - 720) <= 1, screen_box

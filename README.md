@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | --- | --- |
 | `vulnlab` | `vulnlab` |
 
-管理员登录后可从右上角账号菜单生成 24 小时有效、一次性的邀请码，也可以撤销尚未使用的邀请码。注册账号暂时统一为管理员，不增加独立用户管理页面。生产部署仍需通过 `VULNLAB_ADMIN_PASSWORD` 设置独立管理员密码，并设置 Cookie secret；生产环境不使用本地默认密码。
+管理员登录后可通过工作台右上角的“邀请码管理”入口生成 24 小时有效、一次性的邀请码，也可以复制或撤销尚未使用的邀请码；同一入口提供退出登录。注册账号暂时统一为管理员，不增加独立用户管理页面。生产部署仍需通过 `VULNLAB_ADMIN_PASSWORD` 设置独立管理员密码，并设置 Cookie secret；生产环境不使用本地默认密码。
 
 ## 内置靶场
 
@@ -130,6 +130,7 @@ CTF-VulnLab/
 │  ├─ runtime-status.ts       本机运行依赖检测与启动前校验
 │  ├─ runtime-toolchains.ts   Node.js / PHP / MariaDB / Java / Python 官方运行时下载、校验、安全解压与清单
 │  ├─ project-environment.ts  项目内 PHP 配置与 MariaDB 生命周期
+│  ├─ paths.ts                数据库、靶场、下载与运行实例路径管理
 │  ├─ db.ts                   SQLite 数据层
 │  └─ data/                   本地资源与状态，Git 忽略
 ├─ bundle/                   可选离线发行包目录，不提交到 Git

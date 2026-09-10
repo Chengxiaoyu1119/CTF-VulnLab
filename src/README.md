@@ -15,7 +15,8 @@
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
-- `public/`：原生 JavaScript / CSS 工作台；主界面只呈现靶场卡片，详情弹窗承载启动、打开和实例管理。
+- `public/`：原生 JavaScript / CSS 工作台；主界面呈现靶场卡片，邀请码管理入口和详情弹窗承载管理与实例操作。
+- `paths.ts`：统一生成 SQLite、靶场资源、下载缓存、运行实例和导入任务路径。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
 - `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
 
@@ -88,6 +89,6 @@ npm run smoke:toolchains
 
 ## 生产配置
 
-生产环境必须显式设置管理员密码和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。本地保留默认管理员账号，注册账号必须使用管理员生成的 24 小时一次性邀请码，当前注册账号统一为管理员；账号和邀请码记录保存在 SQLite，密码只保存 scrypt 哈希，邀请码只保存 SHA-256 哈希。Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录和注册失败有持久化速率限制。
+生产环境必须显式设置管理员密码和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。本地保留默认管理员账号，注册账号必须使用管理员在工作台“邀请码管理”入口生成的 24 小时一次性邀请码，当前注册账号统一为管理员；账号和邀请码记录保存在 SQLite，密码只保存 scrypt 哈希，邀请码只保存 SHA-256 哈希。Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录和注册失败有持久化速率限制。
 
 当前仅维护 Windows x64 本地启动流程，不提供独立服务器部署入口。

@@ -46,6 +46,8 @@ const state = {
   toast: null,
   confirm: null,
   labDetailId: null,
+  adminPanelOpen: false,
+  invitation: null,
 }
 
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -160,13 +162,19 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
+function adminKeyIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="15.5" r="3.5"></circle><path d="m11 13 8-8m-2 2 2 2m-5-1 2 2"></path></svg>'
+}
+
 function labsShell() {
   return `<div class="labs-screen">
+    <div class="workspace-toolbar"><button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="邀请码管理" title="邀请码管理">${adminKeyIcon()}</button></div>
     <section class="lab-workspace">
       <main class="lab-canvas" tabindex="-1"></main>
     </section>
     <div data-overlay-slot="success"></div>
     <div data-overlay-slot="toast"></div>
+    <div data-overlay-slot="admin"></div>
     <div data-overlay-slot="detail"></div>
     <div data-overlay-slot="confirm"></div>
   </div>`
@@ -487,10 +495,34 @@ function patchSlot(name, content, { focus = false, key = content } = {}) {
   })
 }
 
+function adminPanel() {
+  if (!state.adminPanelOpen) return ''
+  const invitation = state.invitation
+  const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
+  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-dialog-heading"><div><h2 id="admin-dialog-title">邀请码管理</h2><p>邀请码有效期 24 小时，每个邀请码只能使用一次。</p></div><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭邀请码管理">×</button></div>${invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(invitation.expiresAt)}">有效至 ${esc(date(invitation.expiresAt))}</time></div><code>${esc(invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(invitation.id)}">撤销</button></div></div>` : '<div class="admin-empty-state">当前没有可用的邀请码。</div>'}<div class="dialog-actions"><button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button><button class="button button-quiet" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></section></div>`
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(value); return } catch { /* fall through to the document copy path */ }
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  textarea.remove()
+  if (!copied) throw new Error('copy failed')
+}
+
 function patchOverlays() {
   const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
   patchSlot('success', successNotice, { key: state.successNotice ?? '' })
   patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
+  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? state.invitation ?? 'open' : '' })
   patchSlot('detail', labDetailModal(), { focus: true })
   patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
 }
@@ -499,7 +531,7 @@ function render() {
   if (!state.session || !state.labDetailId) clearDetailPolling()
   document.body.classList.toggle('has-workspace', Boolean(state.session))
   document.body.classList.toggle('has-login-success-notice', Boolean(state.successNotice && state.session))
-  document.body.classList.toggle('has-dialog', Boolean(state.confirm || state.labDetailId))
+  document.body.classList.toggle('has-dialog', Boolean(state.confirm || state.labDetailId || state.adminPanelOpen))
   if (state.loading) {
     app.innerHTML = '<div class="loading-screen" role="status" aria-live="polite"><div class="loading-mark" aria-hidden="true"><span></span><span></span><span></span></div><span>正在打开 VulnLab…</span></div>'
     return
@@ -548,7 +580,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'open-admin-panel', 'close-admin-panel', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -566,6 +598,18 @@ async function runAction(action, element) {
   }
   if (action === 'close-lab-details') {
     state.labDetailId = null
+    render()
+    restoreModalFocus()
+    return
+  }
+  if (action === 'open-admin-panel') {
+    rememberModalFocus(element)
+    state.adminPanelOpen = true
+    render()
+    return
+  }
+  if (action === 'close-admin-panel') {
+    state.adminPanelOpen = false
     render()
     restoreModalFocus()
     return
@@ -616,9 +660,34 @@ async function runAction(action, element) {
     else { render(); restoreModalFocus() }
     return
   }
+  if (action === 'generate-invitation') {
+    beginBusy(action)
+    try {
+      state.invitation = await request('/api/auth/invitations', { method: 'POST' })
+      setToast('邀请码已生成。')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action); render() }
+    return
+  }
+  if (action === 'copy-invitation') {
+    if (!state.invitation?.code) return
+    try {
+      await copyText(state.invitation.code)
+      setToast('邀请码已复制。')
+    } catch { setToast('复制失败，请手动复制邀请码。', 'error') }
+    return
+  }
+  if (action === 'revoke-invitation') {
+    openConfirm('撤销邀请码', '撤销后该邀请码将立即失效。', { action: 'confirm-revoke-invitation', id: element.dataset.id }, '撤销邀请码')
+    return
+  }
+  if (action === 'confirm-revoke-invitation') {
+    beginBusy(action, element.dataset.id)
+    try { await request(`/api/auth/invitations/${element.dataset.id}`, { method: 'DELETE' }); state.invitation = null; setToast('邀请码已撤销。') } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
+    return
+  }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.adminPanelOpen = false; state.invitation = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {
@@ -656,7 +725,7 @@ async function runAction(action, element) {
 app.addEventListener('click', event => {
   const element = event.target.closest?.('[data-action]')
   if (!element) return
-  if (element.dataset.action === 'close-lab-details' && element !== event.target) return
+  if (['close-lab-details', 'close-admin-panel'].includes(element.dataset.action) && element !== event.target) return
   if (element.dataset.action !== 'open-instance-page') event.preventDefault()
   runAction(element.dataset.action, element)
 })

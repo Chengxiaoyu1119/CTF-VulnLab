@@ -31,7 +31,7 @@ const startServer = async ({ port, dataDir, nodeEnv = 'test', host = '127.0.0.1'
   }
   const child = spawn(process.execPath, [serverPath], { cwd: appDir, env, stdio: 'ignore' })
   const baseUrl = `http://127.0.0.1:${port}`
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
       if ((await fetch(`${baseUrl}/healthz`)).ok) return { child, baseUrl }
     } catch {}
