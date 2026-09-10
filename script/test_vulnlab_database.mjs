@@ -18,6 +18,16 @@ try {
   assert.throws(() => paths.lab('bad/slug', 'fixture'), /不是有效的路径片段/)
   assert.throws(() => paths.runtimeInstance('../escape'), /不是有效的路径片段/)
 
+  const invitation = database.createInvitation('invite-fixture', 'code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
+  assert.equal(invitation.usedAt, null)
+  assert.equal(database.registerUserWithInvitation('student-fixture', 'scrypt-fixture-hash', 'code-hash-fixture'), 'created')
+  assert.equal(database.getUser('STUDENT-FIXTURE')?.userName, 'student-fixture')
+  assert.equal(database.getUser('student-fixture')?.passwordHash, 'scrypt-fixture-hash')
+  assert.equal(database.registerUserWithInvitation('another-student', 'scrypt-fixture-hash', 'code-hash-fixture'), 'invalid_invitation')
+  const revoked = database.createInvitation('revoked-invite-fixture', 'revoked-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
+  assert.equal(database.revokeInvitation(revoked.id), true)
+  assert.equal(database.registerUserWithInvitation('revoked-student', 'scrypt-fixture-hash', 'revoked-code-hash-fixture'), 'invalid_invitation')
+
   const lab = database.getLabBySlug('upload-labs')
   assert.ok(lab)
   const manifestFor = (item, localPath, adapterId = 'github-git') => ({

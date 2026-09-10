@@ -103,6 +103,20 @@ const lease = (lifetimeMinutes: number) => {
 type SpawnFunction = typeof spawn
 type PortAllocator = (host: string, start: number, end: number) => Promise<number>
 
+const runtimeEnvironment = (cwd: string, overrides: Record<string, string | undefined> = {}) => {
+  const environment: Record<string, string> = {}
+  for (const key of ['Path', 'PATH', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'ComSpec', 'COMSPEC']) {
+    const value = process.env[key]
+    if (value) environment[key] = value
+  }
+  environment.TEMP = cwd
+  environment.TMP = cwd
+  environment.HOME = cwd
+  environment.USERPROFILE = cwd
+  for (const [key, value] of Object.entries(overrides)) if (value !== undefined) environment[key] = value
+  return environment
+}
+
 export interface NativePhpProviderOptions {
   phpBinary?: string
   commandPrefix?: string[]
@@ -554,7 +568,7 @@ export class NativePhpProvider implements LabProvider {
     try {
       child = this.spawnImpl(input.runtime.phpBinary || this.phpBinary, args, {
         cwd: root,
-        env: { ...process.env, ...environment },
+        env: runtimeEnvironment(root, environment),
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,
@@ -946,7 +960,7 @@ export class NativeProcessProvider implements LabProvider {
     await writeFile(settingsPath, settings, 'utf8')
     const binary = venvPython ?? input.runtime.pythonBinary
     const prefix = !venvPython && basename(input.runtime.pythonBinary).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
-    await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root)
+    await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root, { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'pygoat.settings' })
     return {
       binary,
       args: [...prefix, manage, 'runserver', `${input.runtime.bindHost}:${port}`, '--noreload'],
@@ -956,9 +970,9 @@ export class NativeProcessProvider implements LabProvider {
     }
   }
 
-  private async runCommand(binary: string, args: string[], cwd: string) {
+  private async runCommand(binary: string, args: string[], cwd: string, environment: Record<string, string | undefined> = {}) {
     await new Promise<void>((resolveRun, rejectRun) => {
-      const child = this.spawnImpl(binary, args, { cwd, env: process.env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false })
+      const child = this.spawnImpl(binary, args, { cwd, env: runtimeEnvironment(cwd, environment), stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false })
       let tail = ''
       child.stderr?.setEncoding('utf8')
       child.stderr?.on('data', chunk => { tail = `${tail}${String(chunk)}`.slice(-4_000) })
@@ -1035,7 +1049,7 @@ export class NativeProcessProvider implements LabProvider {
       const command = await this.command(input, runtimeRoot, port, auxiliaryPort)
       child = this.spawnImpl(command.binary, command.args, {
         cwd: command.cwd,
-        env: { ...process.env, ...command.environment },
+        env: runtimeEnvironment(command.cwd, command.environment),
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,

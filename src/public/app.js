@@ -23,6 +23,7 @@ let toastTimer = null
 
 const LOGIN_NOTICE_DURATION = 4200
 const DETAIL_POLL_INTERVAL = 5000
+const accountPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$/
 
 const state = {
   session: null,
@@ -37,11 +38,15 @@ const state = {
   error: '',
   loginErrorFields: [],
   authMode: 'login',
+  authNotice: '',
+  loginUserName: '',
   loginPasswordVisible: false,
   successNotice: null,
   toast: null,
   confirm: null,
   labDetailId: null,
+  accountMenuOpen: false,
+  invitation: null,
 }
 
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -52,9 +57,10 @@ const date = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 const busyFor = (action, id = '') => state.busyActions.some(item => item.action === action && (!id || item.id === id))
 
 class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code = '') {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
@@ -69,7 +75,7 @@ async function request(path, options = {}) {
     throw new ApiError('本地服务连接失败，请确认 VulnLab 服务正在运行。', 0)
   }
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new ApiError(payload.message ?? `请求失败（${response.status}）`, response.status)
+  if (!response.ok) throw new ApiError(payload.message ?? `请求失败（${response.status}）`, response.status, payload.code ?? '')
   return payload
 }
 
@@ -153,8 +159,20 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
+function workspaceAccount() {
+  return `<div class="workspace-account">
+      <button class="workspace-account-trigger" type="button" data-action="toggle-account-menu" aria-expanded="${state.accountMenuOpen}" aria-controls="workspace-account-menu">${esc(state.session.userName)}</button>
+      ${state.accountMenuOpen ? `<div class="workspace-account-menu" id="workspace-account-menu" role="dialog" aria-label="账号操作">
+        <div class="workspace-account-heading"><strong>${esc(state.session.userName)}</strong><span>管理员</span></div>
+        <button class="button button-quiet" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${busyFor('generate-invitation') ? '生成中…' : '生成邀请码'}</button>
+        ${state.invitation ? `<div class="workspace-invitation"><code>${esc(state.invitation.code)}</code><span>有效至 ${esc(date(state.invitation.expiresAt))}</span><div><button class="button button-outline" type="button" data-action="copy-invitation">复制</button><button class="button button-quiet" type="button" data-action="revoke-invitation">撤销</button></div></div>` : ''}
+        <button class="workspace-account-logout" type="button" data-action="logout">退出系统</button>
+      </div>` : ''}</div>`
+}
+
 function labsShell() {
   return `<div class="labs-screen">
+    ${workspaceAccount()}
     <section class="lab-workspace">
       <main class="lab-canvas" tabindex="-1"></main>
     </section>
@@ -262,8 +280,18 @@ function labDetailModal() {
 
 function passwordToggleIcon(visible) {
   return visible
-    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 6.3A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a16.8 16.8 0 0 1-3.1 3.7M6.1 6.9C3.8 8.4 2.5 12 2.5 12S6 18 12 18c1 0 1.9-.2 2.8-.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
-    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.8"/></svg>'
+    ? '<svg viewBox="0 0 1024 1024" aria-hidden="true"><path fill="currentColor" d="M876.8 156.8c0-9.6-3.2-16-9.6-22.4s-12.8-9.6-22.4-9.6-16 3.2-22.4 9.6L736 220.8c-64-32-137.6-51.2-224-60.8-160 16-288 73.6-377.6 176S0 496 0 512s48 73.6 134.4 176c22.4 25.6 44.8 48 73.6 67.2l-86.4 89.6c-6.4 6.4-9.6 12.8-9.6 22.4s3.2 16 9.6 22.4 12.8 9.6 22.4 9.6 16-3.2 22.4-9.6l704-710.4c3.2-6.4 9.6-12.8 9.6-22.4m-646.4 528Q115.2 579.2 76.8 512q43.2-72 153.6-172.8C304 272 400 230.4 512 224c64 3.2 124.8 19.2 176 44.8l-54.4 54.4C598.4 300.8 560 288 512 288c-64 0-115.2 22.4-160 64s-64 96-64 160c0 48 12.8 89.6 35.2 124.8L256 707.2c-9.6-6.4-19.2-16-25.6-22.4m140.8-96Q352 555.2 352 512c0-44.8 16-83.2 48-112s67.2-48 112-48c28.8 0 54.4 6.4 73.6 19.2zM889.599 336c-12.8-16-28.8-28.8-41.6-41.6l-48 48c73.6 67.2 124.8 124.8 150.4 169.6q-43.2 72-153.6 172.8c-73.6 67.2-172.8 108.8-284.8 115.2-51.2-3.2-99.2-12.8-140.8-28.8l-48 48c57.6 22.4 118.4 38.4 188.8 44.8 160-16 288-73.6 377.6-176S1024 528 1024 512s-48.001-73.6-134.401-176"/><path fill="currentColor" d="M511.998 672c-12.8 0-25.6-3.2-38.4-6.4l-51.2 51.2c28.8 12.8 57.6 19.2 89.6 19.2 64 0 115.2-22.4 160-64 41.6-41.6 64-96 64-160 0-32-6.4-64-19.2-89.6l-51.2 51.2c3.2 12.8 6.4 25.6 6.4 38.4 0 44.8-16 83.2-48 112s-67.2 48-112 48"/></svg>'
+    : '<svg viewBox="0 0 1024 1024" aria-hidden="true"><path fill="currentColor" d="M512 160c320 0 512 352 512 352S832 864 512 864 0 512 0 512s192-352 512-352m0 64c-225.28 0-384.128 208.064-436.8 288 52.608 79.872 211.456 288 436.8 288 225.28 0 384.128-208.064 436.8-288-52.608-79.872-211.456-288-436.8-288m0 64a224 224 0 1 1 0 448 224 224 0 0 1 0-448m0 64a160.19 160.19 0 0 0-160 160c0 88.192 71.744 160 160 160s160-71.808 160-160-71.744-160-160-160"/></svg>'
+}
+
+function loginInputIcon(field) {
+  const paths = {
+    user: '<path fill="currentColor" d="M512 512a192 192 0 1 0 0-384 192 192 0 0 0 0 384m0 64a256 256 0 1 1 0-512 256 256 0 0 1 0 512m320 320v-96a96 96 0 0 0-96-96H288a96 96 0 0 0-96 96v96a32 32 0 1 1-64 0v-96a160 160 0 0 1 160-160h448a160 160 0 0 1 160 160v96a32 32 0 1 1-64 0"/>',
+    password: '<path fill="currentColor" d="M224 448a32 32 0 0 0-32 32v384a32 32 0 0 0 32 32h576a32 32 0 0 0 32-32V480a32 32 0 0 0-32-32zm0-64h576a96 96 0 0 1 96 96v384a96 96 0 0 1-96 96H224a96 96 0 0 1-96-96V480a96 96 0 0 1 96-96"/><path fill="currentColor" d="M512 544a32 32 0 0 1 32 32v192a32 32 0 1 1-64 0V576a32 32 0 0 1 32-32m192-160v-64a192 192 0 1 0-384 0v64zM512 64a256 256 0 0 1 256 256v128H256V320A256 256 0 0 1 512 64"/>',
+    confirm: '<path fill="currentColor" d="M406.656 706.944 195.84 496.256a32 32 0 1 0-45.248 45.248l256 256 512-512a32 32 0 0 0-45.248-45.248L406.592 706.944z"/>',
+    invite: '<path fill="currentColor" d="M448 456.064V96a32 32 0 0 1 32-32.064L672 64a32 32 0 0 1 0 64H512v128h160a32 32 0 0 1 0 64H512v128a256 256 0 1 1-64 8.064M512 896a192 192 0 1 0 0-384 192 192 0 0 0 0 384"/>',
+  }
+  return `<span class="login-field-icon" aria-hidden="true"><svg viewBox="0 0 1024 1024">${paths[field] ?? paths.user}</svg></span>`
 }
 
 function passwordToggleMarkup(visible) {
@@ -292,19 +320,49 @@ function loginErrorMarkup() {
   return `<div class="login-form-error" id="login-error" role="alert" aria-live="polite"><span class="login-error-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"></circle><path d="m8.5 8.5 7 7m0-7-7 7"></path></svg></span><span class="login-error-message">${esc(state.error)}</span><button class="login-error-close" type="button" data-action="dismiss-login-error" aria-label="关闭提示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12m0-12L6 18"></path></svg></button></div>`
 }
 
+function loginFieldAttributes(name) {
+  const invalid = state.loginErrorFields.includes(name)
+  return `aria-invalid="${invalid}"${invalid && state.error ? ' aria-describedby="login-error"' : ''}`
+}
+
+function registrationValidation(values) {
+  const userName = typeof values.userName === 'string' ? values.userName.trim() : ''
+  const password = typeof values.password === 'string' ? values.password : ''
+  const passwordConfirm = typeof values.passwordConfirm === 'string' ? values.passwordConfirm : ''
+  const inviteCode = typeof values.inviteCode === 'string' ? values.inviteCode.trim() : ''
+  if (!userName) return { fields: ['userName'], message: '请输入账号' }
+  if (!accountPattern.test(userName)) return { fields: ['userName'], message: '账号需为 3 到 32 位字母、数字、点、下划线或短横线' }
+  if (userName.toLowerCase() === 'vulnlab') return { fields: ['userName'], message: '该账号不可用，请更换账号' }
+  if (!password) return { fields: ['password'], message: '请输入密码' }
+  if (password.length < 8) return { fields: ['password'], message: '密码长度至少为 8 位' }
+  if (!passwordConfirm) return { fields: ['passwordConfirm'], message: '请再次输入密码' }
+  if (password !== passwordConfirm) return { fields: ['passwordConfirm'], message: '两次密码不一致' }
+  if (!inviteCode) return { fields: ['inviteCode'], message: '请输入邀请码' }
+  if (inviteCode.length > 128) return { fields: ['inviteCode'], message: '邀请码无效' }
+  return null
+}
+
+function registrationErrorFields(code) {
+  return {
+    INVALID_USERNAME: ['userName'],
+    INVALID_PASSWORD: ['password'],
+    PASSWORD_MISMATCH: ['passwordConfirm'],
+    INVALID_INVITATION: ['inviteCode'],
+    USER_EXISTS: ['userName'],
+  }[code] ?? []
+}
+
 function loginPage() {
   const registerMode = state.authMode === 'register'
-  const userNameInvalid = state.loginErrorFields.includes('userName')
-  const passwordInvalid = state.loginErrorFields.includes('password')
-  const describedBy = state.error ? 'aria-describedby="login-error"' : ''
   const passwordType = state.loginPasswordVisible ? 'text' : 'password'
   const fields = registerMode
-    ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="false"></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="password" autocomplete="new-password" placeholder="请输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="password"><input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" required aria-invalid="false"></span></label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite"><input id="login-invite-code" name="inviteCode" autocomplete="off" placeholder="请输入邀请码" required aria-invalid="false"></span></label>`
-    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user"><input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required aria-invalid="${userNameInvalid}" ${describedBy}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password"><input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required aria-invalid="${passwordInvalid}" ${describedBy}></span></label>`
+    ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required ${loginFieldAttributes('userName')}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" type="password" autocomplete="new-password" placeholder="请输入密码" required ${loginFieldAttributes('password')}></span></label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="confirm">${loginInputIcon('confirm')}<input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" required ${loginFieldAttributes('passwordConfirm')}></span></label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite">${loginInputIcon('invite')}<input id="login-invite-code" name="inviteCode" autocomplete="off" placeholder="请输入邀请码" required ${loginFieldAttributes('inviteCode')}></span></label>`
+    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" value="${esc(state.loginUserName)}" autocomplete="username" placeholder="请输入账号" required ${loginFieldAttributes('userName')}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required ${loginFieldAttributes('password')}></span></label>`
   const submit = registerMode
-    ? '<button class="button button-primary" type="submit" disabled>注册功能暂未开放</button>'
+    ? `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '注册中…' : '注册账号'}</button>`
     : `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录系统'}</button>`
-  return `<div class="login-page"><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${state.error ? loginErrorMarkup() : ''}${fields}${submit}</form></div>`
+  const authNotice = state.authNotice ? `<p class="login-form-success" role="status" aria-live="polite">${esc(state.authNotice)}</p>` : ''
+  return `<div class="login-page"><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${authNotice}${state.error ? loginErrorMarkup() : ''}${fields}${submit}</form></div>`
 }
 
 function updateLoginFormView() {
@@ -316,13 +374,13 @@ function updateLoginFormView() {
   form.querySelectorAll('input[name]').forEach(input => {
     const invalid = state.loginErrorFields.includes(input.name)
     input.setAttribute('aria-invalid', String(invalid))
-    if (state.error) input.setAttribute('aria-describedby', 'login-error')
+    if (state.error && invalid) input.setAttribute('aria-describedby', 'login-error')
     else input.removeAttribute('aria-describedby')
   })
   const submit = form.querySelector('button[type="submit"]')
   if (submit) {
-    submit.disabled = state.authMode === 'register' || state.busy
-    submit.textContent = state.authMode === 'register' ? '注册功能暂未开放' : state.busy ? '登录中…' : '登录系统'
+    submit.disabled = state.busy
+    submit.textContent = state.authMode === 'register' ? (state.busy ? '注册中…' : '注册账号') : state.busy ? '登录中…' : '登录系统'
   }
 }
 
@@ -408,6 +466,11 @@ function patchLabs() {
   cards.forEach(card => card.remove())
 }
 
+function patchWorkspaceAccount() {
+  const account = app.querySelector('.workspace-account')
+  if (account) account.outerHTML = workspaceAccount()
+}
+
 function patchSlot(name, content, { focus = false, key = content } = {}) {
   const slot = app.querySelector(`[data-overlay-slot="${name}"]`)
   if (slot.__vulnlabKey === key && slot.__vulnlabContent === content) return
@@ -455,6 +518,7 @@ function render() {
   }
   scheduleLoginSuccessNoticeDismiss()
   if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
+  patchWorkspaceAccount()
   patchLabs()
   patchOverlays()
   scheduleImportPolling()
@@ -491,7 +555,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'cancel-confirm', 'toggle-account-menu', 'copy-invitation'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -500,8 +564,58 @@ async function runAction(action, element) {
     return
   }
   if (action === 'nav') { navigate(); return }
+  if (action === 'toggle-account-menu') {
+    state.accountMenuOpen = !state.accountMenuOpen
+    render()
+    window.queueMicrotask(() => {
+      const target = state.accountMenuOpen
+        ? document.querySelector('[data-action="generate-invitation"]')
+        : document.querySelector('.workspace-account-trigger')
+      target?.focus()
+    })
+    return
+  }
+  if (action === 'copy-invitation') {
+    if (!state.invitation?.code) return
+    try {
+      await navigator.clipboard.writeText(state.invitation.code)
+      setToast('邀请码已复制。')
+    } catch {
+      setToast('复制失败，请手动复制邀请码。', 'error')
+    }
+    return
+  }
+  if (action === 'generate-invitation') {
+    beginBusy(action)
+    try {
+      state.invitation = await request('/api/auth/invitations', { method: 'POST' })
+      setToast('邀请码已生成，仅显示本次内容。')
+    } catch (error) {
+      setToast(error.message, 'error')
+    } finally {
+      endBusy(action)
+      render()
+    }
+    return
+  }
+  if (action === 'revoke-invitation') {
+    if (!state.invitation?.id) return
+    beginBusy(action)
+    try {
+      await request(`/api/auth/invitations/${state.invitation.id}`, { method: 'DELETE' })
+      state.invitation = null
+      setToast('邀请码已撤销。')
+    } catch (error) {
+      setToast(error.message, 'error')
+    } finally {
+      endBusy(action)
+      render()
+    }
+    return
+  }
   if (action === 'open-lab-details') {
     if (!state.labs.some(item => item.id === element.dataset.id)) return
+    state.accountMenuOpen = false
     rememberModalFocus(element)
     state.labDetailId = element.dataset.id
     render()
@@ -536,6 +650,7 @@ async function runAction(action, element) {
     if (state.authMode === mode || state.busy) return
     state.authMode = mode
     state.error = ''
+    state.authNotice = ''
     state.loginErrorFields = []
     state.loginPasswordVisible = false
     render()
@@ -553,7 +668,7 @@ async function runAction(action, element) {
   }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; state.accountMenuOpen = false; state.invitation = null; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {
@@ -609,11 +724,38 @@ app.addEventListener('submit', async event => {
   if (form.id === 'login-form' && state.busy) return
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
-    if (state.authMode !== 'login') return
     state.busy = true; state.error = ''; state.loginErrorFields = []
     updateLoginFormView()
     const userName = typeof values.userName === 'string' ? values.userName.trim() : ''
     const password = typeof values.password === 'string' ? values.password : ''
+    state.loginUserName = userName
+    if (state.authMode === 'register') {
+      const validation = registrationValidation(values)
+      if (validation) {
+        state.loginErrorFields = validation.fields
+        state.error = validation.message
+        state.busy = false
+        updateLoginFormView()
+        document.querySelector(`[name="${validation.fields[0]}"]`)?.focus()
+        return
+      }
+      try {
+        await request('/api/auth/register', { method: 'POST', body: JSON.stringify(values) })
+        state.authMode = 'login'
+        state.authNotice = '注册成功，请使用新账号登录'
+        state.busy = false
+        state.loginPasswordVisible = false
+        render()
+        window.queueMicrotask(() => document.querySelector('[name="userName"]')?.focus())
+      } catch (error) {
+        state.error = error.message
+        state.loginErrorFields = registrationErrorFields(error.code)
+        state.busy = false
+        updateLoginFormView()
+        document.querySelector(`[name="${state.loginErrorFields[0] ?? 'userName'}"]`)?.focus()
+      }
+      return
+    }
     const missingFields = [!userName ? 'userName' : null, !password ? 'password' : null].filter(Boolean)
     if (missingFields.length) {
       state.loginErrorFields = missingFields
@@ -627,6 +769,7 @@ app.addEventListener('submit', async event => {
       const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) })
       state.session = session
       state.csrfToken = session.csrfToken
+      state.authNotice = ''
       await refresh()
       state.successNotice = { title: '登录成功', message: '身份验证通过，正在进入系统' }
       state.loginPasswordVisible = false
@@ -652,6 +795,8 @@ app.addEventListener('input', event => {
   const input = event.target
   if (!input.form || input.form.id !== 'login-form') return
   if (input.name === 'password' && state.authMode === 'login') syncPasswordToggle()
+  if (input.name === 'userName') state.loginUserName = input.value
+  if (state.authNotice) { state.authNotice = ''; input.form.querySelector('.login-form-success')?.remove() }
   if (!state.error) return
   state.error = ''
   state.loginErrorFields = []
@@ -668,6 +813,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     if (state.confirm) state.confirm = null
     else if (state.labDetailId) state.labDetailId = null
+    else if (state.accountMenuOpen) state.accountMenuOpen = false
+    else return
     render()
     restoreModalFocus()
     return

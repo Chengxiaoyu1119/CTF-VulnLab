@@ -55,13 +55,13 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 
 ### 3. 登录
 
-本地默认只有一个最高权限管理员账号：
+本地默认管理员账号：
 
 | 账号 | 密码 |
 | --- | --- |
 | `vulnlab` | `vulnlab` |
 
-生产部署仍需通过 `VULNLAB_ADMIN_PASSWORD` 设置独立管理员密码，并设置 Cookie secret；生产环境不使用本地默认密码。
+管理员登录后可从右上角账号菜单生成 24 小时有效、一次性的邀请码，也可以撤销尚未使用的邀请码。注册账号暂时统一为管理员，不增加独立用户管理页面。生产部署仍需通过 `VULNLAB_ADMIN_PASSWORD` 设置独立管理员密码，并设置 Cookie secret；生产环境不使用本地默认密码。
 
 ## 内置靶场
 

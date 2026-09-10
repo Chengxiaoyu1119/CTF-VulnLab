@@ -3,6 +3,20 @@ import assert from 'node:assert/strict'
 const baseUrl = process.env.VULNLAB_BASE_URL ?? 'http://127.0.0.1:6710'
 let cookie = ''
 let csrfToken = ''
+const cookieJar = new Map()
+
+const updateCookies = setCookies => {
+  for (const setCookie of setCookies) {
+    const [pair] = setCookie.split(';', 1)
+    const separator = pair.indexOf('=')
+    if (separator < 1) continue
+    const name = pair.slice(0, separator).trim()
+    const value = pair.slice(separator + 1)
+    if (value) cookieJar.set(name, pair)
+    else cookieJar.delete(name)
+  }
+  cookie = [...cookieJar.values()].join('; ')
+}
 
 const request = async (path, options = {}) => {
   const method = (options.method ?? 'GET').toUpperCase()
@@ -11,7 +25,7 @@ const request = async (path, options = {}) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrfToken && !path.endsWith('/auth/login')) headers['x-csrf-token'] = csrfToken
   const response = await fetch(`${baseUrl}${path}`, { ...options, method, headers })
   const setCookies = response.headers.getSetCookie?.() ?? []
-  if (setCookies.length) cookie = setCookies.map(value => value.split(';', 1)[0]).join('; ')
+  if (setCookies.length) updateCookies(setCookies)
   const payload = await response.json().catch(() => ({}))
   assert.ok(response.ok, `${method} ${path} failed: ${response.status} ${payload.message ?? ''}`)
   return payload
@@ -40,7 +54,7 @@ const webWolfPort = instance => {
 const probeInstance = async (instance, checks) => {
   const results = []
   for (const check of checks) {
-    const response = await fetch(new URL(check.path, instance.endpoint), { redirect: check.redirect })
+    const response = await fetch(new URL(check.path, instance.endpoint), { redirect: check.redirect, headers: cookie ? { cookie } : {} })
     const html = await response.text()
     assert.equal(response.status, 200, `${instance.labId} ${check.path || '/'} probe returned ${response.status}`)
     assert.match(html, check.pattern, `${instance.labId} ${check.path || '/'} response does not match its application shell`)
@@ -48,7 +62,7 @@ const probeInstance = async (instance, checks) => {
     if (check.webwolf) {
       const port = webWolfPort(instance)
       assert.ok(port > 0, 'WebGoat instance did not report a WebWolf port')
-      const webWolfResponse = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' })
+      const webWolfResponse = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual', headers: cookie ? { cookie } : {} })
       assert.ok(webWolfResponse.status >= 100 && webWolfResponse.status < 500, `WebWolf probe returned ${webWolfResponse.status}`)
     }
   }
@@ -57,7 +71,7 @@ const probeInstance = async (instance, checks) => {
 
 const assertEndpointStopped = async (endpoint, label) => {
   try {
-    const response = await fetch(endpoint, { redirect: 'manual' })
+    const response = await fetch(endpoint, { redirect: 'manual', headers: cookie ? { cookie } : {} })
     assert.equal(response.status, 404, `${label} endpoint remained available after stop`)
   } catch (error) {
     assert.equal(error?.cause?.code, 'ECONNREFUSED', `${label} endpoint stop failed: ${error}`)

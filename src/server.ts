@@ -121,6 +121,7 @@ const loginLimit = isProduction ? 10 : 30
 const activeImports = new Map<string, { task: Promise<void>; controller: AbortController }>()
 const pendingStarts = new Map<string, Promise<LabInstance | null>>()
 const activeStarts = new Map<string, Promise<LabInstance>>()
+const runtimeAccessTokens = new Map<string, string>()
 let reapingExpiredInstances = false
 let runtimeStatusCache: { expiresAt: number; value: Awaited<ReturnType<typeof inspectRuntimeDependencies>> } | null = null
 
@@ -242,7 +243,10 @@ const reapExpiredInstances = async () => {
         return
       }
       const expired = database.expireInstance(instance.id, '运行实例已过期，Provider 资源已回收')
-      if (expired) database.addAudit('system', 'instance.expired', expired.labTitle, expired.id)
+      if (expired) {
+        runtimeAccessTokens.delete(expired.id)
+        database.addAudit('system', 'instance.expired', expired.labTitle, expired.id)
+      }
     }))
   } finally {
     reapingExpiredInstances = false
@@ -255,6 +259,7 @@ const expiredInstanceTimer = setInterval(() => {
 expiredInstanceTimer.unref()
 app.addHook('onClose', async () => {
   clearInterval(expiredInstanceTimer)
+  runtimeAccessTokens.clear()
 })
 
 const hashPassword = (password: string, salt: Buffer) => scryptSync(password, salt, 32)
@@ -265,6 +270,28 @@ const sameSecret = (expected: string, actual: string) => {
   const actualHash = hashPassword(actual, salt)
   return timingSafeEqual(expectedHash, actualHash)
 }
+
+const passwordHash = (password: string) => {
+  const salt = randomBytes(16)
+  return `scrypt:${salt.toString('base64url')}:${hashPassword(password, salt).toString('base64url')}`
+}
+
+const samePasswordHash = (stored: string, password: string) => {
+  try {
+    const [algorithm, saltValue, hashValue] = stored.split(':')
+    if (algorithm !== 'scrypt' || !saltValue || !hashValue) return false
+    const salt = Buffer.from(saltValue, 'base64url')
+    const expected = Buffer.from(hashValue, 'base64url')
+    const actual = hashPassword(password, salt)
+    return expected.length === actual.length && timingSafeEqual(expected, actual)
+  } catch {
+    return false
+  }
+}
+
+const invitationHash = (code: string) => createHash('sha256').update(code).digest('hex')
+const accountPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$/
+const invitationLifetimeMs = 24 * 60 * 60 * 1000
 
 const getSession = (request: FastifyRequest): SessionView | null => {
   const rawSessionId = request.cookies.vulnlab_session
@@ -379,11 +406,46 @@ const runtimeRequest = (url: string) => {
   return { id: decodeURIComponent(rawId), suffix: separator === -1 ? '/' : remainder.slice(separator), search: parsed.search }
 }
 
+const runtimeCookieName = (instanceId: string) => `vulnlab_runtime_${instanceId}`
+
+const runtimeAccessCookie = (reply: FastifyReply, instance: LabInstance) => {
+  const path = `/lab-runtime/${instance.id}`
+  if (!instance.endpoint.includes(`${path}/`)) return
+  const token = runtimeAccessTokens.get(instance.id) ?? randomBytes(32).toString('hex')
+  runtimeAccessTokens.set(instance.id, token)
+  const maxAge = Math.max(1, Math.ceil((Date.parse(instance.expiresAt) - Date.now()) / 1000))
+  reply.setCookie(runtimeCookieName(instance.id), token, { path, httpOnly: true, sameSite: 'lax', secure: secureCookies, signed: true, maxAge })
+}
+
+const clearRuntimeAccess = (reply: FastifyReply, instanceId: string) => {
+  runtimeAccessTokens.delete(instanceId)
+  reply.clearCookie(runtimeCookieName(instanceId), { path: `/lab-runtime/${instanceId}` })
+}
+
+const runtimeAccessAllowed = (request: FastifyRequest, instanceId: string) => {
+  const expected = runtimeAccessTokens.get(instanceId)
+  const raw = request.cookies[runtimeCookieName(instanceId)]
+  const actual = raw ? request.unsignCookie(raw) : null
+  if (!expected || !actual?.valid) return false
+  const expectedHash = createHash('sha256').update(expected).digest()
+  const actualHash = createHash('sha256').update(actual.value).digest()
+  return timingSafeEqual(expectedHash, actualHash)
+}
+
+const stripControlCookies = (headers: Record<string, string | string[] | undefined>, instanceId: string) => {
+  const excluded = new Set(['vulnlab_session', runtimeCookieName(instanceId)])
+  if (typeof headers.cookie !== 'string') return
+  const forwarded = headers.cookie.split(';').map(value => value.trim()).filter(value => !excluded.has(value.split('=', 1)[0])).join('; ')
+  if (forwarded) headers.cookie = forwarded
+  else delete headers.cookie
+}
+
 const proxyRuntimeRequest = async (request: FastifyRequest, reply: FastifyReply) => {
   const runtime = runtimeRequest(request.url)
   if (!runtime) return false
   const instance = database.getRunningInstance(runtime.id)
   if (!instance) return reply.code(404).send({ code: 'RUNTIME_NOT_FOUND', message: '运行入口不存在或已经结束。' }), true
+  if (!runtimeAccessAllowed(request, runtime.id)) return reply.code(401).send({ code: 'RUNTIME_ACCESS_REQUIRED', message: '请从已登录的靶场入口进入。' }), true
   const provider = providerRegistry.get(instance.provider)
   if (!provider?.getProxyTarget) return reply.code(404).send({ code: 'RUNTIME_NOT_FOUND', message: '该实例没有可代理的运行入口。' }), true
   const target = provider?.getProxyTarget?.(instance.id)
@@ -393,6 +455,7 @@ const proxyRuntimeRequest = async (request: FastifyRequest, reply: FastifyReply)
   targetUrl.search = runtime.search
   const headers = { ...request.headers }
   for (const header of ['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade']) delete headers[header]
+  stripControlCookies(headers, runtime.id)
   await new Promise<void>(resolveProxy => {
     const upstream = httpRequest({ hostname: targetUrl.hostname, port: Number(targetUrl.port), method: request.method, path: `${targetUrl.pathname}${targetUrl.search}`, headers }, response => {
       const responseHeaders = { ...response.headers }
@@ -652,6 +715,30 @@ app.get('/readyz', async (_request, reply) => {
 
 app.get('/api/auth/session', async request => getSession(request))
 
+app.post('/api/auth/register', async (request, reply) => {
+  const clientKey = createHash('sha256').update(`${cookieSecret}:register:${request.ip || 'unknown'}`).digest('hex')
+  const attempt = database.consumeLoginAttempt(clientKey, loginLimit, loginWindowMs)
+  if (!attempt.allowed) {
+    reply.header('Retry-After', String(attempt.retryAfterSeconds))
+    return reply.code(429).send({ code: 'REGISTER_RATE_LIMITED', message: '注册尝试过于频繁，请稍后再试。' })
+  }
+  const body = requestBody(request)
+  const userName = typeof body.userName === 'string' ? body.userName.trim() : ''
+  const password = typeof body.password === 'string' ? body.password : ''
+  const passwordConfirm = typeof body.passwordConfirm === 'string' ? body.passwordConfirm : ''
+  const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : ''
+  if (!accountPattern.test(userName) || userName.toLowerCase() === defaultAdminUser) return reply.code(400).send({ code: 'INVALID_USERNAME', message: '账号格式不正确。' })
+  if (password.length < 8) return reply.code(400).send({ code: 'INVALID_PASSWORD', message: '密码长度至少为 8 位。' })
+  if (password !== passwordConfirm) return reply.code(400).send({ code: 'PASSWORD_MISMATCH', message: '两次密码不一致。' })
+  if (!inviteCode || inviteCode.length > 128) return reply.code(400).send({ code: 'INVALID_INVITATION', message: '邀请码无效。' })
+  const result = database.registerUserWithInvitation(userName, passwordHash(password), invitationHash(inviteCode))
+  if (result === 'user_exists') return reply.code(409).send({ code: 'USER_EXISTS', message: '账号已存在' })
+  if (result === 'invalid_invitation') return reply.code(400).send({ code: 'INVALID_INVITATION', message: '邀请码无效' })
+  database.clearLoginAttempts(clientKey)
+  database.addAudit(userName, 'register', 'account', '使用邀请码创建账号')
+  return { ok: true, message: '注册成功' }
+})
+
 app.post('/api/auth/login', async (request, reply) => {
   const clientKey = createHash('sha256').update(`${cookieSecret}:${request.ip || 'unknown'}`).digest('hex')
   const attempt = database.consumeLoginAttempt(clientKey, loginLimit, loginWindowMs)
@@ -662,7 +749,12 @@ app.post('/api/auth/login', async (request, reply) => {
   const body = requestBody(request)
   const userName = typeof body.userName === 'string' ? body.userName.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
-  const user = adminAccount.userName === userName && sameSecret(adminAccount.password, password) ? adminAccount : null
+  const registeredUser = database.getUser(userName)
+  const user = adminAccount.userName === userName && sameSecret(adminAccount.password, password)
+    ? adminAccount
+    : registeredUser && samePasswordHash(registeredUser.passwordHash, password)
+      ? registeredUser
+      : null
   if (!user) return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码错误' })
   const sessionId = randomUUID()
   const csrfToken = randomBytes(24).toString('hex')
@@ -673,6 +765,24 @@ app.post('/api/auth/login', async (request, reply) => {
   return { userName: user.userName, role: user.role, csrfToken }
 })
 
+app.post('/api/auth/invitations', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const code = randomBytes(24).toString('base64url')
+  const invitation = database.createInvitation(randomUUID(), invitationHash(code), session.userName, new Date(Date.now() + invitationLifetimeMs).toISOString())
+  database.addAudit(session.userName, 'invitation.create', 'account', invitation.id)
+  return { id: invitation.id, code, expiresAt: invitation.expiresAt }
+})
+
+app.delete('/api/auth/invitations/:id', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const { id } = request.params as { id: string }
+  if (!database.revokeInvitation(id)) return reply.code(404).send({ code: 'INVITATION_NOT_FOUND', message: '邀请码不存在或已失效。' })
+  database.addAudit(session.userName, 'invitation.revoke', 'account', id)
+  return { ok: true }
+})
+
 app.post('/api/auth/logout', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
@@ -680,6 +790,8 @@ app.post('/api/auth/logout', async (request, reply) => {
   const rawSessionId = request.cookies.vulnlab_session
   const sessionId = rawSessionId ? request.unsignCookie(rawSessionId) : null
   if (sessionId?.valid) database.deleteSession(sessionId.value)
+  for (const instanceId of runtimeAccessTokens.keys()) reply.clearCookie(runtimeCookieName(instanceId), { path: `/lab-runtime/${instanceId}` })
+  runtimeAccessTokens.clear()
   reply.clearCookie('vulnlab_session', { path: '/api' })
   database.addAudit(session.userName, 'logout', 'session', '退出 VulnLab')
   return { ok: true }
@@ -730,7 +842,9 @@ app.post('/api/labs/:id/install', async (request, reply) => {
 app.get('/api/instances', async (request, reply) => {
   if (!requireUser(request, reply)) return
   await reapExpiredInstances()
-  return database.listInstances()
+  const instances = database.listInstances()
+  for (const instance of instances.filter(item => item.status === 'running')) runtimeAccessCookie(reply, instance)
+  return instances
 })
 
 app.post('/api/labs/:id/instances', async (request, reply) => {
@@ -749,7 +863,9 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
     database.addAudit(session.userName, 'instance.prepare', lab.title, preparation.job.id)
     return reply.code(202).send({ status: 'preparing', lab: database.getLab(lab.id), job: preparation.job })
   }
-  return reply.code(201).send(await startLabInstance(lab, session.userName, publicOrigin(request)))
+  const instance = await startLabInstance(lab, session.userName, publicOrigin(request))
+  runtimeAccessCookie(reply, instance)
+  return reply.code(201).send(instance)
 })
 
 app.post('/api/instances/:id/renew', async (request, reply) => {
@@ -781,6 +897,7 @@ app.delete('/api/instances/:id', async (request, reply) => {
   const stopped = await provider.stop({ lab, instance: current, runtime: nativeRuntime, dataDir })
   const instance = database.destroyInstance(id, stopped.log)
   if (!instance) return reply.code(404).send({ code: 'INSTANCE_NOT_FOUND', message: '运行实例不存在。' })
+  clearRuntimeAccess(reply, id)
   database.addAudit(session.userName, 'instance.destroy', instance.labTitle, id)
   return instance
 })

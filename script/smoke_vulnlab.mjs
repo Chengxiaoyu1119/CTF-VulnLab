@@ -3,6 +3,20 @@ import assert from 'node:assert/strict'
 const baseUrl = process.env.VULNLAB_BASE_URL ?? 'http://127.0.0.1:6710'
 let cookie = ''
 let csrfToken = ''
+const cookieJar = new Map()
+
+const updateCookies = setCookies => {
+  for (const setCookie of setCookies) {
+    const [pair] = setCookie.split(';', 1)
+    const separator = pair.indexOf('=')
+    if (separator < 1) continue
+    const name = pair.slice(0, separator).trim()
+    const value = pair.slice(separator + 1)
+    if (value) cookieJar.set(name, pair)
+    else cookieJar.delete(name)
+  }
+  cookie = [...cookieJar.values()].join('; ')
+}
 
 async function request(path, options = {}) {
   const method = (options.method ?? 'GET').toUpperCase()
@@ -11,7 +25,7 @@ async function request(path, options = {}) {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrfToken && !path.endsWith('/auth/login')) headers['x-csrf-token'] = csrfToken
   const response = await fetch(`${baseUrl}${path}`, { ...options, method, headers })
   const setCookies = response.headers.getSetCookie?.() ?? []
-  if (setCookies.length) cookie = setCookies.map(value => value.split(';', 1)[0]).join('; ')
+  if (setCookies.length) updateCookies(setCookies)
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) assert.fail(`${method} ${path} failed: ${response.status} ${payload?.message ?? ''}`)
   return payload
@@ -37,6 +51,8 @@ const dvwa = labs.find(lab => lab.slug === 'dvwa')
 assert.ok(dvwa, 'DVWA seed is missing')
 const malformedRuntime = await fetch(`${baseUrl}/lab-runtime/%E0%A4%A`)
 assert.equal(malformedRuntime.status, 400)
+const runtimeWithoutTicket = await fetch(`${baseUrl}/lab-runtime/unknown/`)
+assert.equal(runtimeWithoutTicket.status, 404)
 
 const settings = await request('/api/settings')
 assert.equal(Object.hasOwn(settings, 'provider'), false)

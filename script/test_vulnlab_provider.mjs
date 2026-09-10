@@ -74,7 +74,9 @@ try {
   await writeFile(join(sourceRoot, 'login.php'), '<?php header("Location: /xvwa/"); ?>\n')
   await writeFile(join(sourceRoot, 'vulnerabilities', 'fileupload', 'home.php'), "<?php $path = $_SERVER['DOCUMENT_ROOT'].'/xvwa/img/uploads/'; $rpath = '/xvwa/img/uploads/'.basename($_FILES['image']['name']); ?>\n")
   const databaseCalls = []
+  const phpSpawnEnvironments = []
   const phpSpawn = (_binary, args, options) => {
+    phpSpawnEnvironments.push(options.env)
     const serverArg = args[args.indexOf('-S') + 1]
     const port = Number(serverArg.split(':').at(-1))
     const script = "const { createServer } = require('node:http'); const port = Number(process.argv.at(-1)); const server = createServer((_req, res) => { res.writeHead(200, {'content-type': 'text/html'}); res.end('Setup finished'); }); server.listen(port, '127.0.0.1');"
@@ -117,6 +119,11 @@ try {
   assert.match(runtimeLogin, /Location: \/lab-runtime\/xvwa-fixture\/xvwa\//)
   assert.match(runtimeUpload, /\$path = \$_SERVER\['DOCUMENT_ROOT'\]\.'\/xvwa\/img\/uploads\//)
   assert.match(runtimeUpload, /\$rpath = '\/lab-runtime\/xvwa-fixture\/xvwa\/img\/uploads\//)
+  assert.ok(phpSpawnEnvironments.length >= 2)
+  for (const environment of phpSpawnEnvironments) {
+    assert.equal(Object.keys(environment).some(key => key.startsWith('VULNLAB_')), false)
+    assert.equal(environment.DB_PASSWORD, 'generated')
+  }
   await xvwaProvider.stop({ lab: { ...xvwaLab, localPath: sourceRoot }, instance: { ...instance, id: 'xvwa-fixture', labId: xvwaLab.id, labTitle: 'XVWA', provider: 'native-php' }, dataDir: xvwaRoot })
   await assert.rejects(stat(join(xvwaRoot, 'runtime', 'xvwa-fixture')))
   assert.deepEqual(databaseCalls, ['provision', 'verify', 'destroy'])

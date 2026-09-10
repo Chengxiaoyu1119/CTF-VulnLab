@@ -4,6 +4,20 @@ const baseUrl = process.env.VULNLAB_BASE_URL ?? 'http://127.0.0.1:6710'
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 let cookie = ''
 let csrfToken = ''
+const cookieJar = new Map()
+
+const updateCookies = setCookies => {
+  for (const setCookie of setCookies) {
+    const [pair] = setCookie.split(';', 1)
+    const separator = pair.indexOf('=')
+    if (separator < 1) continue
+    const name = pair.slice(0, separator).trim()
+    const value = pair.slice(separator + 1)
+    if (value) cookieJar.set(name, pair)
+    else cookieJar.delete(name)
+  }
+  cookie = [...cookieJar.values()].join('; ')
+}
 
 async function request(path, options = {}) {
   const method = (options.method ?? 'GET').toUpperCase()
@@ -12,7 +26,7 @@ async function request(path, options = {}) {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrfToken && !path.endsWith('/auth/login')) headers['x-csrf-token'] = csrfToken
   const response = await fetch(`${baseUrl}${path}`, { ...options, method, headers })
   const setCookies = response.headers.getSetCookie?.() ?? []
-  if (setCookies.length) cookie = setCookies.map(value => value.split(';', 1)[0]).join('; ')
+  if (setCookies.length) updateCookies(setCookies)
   const body = await response.json().catch(() => ({}))
   assert.ok(response.ok, `${method} ${path} failed: ${response.status} ${body.message ?? ''}`)
   return body
@@ -44,27 +58,29 @@ const instance = await request(`/api/labs/${uploadLabs.id}/instances`, { method:
 assert.equal(instance.status, 'running')
 assert.equal(instance.provider, 'native-php')
 assert.equal(instance.endpoint, `${baseUrl}/lab-runtime/${instance.id}/`)
-const page = await fetch(instance.endpoint)
+const anonymousPage = await fetch(instance.endpoint)
+assert.equal(anonymousPage.status, 401)
+const page = await fetch(instance.endpoint, { headers: { cookie } })
 assert.equal(page.status, 200)
 const pageHtml = await page.text()
 const runtimePath = `/lab-runtime/${instance.id}`
 assert.match(pageHtml, new RegExp(`href="${runtimePath}/css/index\\.css"`))
 assert.match(pageHtml, new RegExp(`href="${runtimePath}/Pass-01/index\\.php"`))
-const stylesheet = await fetch(`${instance.endpoint}css/index.css`)
+const stylesheet = await fetch(`${instance.endpoint}css/index.css`, { headers: { cookie } })
 assert.equal(stylesheet.status, 200)
 assert.match(stylesheet.headers.get('content-type') ?? '', /text\/css/i)
-const passPage = await fetch(`${instance.endpoint}Pass-01/index.php`)
+const passPage = await fetch(`${instance.endpoint}Pass-01/index.php`, { headers: { cookie } })
 assert.equal(passPage.status, 200)
 const form = new FormData()
 form.append('upload_file', new Blob(['VulnLab native PHP fixture'], { type: 'image/jpeg' }), 'vulnlab-fixture.jpg')
-const upload = await fetch(`${instance.endpoint}Pass-01/index.php`, { method: 'POST', body: form })
+const upload = await fetch(`${instance.endpoint}Pass-01/index.php`, { method: 'POST', headers: { cookie }, body: form })
 assert.equal(upload.status, 200)
 
 const renewed = await request(`/api/instances/${instance.id}/renew`, { method: 'POST' })
 assert.equal(renewed.status, 'running')
 const destroyed = await request(`/api/instances/${instance.id}`, { method: 'DELETE' })
 assert.equal(destroyed.status, 'destroyed')
-const stopped = await fetch(instance.endpoint)
+const stopped = await fetch(instance.endpoint, { headers: { cookie } })
 assert.equal(stopped.status, 404, 'native PHP endpoint should stop after instance destruction')
 
 console.log(`VulnLab native PHP smoke passed: Upload-Labs installed, served at ${instance.endpoint}, renewed and stopped.`)

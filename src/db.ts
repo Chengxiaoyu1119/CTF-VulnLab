@@ -18,6 +18,22 @@ export interface PersistInstanceInput {
   logs: string[]
 }
 
+export interface RegisteredUser {
+  userName: string
+  passwordHash: string
+  role: UserRole
+  createdAt: string
+}
+
+export interface InvitationRecord {
+  id: string
+  createdBy: string
+  expiresAt: string
+  usedAt: string | null
+  revokedAt: string | null
+  createdAt: string
+}
+
 const now = () => new Date().toISOString()
 
 const asString = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
@@ -228,8 +244,24 @@ export class VulnLabDatabase {
         reset_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS users (
+        user_name TEXT PRIMARY KEY COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS invitations (
+        id TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
       CREATE INDEX IF NOT EXISTS idx_login_attempts_reset_at ON login_attempts(reset_at);
+      CREATE INDEX IF NOT EXISTS idx_invitations_expires_at ON invitations(expires_at);
       CREATE INDEX IF NOT EXISTS idx_import_jobs_lab_status ON import_jobs(lab_id, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at ON import_jobs(created_at);
       CREATE INDEX IF NOT EXISTS idx_vm_downloads_lab_status ON vm_downloads(lab_id, status, updated_at);
@@ -608,6 +640,43 @@ export class VulnLabDatabase {
       INSERT INTO sessions (id, user_name, role, csrf_token, expires_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, userName, role, csrfToken, new Date(expiresAt).toISOString(), timestamp)
+  }
+
+  getUser(userName: string): RegisteredUser | null {
+    const row = this.db.prepare('SELECT user_name AS userName, password_hash AS passwordHash, role, created_at AS createdAt FROM users WHERE user_name = ? COLLATE NOCASE').get(userName) as Row | undefined
+    if (!row || asString(row.role) !== 'admin') return null
+    return {
+      userName: asString(row.userName),
+      passwordHash: asString(row.passwordHash),
+      role: 'admin',
+      createdAt: asString(row.createdAt),
+    }
+  }
+
+  createInvitation(id: string, codeHash: string, createdBy: string, expiresAt: string): InvitationRecord {
+    const createdAt = now()
+    this.db.prepare('INSERT INTO invitations (id, code_hash, created_by, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(id, codeHash, createdBy, expiresAt, createdAt)
+    return { id, createdBy, expiresAt, usedAt: null, revokedAt: null, createdAt }
+  }
+
+  revokeInvitation(id: string): boolean {
+    const result = this.db.prepare('UPDATE invitations SET revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(now(), id)
+    return result.changes === 1
+  }
+
+  registerUserWithInvitation(userName: string, passwordHash: string, codeHash: string): 'created' | 'user_exists' | 'invalid_invitation' {
+    return this.db.transaction(() => {
+      const existing = this.db.prepare('SELECT 1 FROM users WHERE user_name = ? COLLATE NOCASE').get(userName)
+      if (existing) return 'user_exists'
+      const invitation = this.db.prepare('SELECT id, expires_at AS expiresAt FROM invitations WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL').get(codeHash) as { id: string; expiresAt: string } | undefined
+      const expiresAt = Date.parse(invitation?.expiresAt ?? '')
+      if (!invitation || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return 'invalid_invitation'
+      const createdAt = now()
+      this.db.prepare('INSERT INTO users (user_name, password_hash, role, created_at) VALUES (?, ?, \'admin\', ?)').run(userName, passwordHash, createdAt)
+      const consumed = this.db.prepare('UPDATE invitations SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(createdAt, invitation.id)
+      if (consumed.changes !== 1) throw new Error('邀请码消费失败。')
+      return 'created'
+    })()
   }
 
   getSession(id: string): (SessionView & { expiresAt: number }) | null {

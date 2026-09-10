@@ -88,6 +88,6 @@ npm run smoke:toolchains
 
 ## 生产配置
 
-生产环境必须显式设置管理员密码和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。VulnLab 只保留一个最高权限管理员账号，会话保存在 SQLite；Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录失败有持久化速率限制。
+生产环境必须显式设置管理员密码和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。本地保留默认管理员账号，注册账号必须使用管理员生成的 24 小时一次性邀请码，当前注册账号统一为管理员；账号和邀请码记录保存在 SQLite，密码只保存 scrypt 哈希，邀请码只保存 SHA-256 哈希。Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录和注册失败有持久化速率限制。
 
 当前仅维护 Windows x64 本地启动流程，不提供独立服务器部署入口。
