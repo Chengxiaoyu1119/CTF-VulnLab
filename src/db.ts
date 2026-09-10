@@ -664,13 +664,14 @@ export class VulnLabDatabase {
     return result.changes === 1
   }
 
-  registerUserWithInvitation(userName: string, passwordHash: string, codeHash: string): 'created' | 'user_exists' | 'invalid_invitation' {
+  registerUserWithInvitation(userName: string, passwordHash: string, codeHash: string, reservedUserNames: readonly string[] = []): 'created' | 'user_exists' | 'invalid_invitation' {
     return this.db.transaction(() => {
-      const existing = this.db.prepare('SELECT 1 FROM users WHERE user_name = ? COLLATE NOCASE').get(userName)
-      if (existing) return 'user_exists'
       const invitation = this.db.prepare('SELECT id, expires_at AS expiresAt FROM invitations WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL').get(codeHash) as { id: string; expiresAt: string } | undefined
       const expiresAt = Date.parse(invitation?.expiresAt ?? '')
       if (!invitation || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return 'invalid_invitation'
+      const existing = this.db.prepare('SELECT 1 FROM users WHERE user_name = ? COLLATE NOCASE').get(userName)
+      const reserved = reservedUserNames.some(item => item.toLowerCase() === userName.toLowerCase())
+      if (existing || reserved) return 'user_exists'
       const createdAt = now()
       this.db.prepare('INSERT INTO users (user_name, password_hash, role, created_at) VALUES (?, ?, \'admin\', ?)').run(userName, passwordHash, createdAt)
       const consumed = this.db.prepare('UPDATE invitations SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(createdAt, invitation.id)

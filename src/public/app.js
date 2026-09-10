@@ -23,7 +23,7 @@ let toastTimer = null
 
 const LOGIN_NOTICE_DURATION = 4200
 const DETAIL_POLL_INTERVAL = 5000
-const accountPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$/
+const accountPattern = /^[A-Za-z0-9._-]{3,32}$/
 
 const state = {
   session: null,
@@ -37,6 +37,7 @@ const state = {
   busyAction: null,
   error: '',
   loginErrorFields: [],
+  loginFieldErrors: {},
   authMode: 'login',
   authNotice: '',
   loginUserName: '',
@@ -45,8 +46,6 @@ const state = {
   toast: null,
   confirm: null,
   labDetailId: null,
-  accountMenuOpen: false,
-  invitation: null,
 }
 
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -63,6 +62,8 @@ class ApiError extends Error {
     this.code = code
   }
 }
+
+const authErrorMessage = error => error?.status === 0 ? '网络连接失败，请检查网络后重试' : error.message
 
 async function request(path, options = {}) {
   const method = (options.method ?? 'GET').toUpperCase()
@@ -159,20 +160,8 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
-function workspaceAccount() {
-  return `<div class="workspace-account">
-      <button class="workspace-account-trigger" type="button" data-action="toggle-account-menu" aria-expanded="${state.accountMenuOpen}" aria-controls="workspace-account-menu">${esc(state.session.userName)}</button>
-      ${state.accountMenuOpen ? `<div class="workspace-account-menu" id="workspace-account-menu" role="dialog" aria-label="账号操作">
-        <div class="workspace-account-heading"><strong>${esc(state.session.userName)}</strong><span>管理员</span></div>
-        <button class="button button-quiet" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${busyFor('generate-invitation') ? '生成中…' : '生成邀请码'}</button>
-        ${state.invitation ? `<div class="workspace-invitation"><code>${esc(state.invitation.code)}</code><span>有效至 ${esc(date(state.invitation.expiresAt))}</span><div><button class="button button-outline" type="button" data-action="copy-invitation">复制</button><button class="button button-quiet" type="button" data-action="revoke-invitation">撤销</button></div></div>` : ''}
-        <button class="workspace-account-logout" type="button" data-action="logout">退出系统</button>
-      </div>` : ''}</div>`
-}
-
 function labsShell() {
   return `<div class="labs-screen">
-    ${workspaceAccount()}
     <section class="lab-workspace">
       <main class="lab-canvas" tabindex="-1"></main>
     </section>
@@ -264,7 +253,7 @@ function labDetailModal() {
     primaryAction = '<span class="button button-quiet lab-detail-action">等待准备</span>'
   }
   const detailState = instance ? 'running' : starting ? 'starting' : preparing ? 'preparing' : failed ? 'error' : cataloged ? 'cataloged' : 'ready'
-  const stateLabel = instance ? '运行中' : starting ? '启动中' : preparing ? '准备中' : failed ? '准备失败' : cataloged ? '待准备' : ''
+  const stateLabel = preparing ? '准备中' : failed ? '准备失败' : cataloged ? '待准备' : ''
   const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
   const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
@@ -321,8 +310,15 @@ function loginErrorMarkup() {
 }
 
 function loginFieldAttributes(name) {
-  const invalid = state.loginErrorFields.includes(name)
-  return `aria-invalid="${invalid}"${invalid && state.error ? ' aria-describedby="login-error"' : ''}`
+  const fieldError = state.loginFieldErrors[name]
+  const invalid = Boolean(fieldError) || state.loginErrorFields.includes(name)
+  const describedBy = fieldError ? `login-error-field-${name}` : invalid && state.error ? 'login-error' : ''
+  return `aria-invalid="${invalid}"${describedBy ? ` aria-describedby="${describedBy}"` : ''}`
+}
+
+function loginFieldErrorMarkup(name) {
+  const message = state.loginFieldErrors[name]
+  return message ? `<span class="login-field-error" id="login-error-field-${name}" data-field-error="${name}" role="alert">${esc(message)}</span>` : ''
 }
 
 function registrationValidation(values) {
@@ -330,39 +326,29 @@ function registrationValidation(values) {
   const password = typeof values.password === 'string' ? values.password : ''
   const passwordConfirm = typeof values.passwordConfirm === 'string' ? values.passwordConfirm : ''
   const inviteCode = typeof values.inviteCode === 'string' ? values.inviteCode.trim() : ''
-  if (!userName) return { fields: ['userName'], message: '请输入账号' }
-  if (!accountPattern.test(userName)) return { fields: ['userName'], message: '账号需为 3 到 32 位字母、数字、点、下划线或短横线' }
-  if (userName.toLowerCase() === 'vulnlab') return { fields: ['userName'], message: '该账号不可用，请更换账号' }
-  if (!password) return { fields: ['password'], message: '请输入密码' }
-  if (password.length < 8) return { fields: ['password'], message: '密码长度至少为 8 位' }
-  if (!passwordConfirm) return { fields: ['passwordConfirm'], message: '请再次输入密码' }
-  if (password !== passwordConfirm) return { fields: ['passwordConfirm'], message: '两次密码不一致' }
-  if (!inviteCode) return { fields: ['inviteCode'], message: '请输入邀请码' }
-  if (inviteCode.length > 128) return { fields: ['inviteCode'], message: '邀请码无效' }
-  return null
-}
-
-function registrationErrorFields(code) {
-  return {
-    INVALID_USERNAME: ['userName'],
-    INVALID_PASSWORD: ['password'],
-    PASSWORD_MISMATCH: ['passwordConfirm'],
-    INVALID_INVITATION: ['inviteCode'],
-    USER_EXISTS: ['userName'],
-  }[code] ?? []
+  const errors = {}
+  if (!userName) errors.userName = '请输入账号'
+  else if (!accountPattern.test(userName)) errors.userName = '账号格式不正确。'
+  if (!password) errors.password = '请输入密码'
+  else if (password.length < 8) errors.password = '密码长度至少为 8 位'
+  if (!passwordConfirm) errors.passwordConfirm = '请确认密码'
+  else if (password !== passwordConfirm) errors.passwordConfirm = '两次密码不一致'
+  if (!inviteCode) errors.inviteCode = '请输入邀请码'
+  else if (inviteCode.length > 128) errors.inviteCode = '邀请码无效'
+  return Object.keys(errors).length ? errors : null
 }
 
 function loginPage() {
   const registerMode = state.authMode === 'register'
   const passwordType = state.loginPasswordVisible ? 'text' : 'password'
   const fields = registerMode
-    ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" autocomplete="username" placeholder="请输入账号" required ${loginFieldAttributes('userName')}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" type="password" autocomplete="new-password" placeholder="请输入密码" required ${loginFieldAttributes('password')}></span></label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="confirm">${loginInputIcon('confirm')}<input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" required ${loginFieldAttributes('passwordConfirm')}></span></label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite">${loginInputIcon('invite')}<input id="login-invite-code" name="inviteCode" autocomplete="off" placeholder="请输入邀请码" required ${loginFieldAttributes('inviteCode')}></span></label>`
-    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" value="${esc(state.loginUserName)}" autocomplete="username" placeholder="请输入账号" required ${loginFieldAttributes('userName')}></span></label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required ${loginFieldAttributes('password')}></span></label>`
+    ? `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" aria-label="账号" autocomplete="username" placeholder="请设置账号" required ${loginFieldAttributes('userName')}></span>${loginFieldErrorMarkup('userName')}</label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" aria-label="密码" type="password" autocomplete="new-password" placeholder="请设置密码" required ${loginFieldAttributes('password')}></span>${loginFieldErrorMarkup('password')}</label><label class="login-field" for="login-password-confirm"><span class="login-field-label">确认密码</span><span class="login-input-wrap" data-field="confirm">${loginInputIcon('confirm')}<input id="login-password-confirm" name="passwordConfirm" aria-label="确认密码" type="password" autocomplete="new-password" placeholder="请确认密码" required ${loginFieldAttributes('passwordConfirm')}></span>${loginFieldErrorMarkup('passwordConfirm')}</label><label class="login-field" for="login-invite-code"><span class="login-field-label">邀请码</span><span class="login-input-wrap" data-field="invite">${loginInputIcon('invite')}<input id="login-invite-code" name="inviteCode" aria-label="邀请码" autocomplete="off" placeholder="请输入邀请码" required ${loginFieldAttributes('inviteCode')}></span>${loginFieldErrorMarkup('inviteCode')}</label>`
+    : `<label class="login-field" for="login-username"><span class="login-field-label">账号</span><span class="login-input-wrap" data-field="user">${loginInputIcon('user')}<input id="login-username" name="userName" aria-label="账号" value="${esc(state.loginUserName)}" autocomplete="username" placeholder="请输入账号" required ${loginFieldAttributes('userName')}></span>${loginFieldErrorMarkup('userName')}</label><label class="login-field" for="login-password"><span class="login-field-label">密码</span><span class="login-input-wrap" data-field="password">${loginInputIcon('password')}<input id="login-password" name="password" aria-label="密码" type="${passwordType}" autocomplete="current-password" placeholder="请输入密码" required ${loginFieldAttributes('password')}></span>${loginFieldErrorMarkup('password')}</label>`
   const submit = registerMode
     ? `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '注册中…' : '注册账号'}</button>`
     : `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录系统'}</button>`
-  const authNotice = state.authNotice ? `<p class="login-form-success" role="status" aria-live="polite">${esc(state.authNotice)}</p>` : ''
-  return `<div class="login-page"><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><img src="/favicon.png?v=16" alt=""><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${authNotice}${state.error ? loginErrorMarkup() : ''}${fields}${submit}</form></div>`
+  const authNotice = state.authNotice ? loginNoticeCard({ id: 'auth-success-notice', title: '注册成功', message: state.authNotice, action: 'dismiss-auth-notice', kind: 'success' }) : ''
+  return `<div class="login-page">${authNotice}<form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><div class="login-logo"><img src="/favicon.png?v=16" alt="攻防控制台Logo"></div><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${state.error ? loginErrorMarkup() : ''}${fields}${submit}</form></div>`
 }
 
 function updateLoginFormView() {
@@ -371,17 +357,30 @@ function updateLoginFormView() {
   const error = form.querySelector('#login-error')
   if (state.error && !error) form.querySelector('.login-mode')?.insertAdjacentHTML('afterend', loginErrorMarkup())
   else if (!state.error) error?.remove()
-  form.querySelectorAll('input[name]').forEach(input => {
-    const invalid = state.loginErrorFields.includes(input.name)
-    input.setAttribute('aria-invalid', String(invalid))
-    if (state.error && invalid) input.setAttribute('aria-describedby', 'login-error')
-    else input.removeAttribute('aria-describedby')
-  })
+  syncLoginFieldErrors(form)
   const submit = form.querySelector('button[type="submit"]')
   if (submit) {
     submit.disabled = state.busy
     submit.textContent = state.authMode === 'register' ? (state.busy ? '注册中…' : '注册账号') : state.busy ? '登录中…' : '登录系统'
   }
+}
+
+function syncLoginFieldErrors(form) {
+  form.querySelectorAll('input[name]').forEach(input => {
+    const message = state.loginFieldErrors[input.name]
+    const serverInvalid = state.loginErrorFields.includes(input.name)
+    const invalid = Boolean(message) || serverInvalid
+    input.setAttribute('aria-invalid', String(invalid))
+    const describedBy = message ? `login-error-field-${input.name}` : serverInvalid && state.error ? 'login-error' : ''
+    if (describedBy) input.setAttribute('aria-describedby', describedBy)
+    else input.removeAttribute('aria-describedby')
+    const field = input.closest('.login-field')
+    const wrap = input.closest('.login-input-wrap')
+    const error = field?.querySelector('.login-field-error')
+    if (message && !error) wrap?.insertAdjacentHTML('afterend', loginFieldErrorMarkup(input.name))
+    else if (message && error) error.textContent = message
+    else error?.remove()
+  })
 }
 
 function scheduleImportPolling() {
@@ -466,11 +465,6 @@ function patchLabs() {
   cards.forEach(card => card.remove())
 }
 
-function patchWorkspaceAccount() {
-  const account = app.querySelector('.workspace-account')
-  if (account) account.outerHTML = workspaceAccount()
-}
-
 function patchSlot(name, content, { focus = false, key = content } = {}) {
   const slot = app.querySelector(`[data-overlay-slot="${name}"]`)
   if (slot.__vulnlabKey === key && slot.__vulnlabContent === content) return
@@ -518,7 +512,6 @@ function render() {
   }
   scheduleLoginSuccessNoticeDismiss()
   if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
-  patchWorkspaceAccount()
   patchLabs()
   patchOverlays()
   scheduleImportPolling()
@@ -555,7 +548,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'cancel-confirm', 'toggle-account-menu', 'copy-invitation'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -564,58 +557,8 @@ async function runAction(action, element) {
     return
   }
   if (action === 'nav') { navigate(); return }
-  if (action === 'toggle-account-menu') {
-    state.accountMenuOpen = !state.accountMenuOpen
-    render()
-    window.queueMicrotask(() => {
-      const target = state.accountMenuOpen
-        ? document.querySelector('[data-action="generate-invitation"]')
-        : document.querySelector('.workspace-account-trigger')
-      target?.focus()
-    })
-    return
-  }
-  if (action === 'copy-invitation') {
-    if (!state.invitation?.code) return
-    try {
-      await navigator.clipboard.writeText(state.invitation.code)
-      setToast('邀请码已复制。')
-    } catch {
-      setToast('复制失败，请手动复制邀请码。', 'error')
-    }
-    return
-  }
-  if (action === 'generate-invitation') {
-    beginBusy(action)
-    try {
-      state.invitation = await request('/api/auth/invitations', { method: 'POST' })
-      setToast('邀请码已生成，仅显示本次内容。')
-    } catch (error) {
-      setToast(error.message, 'error')
-    } finally {
-      endBusy(action)
-      render()
-    }
-    return
-  }
-  if (action === 'revoke-invitation') {
-    if (!state.invitation?.id) return
-    beginBusy(action)
-    try {
-      await request(`/api/auth/invitations/${state.invitation.id}`, { method: 'DELETE' })
-      state.invitation = null
-      setToast('邀请码已撤销。')
-    } catch (error) {
-      setToast(error.message, 'error')
-    } finally {
-      endBusy(action)
-      render()
-    }
-    return
-  }
   if (action === 'open-lab-details') {
     if (!state.labs.some(item => item.id === element.dataset.id)) return
-    state.accountMenuOpen = false
     rememberModalFocus(element)
     state.labDetailId = element.dataset.id
     render()
@@ -642,7 +585,13 @@ async function runAction(action, element) {
   if (action === 'dismiss-login-error') {
     state.error = ''
     state.loginErrorFields = []
+    state.loginFieldErrors = {}
     updateLoginFormView()
+    return
+  }
+  if (action === 'dismiss-auth-notice') {
+    state.authNotice = ''
+    document.querySelector('#auth-success-notice')?.remove()
     return
   }
   if (action === 'switch-auth-mode') {
@@ -652,6 +601,7 @@ async function runAction(action, element) {
     state.error = ''
     state.authNotice = ''
     state.loginErrorFields = []
+    state.loginFieldErrors = {}
     state.loginPasswordVisible = false
     render()
     window.queueMicrotask(() => document.querySelector('[name="userName"]')?.focus())
@@ -668,7 +618,7 @@ async function runAction(action, element) {
   }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; state.accountMenuOpen = false; state.invitation = null; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.loginPasswordVisible = false; location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {
@@ -724,7 +674,7 @@ app.addEventListener('submit', async event => {
   if (form.id === 'login-form' && state.busy) return
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
-    state.busy = true; state.error = ''; state.loginErrorFields = []
+    state.busy = true; state.error = ''; state.loginErrorFields = []; state.loginFieldErrors = {}
     updateLoginFormView()
     const userName = typeof values.userName === 'string' ? values.userName.trim() : ''
     const password = typeof values.password === 'string' ? values.password : ''
@@ -732,11 +682,10 @@ app.addEventListener('submit', async event => {
     if (state.authMode === 'register') {
       const validation = registrationValidation(values)
       if (validation) {
-        state.loginErrorFields = validation.fields
-        state.error = validation.message
+        state.loginFieldErrors = validation
         state.busy = false
         updateLoginFormView()
-        document.querySelector(`[name="${validation.fields[0]}"]`)?.focus()
+        document.querySelector(`[name="${Object.keys(validation)[0]}"]`)?.focus()
         return
       }
       try {
@@ -748,18 +697,17 @@ app.addEventListener('submit', async event => {
         render()
         window.queueMicrotask(() => document.querySelector('[name="userName"]')?.focus())
       } catch (error) {
-        state.error = error.message
-        state.loginErrorFields = registrationErrorFields(error.code)
+        state.error = authErrorMessage(error)
+        state.loginErrorFields = []
         state.busy = false
         updateLoginFormView()
-        document.querySelector(`[name="${state.loginErrorFields[0] ?? 'userName'}"]`)?.focus()
+        document.querySelector('[name="userName"]')?.focus()
       }
       return
     }
     const missingFields = [!userName ? 'userName' : null, !password ? 'password' : null].filter(Boolean)
     if (missingFields.length) {
-      state.loginErrorFields = missingFields
-      state.error = !userName && !password ? '请输入账号和密码' : !userName ? '请输入账号' : '请输入密码'
+      state.loginFieldErrors = Object.fromEntries(missingFields.map(field => [field, field === 'userName' ? '请输入账号' : '请输入密码']))
       state.busy = false
       updateLoginFormView()
       document.querySelector(`[name="${missingFields[0]}"]`)?.focus()
@@ -778,13 +726,13 @@ app.addEventListener('submit', async event => {
       render()
     } catch (error) {
       state.successNotice = null
-      state.error = error.message
-      state.loginErrorFields = state.session ? [] : ['userName']
+      state.error = authErrorMessage(error)
+      state.loginErrorFields = []
       state.busy = false
       if (state.session) render()
       else {
         updateLoginFormView()
-        document.querySelector(`[name="${state.loginErrorFields[0] ?? 'userName'}"]`)?.focus()
+        document.querySelector('[name="userName"]')?.focus()
       }
     }
     return
@@ -796,10 +744,16 @@ app.addEventListener('input', event => {
   if (!input.form || input.form.id !== 'login-form') return
   if (input.name === 'password' && state.authMode === 'login') syncPasswordToggle()
   if (input.name === 'userName') state.loginUserName = input.value
-  if (state.authNotice) { state.authNotice = ''; input.form.querySelector('.login-form-success')?.remove() }
-  if (!state.error) return
+  if (state.authNotice) { state.authNotice = ''; document.querySelector('#auth-success-notice')?.remove() }
+  const hadFieldError = Object.hasOwn(state.loginFieldErrors, input.name)
+  delete state.loginFieldErrors[input.name]
+  if (!state.error) {
+    if (hadFieldError) updateLoginFormView()
+    return
+  }
   state.error = ''
   state.loginErrorFields = []
+  state.loginFieldErrors = {}
   input.form.querySelector('#login-error')?.remove()
   input.form.querySelectorAll('input').forEach(field => {
     field.setAttribute('aria-invalid', 'false')
@@ -813,7 +767,6 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     if (state.confirm) state.confirm = null
     else if (state.labDetailId) state.labDetailId = null
-    else if (state.accountMenuOpen) state.accountMenuOpen = false
     else return
     render()
     restoreModalFocus()

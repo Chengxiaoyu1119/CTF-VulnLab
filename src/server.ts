@@ -118,6 +118,7 @@ const trustProxy = process.env.VULNLAB_TRUST_PROXY === 'true'
 const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 64 * 1024, trustProxy })
 const loginWindowMs = 60_000
 const loginLimit = isProduction ? 10 : 30
+const registrationUnavailableMessage = '注册失败，请检查注册信息后重试。'
 const activeImports = new Map<string, { task: Promise<void>; controller: AbortController }>()
 const pendingStarts = new Map<string, Promise<LabInstance | null>>()
 const activeStarts = new Map<string, Promise<LabInstance>>()
@@ -290,7 +291,7 @@ const samePasswordHash = (stored: string, password: string) => {
 }
 
 const invitationHash = (code: string) => createHash('sha256').update(code).digest('hex')
-const accountPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$/
+const accountPattern = /^[A-Za-z0-9._-]{3,32}$/
 const invitationLifetimeMs = 24 * 60 * 60 * 1000
 
 const getSession = (request: FastifyRequest): SessionView | null => {
@@ -727,12 +728,12 @@ app.post('/api/auth/register', async (request, reply) => {
   const password = typeof body.password === 'string' ? body.password : ''
   const passwordConfirm = typeof body.passwordConfirm === 'string' ? body.passwordConfirm : ''
   const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : ''
-  if (!accountPattern.test(userName) || userName.toLowerCase() === defaultAdminUser) return reply.code(400).send({ code: 'INVALID_USERNAME', message: '账号格式不正确。' })
+  if (!accountPattern.test(userName)) return reply.code(400).send({ code: 'INVALID_USERNAME', message: '账号格式不正确。' })
   if (password.length < 8) return reply.code(400).send({ code: 'INVALID_PASSWORD', message: '密码长度至少为 8 位。' })
   if (password !== passwordConfirm) return reply.code(400).send({ code: 'PASSWORD_MISMATCH', message: '两次密码不一致。' })
   if (!inviteCode || inviteCode.length > 128) return reply.code(400).send({ code: 'INVALID_INVITATION', message: '邀请码无效。' })
-  const result = database.registerUserWithInvitation(userName, passwordHash(password), invitationHash(inviteCode))
-  if (result === 'user_exists') return reply.code(409).send({ code: 'USER_EXISTS', message: '账号已存在' })
+  const result = database.registerUserWithInvitation(userName, passwordHash(password), invitationHash(inviteCode), [defaultAdminUser])
+  if (result === 'user_exists') return reply.code(400).send({ code: 'REGISTRATION_UNAVAILABLE', message: registrationUnavailableMessage })
   if (result === 'invalid_invitation') return reply.code(400).send({ code: 'INVALID_INVITATION', message: '邀请码无效' })
   database.clearLoginAttempts(clientKey)
   database.addAudit(userName, 'register', 'account', '使用邀请码创建账号')

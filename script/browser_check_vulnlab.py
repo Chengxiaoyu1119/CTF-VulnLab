@@ -43,15 +43,23 @@ def main() -> None:
         expect(page.get_by_label("账号", exact=True)).to_have_value("")
         expect(page.get_by_label("密码", exact=True)).to_have_value("")
         page.get_by_role("button", name="登录系统").click()
-        expect(page.locator("#login-error")).to_contain_text("请输入账号和密码")
-        expect(page.locator("#login-error")).to_be_visible()
-        expect(page.locator(".login-error-icon")).to_be_visible()
-        expect(page.locator(".login-error-close")).to_be_visible()
+        expect(page.locator("#login-error")).to_have_count(0)
+        expect(page.locator(".login-field-error")).to_have_count(2)
+        expect(page.locator('[data-field-error="userName"]')).to_contain_text("请输入账号")
+        expect(page.locator('[data-field-error="password"]')).to_contain_text("请输入密码")
         expect(page.locator("#login-notice")).to_have_count(0)
-        login_error_style = page.locator("#login-error").evaluate(
-            "element => ({ display: getComputedStyle(element).display, backgroundColor: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).border, borderRadius: getComputedStyle(element).borderRadius, minHeight: getComputedStyle(element).minHeight })"
-        )
-        assert login_error_style == {"display": "flex", "backgroundColor": "rgb(42, 29, 29)", "border": "0px none rgb(245, 108, 108)", "borderRadius": "4px", "minHeight": "40px"}, login_error_style
+        expect(page.get_by_label("账号", exact=True)).to_have_attribute("aria-describedby", "login-error-field-userName")
+        expect(page.get_by_label("密码", exact=True)).to_have_attribute("aria-describedby", "login-error-field-password")
+        page.wait_for_timeout(250)
+        field_inputs = page.locator(".login-field .login-input-wrap")
+        field_errors = page.locator(".login-field-error")
+        for index in range(field_errors.count()):
+            input_box = field_inputs.nth(index).bounding_box()
+            error_box = field_errors.nth(index).bounding_box()
+            assert input_box and error_box and error_box["y"] >= input_box["y"] + input_box["height"] + 3, (input_box, error_box)
+            if index + 1 < field_inputs.count():
+                next_input_box = field_inputs.nth(index + 1).bounding_box()
+                assert next_input_box and next_input_box["y"] >= error_box["y"] + error_box["height"], (error_box, next_input_box)
         expect(page.locator(".login-field-label")).to_have_count(2)
         assert page.locator(".login-field-label").evaluate_all(
             "elements => elements.every(element => getComputedStyle(element).position === 'absolute' && getComputedStyle(element).width === '1px')"
@@ -59,16 +67,18 @@ def main() -> None:
         assert page.locator(".login-form input[aria-invalid='true']").evaluate_all(
             "elements => elements.every(element => getComputedStyle(element).borderColor !== 'rgb(201, 80, 74)')"
         )
-        expect(page.get_by_label("账号", exact=True)).to_have_attribute("aria-describedby", "login-error")
-        page.screenshot(path=str(OUTPUT_DIR / "login-error-desktop.png"), full_page=True)
+        page.screenshot(path=str(OUTPUT_DIR / "login-validation-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
-        expect(page.locator("#login-error")).to_be_visible()
+        expect(page.locator(".login-field-error")).to_have_count(2)
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-        page.screenshot(path=str(OUTPUT_DIR / "login-error-mobile.png"), full_page=True)
+        page.screenshot(path=str(OUTPUT_DIR / "login-validation-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-        page.locator(".login-error-close").click()
-        expect(page.locator("#login-error")).to_have_count(0)
+        expect(page.locator(".login-field-error")).to_have_count(2)
+        page.set_viewport_size({"width": 768, "height": 1024})
+        tablet_login_box = page.locator(".login-form").bounding_box()
+        assert tablet_login_box and round(tablet_login_box["width"]) == 480 and round(tablet_login_box["height"]) == 516, tablet_login_box
+        page.screenshot(path=str(OUTPUT_DIR / "login-validation-tablet.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
         register_requests = []
 
@@ -82,31 +92,40 @@ def main() -> None:
         expect(page.get_by_role("tab", name="登录", exact=True)).to_have_attribute("aria-selected", "false")
         expect(page.get_by_label("确认密码", exact=True)).to_be_visible()
         expect(page.get_by_label("邀请码", exact=True)).to_be_visible()
+        expect(page.get_by_label("账号", exact=True)).to_have_attribute("placeholder", "请设置账号")
+        expect(page.get_by_label("密码", exact=True)).to_have_attribute("placeholder", "请设置密码")
+        expect(page.get_by_label("确认密码", exact=True)).to_have_attribute("placeholder", "请确认密码")
         expect(page.get_by_role("button", name="注册账号", exact=True)).to_be_enabled()
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_count(1)
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_attribute("viewBox", "0 0 1024 1024")
         page.get_by_role("button", name="注册账号", exact=True).click()
-        expect(page.locator("#login-error")).to_contain_text("请输入账号")
+        expect(page.locator("#login-error")).to_have_count(0)
+        expect(page.locator(".login-field-error")).to_have_count(4)
+        expect(page.locator('[data-field-error="userName"]')).to_contain_text("请输入账号")
+        expect(page.locator('[data-field-error="password"]')).to_contain_text("请输入密码")
+        expect(page.locator('[data-field-error="passwordConfirm"]')).to_contain_text("请确认密码")
+        expect(page.locator('[data-field-error="inviteCode"]')).to_contain_text("请输入邀请码")
+        page.screenshot(path=str(OUTPUT_DIR / "register-validation-desktop.png"), full_page=True)
         assert not register_requests
         page.get_by_label("账号", exact=True).fill("new-user")
         page.get_by_label("账号", exact=True).fill("12")
         page.get_by_role("button", name="注册账号", exact=True).click()
-        expect(page.locator("#login-error")).to_contain_text("账号需为")
+        expect(page.locator('[data-field-error="userName"]')).to_contain_text("账号格式不正确")
         assert not register_requests
         page.get_by_label("账号", exact=True).fill("new-user")
         page.get_by_label("密码", exact=True).fill("123")
         page.get_by_role("button", name="注册账号", exact=True).click()
-        expect(page.locator("#login-error")).to_contain_text("密码长度至少为")
+        expect(page.locator('[data-field-error="password"]')).to_contain_text("密码长度至少为")
         assert not register_requests
         page.get_by_label("密码", exact=True).fill("secret123")
         page.get_by_label("确认密码", exact=True).fill("different")
         page.get_by_role("button", name="注册账号", exact=True).click()
-        expect(page.locator("#login-error")).to_contain_text("两次密码不一致")
+        expect(page.locator('[data-field-error="passwordConfirm"]')).to_contain_text("两次密码不一致")
         assert not register_requests
         page.get_by_label("确认密码", exact=True).fill("secret123")
         page.get_by_label("邀请码", exact=True).fill("INVITE-TEST")
         page.get_by_label("邀请码", exact=True).press("Enter")
-        expect(page.locator("#login-error")).to_contain_text("本地服务连接失败")
+        expect(page.locator("#login-error")).to_contain_text("网络连接失败，请检查网络后重试")
         assert register_requests
         page.get_by_role("tab", name="登录", exact=True).click()
         expect(page.get_by_role("button", name="登录系统", exact=True)).to_be_visible()
@@ -142,7 +161,7 @@ def main() -> None:
         )
         assert login_mode_style["borderBottomWidth"] == "0px", login_mode_style
         assert login_mode_style["paddingBottom"] == "10px", login_mode_style
-        assert "Noto Sans SC" in login_mode_style["fontFamily"], login_mode_style
+        assert "Times New Roman" in login_mode_style["fontFamily"], login_mode_style
         login_mode_button_style = page.locator(".login-mode button[aria-selected='true']").evaluate(
             "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontWeight: getComputedStyle(element).fontWeight })"
         )
@@ -165,6 +184,7 @@ def main() -> None:
         assert mode_box and round(mode_box["height"]) == 52, mode_box
         assert all(box and round(box["height"]) == 40 for box in field_boxes), field_boxes
         assert button_box and round(button_box["height"]) == 44, button_box
+        assert button_box and round(button_box["width"]) == 400, button_box
         assert button_style["fontFamily"].startswith("Arial"), button_style
         assert button_style["fontSize"] == "15px" and button_style["fontWeight"] == "600", button_style
         login_animation_style = page.locator(".login-form").evaluate(
@@ -177,8 +197,8 @@ def main() -> None:
         page.wait_for_timeout(520)
         mobile_login_box = page.locator(".login-form").bounding_box()
         mobile_brand_box = page.locator(".login-brand").bounding_box()
-        mobile_logo_box = page.locator(".login-brand img").bounding_box()
-        assert mobile_login_box and mobile_login_box["x"] == 0 and round(mobile_login_box["width"]) == 390 and round(mobile_login_box["height"]) == 482, mobile_login_box
+        mobile_logo_box = page.locator(".login-logo img").bounding_box()
+        assert mobile_login_box and round(mobile_login_box["width"]) == 351, mobile_login_box
         assert mobile_brand_box and round(mobile_brand_box["height"]) == 142, mobile_brand_box
         assert mobile_logo_box and round(mobile_logo_box["width"]) == 60 and round(mobile_logo_box["height"]) == 60, mobile_logo_box
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -199,7 +219,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="登录中…", exact=True)).to_be_disabled()
         assert "route" in pending_login
         pending_login["route"].abort()
-        expect(page.locator("#login-error")).to_contain_text("本地服务连接失败")
+        expect(page.locator("#login-error")).to_contain_text("网络连接失败，请检查网络后重试")
         page.unroute("**/api/auth/login")
         page.get_by_label("账号", exact=True).fill("vulnlab")
         page.get_by_label("密码", exact=True).fill("vulnlab")
@@ -222,15 +242,8 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_text("DVWA", exact=True)).to_have_count(1)
         expect(page.locator(".labs-screen")).to_be_visible()
-        page.get_by_role("button", name="vulnlab", exact=True).click()
-        expect(page.get_by_role("dialog", name="账号操作")).to_be_visible()
-        page.get_by_role("button", name="生成邀请码", exact=True).click()
-        invitation_code = page.locator(".workspace-invitation code")
-        expect(invitation_code).to_have_count(1)
-        assert len(invitation_code.inner_text()) == 32
-        page.get_by_role("button", name="撤销", exact=True).click()
-        expect(page.locator(".workspace-invitation")).to_have_count(0)
-        page.get_by_role("button", name="vulnlab", exact=True).click()
+        expect(page.locator(".workspace-account")).to_have_count(0)
+        expect(page.get_by_role("button", name="vulnlab", exact=True)).to_have_count(0)
         page.set_viewport_size({"width": 390, "height": 844})
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
@@ -330,7 +343,7 @@ def main() -> None:
         page.locator(".lab-canvas").focus()
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .lab-workspace-head")).to_have_count(0)
-        expect(page.locator(".workspace-account")).to_have_count(1)
+        expect(page.locator(".workspace-account")).to_have_count(0)
         expect(page.locator(".lab-card-head")).to_have_count(0)
         expect(page.locator(".lab-card-status")).to_have_count(0)
         expect(page.locator(".lab-card-title")).to_have_count(9)
@@ -490,11 +503,17 @@ def main() -> None:
         if running_detail_trigger.count():
             running_detail_trigger.click()
             expect(page.locator(".lab-detail-running")).to_be_visible()
+            expect(page.locator(".lab-detail-state")).to_have_count(0)
             detail_dialog = page.get_by_role("dialog")
             expect(detail_dialog.get_by_role("button", name="续期", exact=True)).to_be_visible()
             expect(detail_dialog.get_by_role("button", name="停止", exact=True)).to_be_visible()
             with page.expect_popup() as popup_info:
-                detail_dialog.get_by_role("link", name="打开页面", exact=True).click()
+                open_page = detail_dialog.get_by_role("link", name="打开页面", exact=True)
+                open_page_style = open_page.evaluate(
+                    "element => ({ display: getComputedStyle(element).display, alignItems: getComputedStyle(element).alignItems, justifyContent: getComputedStyle(element).justifyContent, textAlign: getComputedStyle(element).textAlign })"
+                )
+                assert open_page_style["display"] in {"flex", "inline-flex"} and open_page_style["alignItems"] == "center" and open_page_style["justifyContent"] == "center" and open_page_style["textAlign"] == "center", open_page_style
+                open_page.click()
             popup_info.value.close()
             expect(page.locator(".lab-detail-dialog")).to_have_count(0)
             expect(running_detail_trigger).to_be_focused()
@@ -645,6 +664,11 @@ def main() -> None:
         detail_start_button.click()
         expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
         expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
+        expect(page.locator(".lab-detail-state")).to_have_count(0)
+        starting_action_style = page.locator(".lab-detail-action").evaluate(
+            "element => ({ display: getComputedStyle(element).display, alignItems: getComputedStyle(element).alignItems, justifyContent: getComputedStyle(element).justifyContent, textAlign: getComputedStyle(element).textAlign })"
+        )
+        assert starting_action_style["display"] in {"flex", "inline-flex"} and starting_action_style["alignItems"] == "center" and starting_action_style["justifyContent"] == "center" and starting_action_style["textAlign"] == "center", starting_action_style
         page.wait_for_timeout(1200)
         expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
         assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
@@ -727,7 +751,7 @@ def main() -> None:
         expect(page.locator('.lab-card-caption').first).to_be_visible()
         expect(page.get_by_role("complementary", name="运行状态")).to_have_count(0)
         expect(page.locator(".lab-workspace-head, .workspace-nav")).to_have_count(0)
-        expect(page.locator(".workspace-account")).to_have_count(1)
+        expect(page.locator(".workspace-account")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
 
         mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
