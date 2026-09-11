@@ -343,6 +343,15 @@ const requireCsrf = (request: FastifyRequest, reply: FastifyReply, session: Sess
 
 const requestBody = (request: FastifyRequest) => (request.body ?? {}) as Record<string, unknown>
 
+const requestIds = (request: FastifyRequest, reply: FastifyReply): string[] | null => {
+  const ids = requestBody(request).ids
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || !ids.every((id): id is string => typeof id === 'string' && id.length > 0)) {
+    reply.code(400).send({ code: 'RECORD_IDS_INVALID', message: '请选择要删除的记录。' })
+    return null
+  }
+  return [...new Set(ids)]
+}
+
 const publicOrigin = (request: FastifyRequest) => {
   if (configuredPublicUrl) return configuredPublicUrl
   if (host !== '0.0.0.0' && host !== '::') return `http://${host}:${port}`
@@ -775,12 +784,32 @@ app.post('/api/auth/invitations', async (request, reply) => {
   return { id: invitation.id, code, expiresAt: invitation.expiresAt }
 })
 
+app.get('/api/auth/invitations', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  reply.header('Cache-Control', 'no-store')
+  return database.listInvitations()
+})
+
+app.delete('/api/auth/invitations', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  const ids = requestIds(request, reply)
+  if (!ids) return
+  return { ok: true, deleted: database.deleteInvitations(ids) }
+})
+
 app.delete('/api/auth/invitations/:id', async (request, reply) => {
   const session = requireAdmin(request, reply)
   if (!session) return
   const { id } = request.params as { id: string }
   if (!database.revokeInvitation(id)) return reply.code(404).send({ code: 'INVITATION_NOT_FOUND', message: '邀请码不存在或已失效。' })
   database.addAudit(session.userName, 'invitation.revoke', 'account', id)
+  return { ok: true }
+})
+
+app.delete('/api/auth/invitations/:id/record', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  const { id } = request.params as { id: string }
+  if (!database.deleteInvitation(id)) return reply.code(404).send({ code: 'INVITATION_NOT_FOUND', message: '邀请码记录不存在。' })
   return { ok: true }
 })
 
@@ -963,7 +992,22 @@ app.put('/api/settings', async (request, reply) => {
 
 app.get('/api/audit', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
+  reply.header('Cache-Control', 'no-store')
   return database.listAudit()
+})
+
+app.delete('/api/audit', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  const ids = requestIds(request, reply)
+  if (!ids) return
+  return { ok: true, deleted: database.deleteAudits(ids) }
+})
+
+app.delete('/api/audit/:id', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  const { id } = request.params as { id: string }
+  if (!database.deleteAudit(id)) return reply.code(404).send({ code: 'AUDIT_NOT_FOUND', message: '审计记录不存在。' })
+  return { ok: true }
 })
 
 app.get('/lab-cover/:slug', async (request, reply) => {

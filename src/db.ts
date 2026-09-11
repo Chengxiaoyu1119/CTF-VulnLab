@@ -34,6 +34,12 @@ export interface InvitationRecord {
   createdAt: string
 }
 
+export type InvitationStatus = 'active' | 'expired' | 'used' | 'revoked'
+
+export interface InvitationView extends InvitationRecord {
+  status: InvitationStatus
+}
+
 const now = () => new Date().toISOString()
 
 const asString = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
@@ -664,6 +670,24 @@ export class VulnLabDatabase {
     return result.changes === 1
   }
 
+  deleteInvitation(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM invitations WHERE id = ?').run(id)
+    return result.changes === 1
+  }
+
+  deleteInvitations(ids: readonly string[]): number {
+    const statement = this.db.prepare('DELETE FROM invitations WHERE id = ?')
+    const transaction = this.db.transaction((values: readonly string[]) => values.reduce((count, id) => count + statement.run(id).changes, 0))
+    return transaction(ids)
+  }
+
+  listInvitations(): InvitationView[] {
+    return (this.db.prepare('SELECT id, created_by AS createdBy, expires_at AS expiresAt, used_at AS usedAt, revoked_at AS revokedAt, created_at AS createdAt FROM invitations ORDER BY created_at DESC LIMIT 100').all() as InvitationRecord[]).map(item => ({
+      ...item,
+      status: item.revokedAt ? 'revoked' : item.usedAt ? 'used' : Date.parse(item.expiresAt) <= Date.now() ? 'expired' : 'active',
+    }))
+  }
+
   registerUserWithInvitation(userName: string, passwordHash: string, codeHash: string, reservedUserNames: readonly string[] = []): 'created' | 'user_exists' | 'invalid_invitation' {
     return this.db.transaction(() => {
       const invitation = this.db.prepare('SELECT id, expires_at AS expiresAt FROM invitations WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL').get(codeHash) as { id: string; expiresAt: string } | undefined
@@ -761,6 +785,17 @@ export class VulnLabDatabase {
 
   listAudit() {
     return this.db.prepare('SELECT id, actor, action, target, detail, created_at AS createdAt FROM audit ORDER BY created_at DESC LIMIT 100').all()
+  }
+
+  deleteAudit(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM audit WHERE id = ?').run(id)
+    return result.changes === 1
+  }
+
+  deleteAudits(ids: readonly string[]): number {
+    const statement = this.db.prepare('DELETE FROM audit WHERE id = ?')
+    const transaction = this.db.transaction((values: readonly string[]) => values.reduce((count, id) => count + statement.run(id).changes, 0))
+    return transaction(ids)
   }
 
   overview(): Overview {

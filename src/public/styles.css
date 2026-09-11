@@ -134,10 +134,15 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .lab-detail-open { color: #fff; text-decoration: none; }
 .lab-detail-stop { color: #ef9b95; border-color: #623c39; background-color: #261c1b; }
 .lab-detail-stop:hover { color: #ffd2ce; border-color: #9b4c46; background-color: #35201e; }
-.admin-dialog { width: min(430px, 100%); }
+.admin-dialog { width: min(430px, 100%); max-height: min(680px, calc(100dvh - 40px)); overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #565656 transparent; }
+.admin-dialog::-webkit-scrollbar { width: 8px; }
+.admin-dialog::-webkit-scrollbar-track { background: transparent; }
+.admin-dialog::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: #565656; background-clip: padding-box; }
+.admin-dialog::-webkit-scrollbar-thumb:hover { background-color: #707070; }
 .admin-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .admin-dialog-heading h2 { margin-bottom: 7px; }
 .admin-dialog-heading p { max-width: 280px; }
+.admin-dialog-heading p + p { margin-top: 2px; }
 .admin-dialog-heading .dialog-close { flex: 0 0 auto; }
 .invitation-card { display: grid; gap: 10px; margin-top: 20px; border: 1px solid #3a3028; border-radius: 9px; padding: 13px; background-color: #211d19; }
 .invitation-card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: #e4e4e4; font-size: 12px; }
@@ -146,6 +151,56 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .invitation-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .invitation-card-actions .button { min-height: 32px; font-size: 11px; }
 .admin-empty-state { margin-top: 20px; border: 1px dashed #3b3b3b; border-radius: 8px; padding: 18px 14px; color: #898989; background-color: #191919; font-size: 12px; text-align: center; }
+.invitation-empty-state { margin-top: 20px; }
+.admin-loading, .admin-inline-error { margin-top: 20px; border-radius: 8px; padding: 11px 12px; font-size: 11px; line-height: 1.45; }
+.admin-loading { color: #a7a7a7; background-color: #191919; }
+.admin-inline-error { color: #ffc5bf; background-color: #291c1d; }
+.admin-record-actions { display: grid; gap: 8px; margin-top: 16px; }
+.admin-record-button { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #343434; border-radius: 8px; padding: 0 12px; color: #d9d9d9; background-color: #191919; font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: border-color 160ms ease, color 160ms ease, background-color 160ms ease; }
+.admin-record-button:hover { border-color: #555; color: #fff; background-color: #222; }
+.admin-record-button:focus-visible { outline: 1px solid #777; outline-offset: 2px; }
+.admin-record-button > span:last-child { display: inline-flex; align-items: center; gap: 7px; color: #858585; font-size: 10px; white-space: nowrap; }
+.admin-record-button:hover > span:last-child { color: #b3b3b3; }
+.admin-record-button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
+.admin-record-toolbar { display: flex; min-height: 32px; align-items: center; gap: 10px; margin-top: 16px; }
+.admin-select-all, .admin-record-select { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; color: #a6a6a6; font-size: 11px; cursor: pointer; }
+.admin-select-all { flex: 0 0 auto; margin-left: 10px; white-space: nowrap; }
+.admin-select-all input, .admin-record-select input { width: 14px; height: 14px; min-height: 14px; margin: 0; border: 0; padding: 0; accent-color: var(--workspace-accent); background: transparent; box-shadow: none; cursor: pointer; }
+.admin-selection-count { margin-left: auto; color: #777; font-size: 10px; white-space: nowrap; }
+.admin-bulk-delete { min-height: 30px; padding: 0 10px; font-size: 11px; }
+.admin-bulk-delete:disabled { border-color: #333; color: #666; background-color: #252525; cursor: default; opacity: 1; }
+.admin-record-list { display: grid; gap: 7px; margin-top: 20px; }
+.admin-records-dialog { max-height: min(400px, calc(100dvh - 40px)); }
+.admin-records-dialog .admin-empty-state { margin-top: 20px; }
+.invitation-history, .audit-history { display: grid; gap: 7px; }
+.invitation-history-card, .audit-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #353535; border-radius: 7px; padding: 9px 10px; background-color: #1b1b1b; font-size: 10px; }
+.invitation-history-card.is-selected, .audit-entry.is-selected { border-color: #72502f; background-color: #211d19; }
+.invitation-history-card > .admin-record-select, .audit-entry > .admin-record-select { flex: 0 0 auto; }
+.invitation-history-card > div, .audit-entry > div { min-width: 0; }
+.invitation-history-main, .invitation-history-meta { display: flex; align-items: center; gap: 10px; }
+.invitation-history-main { min-width: 0; flex: 1 1 auto; }
+.invitation-history-main strong { flex: 0 0 auto; white-space: nowrap; }
+.invitation-history-main time { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.invitation-history-meta { min-width: 0; flex: 0 1 auto; }
+.invitation-history-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.audit-entry-content { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: 72px minmax(0, 1fr); align-items: center; column-gap: 12px; overflow: hidden; }
+.audit-entry-content strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-entry-meta { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 120px; align-items: center; gap: 8px; overflow: hidden; }
+.audit-entry-actor { display: flex; min-width: 0; align-items: center; gap: 4px; overflow: hidden; color: #a7a7a7; }
+.audit-entry-actor-label { width: 28px; flex: 0 0 28px; color: #777; white-space: nowrap; }
+.audit-entry-actor-name { min-width: 0; overflow: hidden; color: #b9b9b9; text-overflow: ellipsis; white-space: nowrap; }
+.audit-entry-time { display: inline-flex; width: 120px; min-width: 120px; box-sizing: border-box; align-items: baseline; justify-content: flex-start; gap: 6px; border-left: 1px solid #3b3b3b; padding-left: 8px; color: #858585; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audit-entry-date { color: #777; }
+.audit-entry-clock { color: #b5b5b5; font-weight: 600; }
+.invitation-history-card strong, .audit-entry strong { color: #d9d9d9; font-size: 11px; font-weight: 650; }
+.invitation-history-card time, .invitation-history-meta > span, .audit-entry > div > span { color: #858585; white-space: nowrap; }
+.invitation-history-card[data-status="active"] strong { color: #ffb15f; }
+.invitation-history-card[data-status="used"] strong { color: #85c7a2; }
+.invitation-history-card[data-status="expired"] strong, .invitation-history-card[data-status="revoked"] strong { color: #a0a0a0; }
+.record-delete { display: inline-flex; width: 24px; height: 24px; flex: 0 0 auto; align-items: center; justify-content: center; border: 0; border-radius: 5px; padding: 0; color: #888; background: transparent; cursor: pointer; }
+.record-delete svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+.record-delete:hover { color: #f18e83; background-color: #302020; }
+.record-delete:focus-visible { outline: 1px solid #777; outline-offset: 2px; }
 .admin-dialog .dialog-actions { justify-content: space-between; }
 
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
@@ -295,6 +350,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .login-form { width: 90%; padding: 30px 25px; }
   .login-logo { width: 60px; height: 60px; }
   .login-brand h1 { font-size: 22px; }
+  .audit-entry-content { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
 }
 
 @media (max-width: 350px) {

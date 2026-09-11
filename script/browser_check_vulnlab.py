@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -332,19 +333,185 @@ def main() -> None:
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
         expect(notice_detail_trigger).to_be_focused()
         admin_trigger = page.get_by_role("button", name="邀请码管理", exact=True)
-        admin_trigger.click()
+        with page.expect_response(lambda response: response.url.endswith("/api/auth/invitations") and response.request.method == "GET") as invitations_response_info:
+            with page.expect_response(lambda response: response.url.endswith("/api/audit") and response.request.method == "GET") as audit_response_info:
+                admin_trigger.click()
+        assert invitations_response_info.value.headers.get("cache-control") == "no-store"
+        assert audit_response_info.value.headers.get("cache-control") == "no-store"
         expect(page.get_by_role("dialog", name="邀请码管理")).to_be_visible()
-        expect(page.get_by_text("当前没有可用的邀请码。", exact=True)).to_be_visible()
-        page.get_by_role("button", name="生成邀请码", exact=True).click()
+        expect(page.locator(".admin-loading")).to_have_count(0)
+        expect(page.locator(".admin-inline-error")).to_have_count(0)
+        expect(page.locator(".invitation-empty-state")).to_be_visible()
+        compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
+        assert compact_admin_box and compact_admin_box["height"] < 520, compact_admin_box
+        page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
+        invitation_button = page.locator('[data-action="open-admin-records"][data-panel="invitations"]')
+        audit_button = page.locator('[data-action="open-admin-records"][data-panel="audit"]')
+        expect(invitation_button).to_have_count(1)
+        expect(audit_button).to_have_count(1)
+        invitation_button.click()
+        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
         invitation_code = page.locator(".invitation-card code")
-        expect(invitation_code).to_have_count(1)
-        assert len(invitation_code.inner_text()) == 32
+        for _ in range(6):
+            page.get_by_role("button", name="生成邀请码", exact=True).click()
+            expect(invitation_code).to_have_count(1)
+            assert len(invitation_code.inner_text()) == 32
+        invitation_button.click()
+        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        invitation_scroll_style = page.locator(".admin-records-dialog").evaluate(
+            "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
+        )
+        assert invitation_scroll_style["scrollHeight"] > invitation_scroll_style["clientHeight"], invitation_scroll_style
+        assert invitation_scroll_style["clientHeight"] <= 400, invitation_scroll_style
+        assert invitation_scroll_style["scrollbarWidth"] == "thin", invitation_scroll_style
+        invitation_visible_rows = page.locator(".invitation-history-card").evaluate_all(
+            """elements => {
+                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                return elements.filter(element => {
+                    const rect = element.getBoundingClientRect()
+                    return rect.top >= panel.top && rect.bottom <= panel.bottom
+                }).length
+            }"""
+        )
+        assert invitation_visible_rows == 5, invitation_visible_rows
+        expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_disabled()
+        page.screenshot(path=str(OUTPUT_DIR / "admin-records-window-desktop.png"), full_page=True)
+        generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
+        assert generated_invitation_id
+        generated_invitation_records = page.locator(".invitation-history-card").count()
+        assert generated_invitation_records >= 6, generated_invitation_records
+        invitation_select_alignment = page.locator('[data-admin-select-all="invitations"]').evaluate(
+            "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"invitations\"]').getBoundingClientRect().left })"
+        )
+        assert abs(invitation_select_alignment["toolbar"] - invitation_select_alignment["row"]) <= 1, invitation_select_alignment
+        select_all = page.locator('[data-admin-select-all="invitations"]')
+        select_all.check()
+        expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {generated_invitation_records} 条")
+        select_all.uncheck()
+        batch_invitation_ids = []
+        for index in (1, 2):
+            record = page.locator(".invitation-history-card").nth(index)
+            batch_invitation_ids.append(record.get_attribute("data-id"))
+            record.locator('[data-admin-record-select="invitations"]').check()
+        assert all(batch_invitation_ids)
+        expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
+        page.screenshot(path=str(OUTPUT_DIR / "admin-records-selected-desktop.png"), full_page=True)
+        page.get_by_role("button", name="删除所选", exact=True).click()
+        invitation_bulk_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
+        expect(invitation_bulk_confirm).to_be_visible()
+        invitation_bulk_confirm.get_by_role("button", name="删除所选", exact=True).click()
+        for record_id in batch_invitation_ids:
+            expect(page.locator(f'.invitation-history-card[data-id="{record_id}"]')).to_have_count(0)
+        expect(page.locator(".invitation-history-card")).to_have_count(generated_invitation_records - 2)
+        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
+        expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         page.get_by_role("button", name="复制邀请码", exact=True).click()
         expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
         page.get_by_role("button", name="撤销", exact=True).click()
         expect(page.get_by_role("dialog", name="撤销邀请码")).to_be_visible()
         page.get_by_role("button", name="撤销邀请码", exact=True).click()
         expect(page.locator(".invitation-card")).to_have_count(0)
+        invitation_button.click()
+        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        expect(page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"][data-status="revoked"]')).to_have_count(1)
+        page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .record-delete').click()
+        expect(page.get_by_role("dialog", name="删除邀请码记录")).to_be_visible()
+        page.get_by_role("button", name="删除记录", exact=True).click()
+        expect(page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"]')).to_have_count(0)
+        remaining_invitation_records = page.locator(".invitation-history-card").count()
+        if remaining_invitation_records:
+            page.locator('[data-admin-select-all="invitations"]').check()
+            expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {remaining_invitation_records} 条")
+            page.get_by_role("button", name="删除所选", exact=True).click()
+            invitation_cleanup_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
+            expect(invitation_cleanup_confirm).to_be_visible()
+            invitation_cleanup_confirm.get_by_role("button", name="删除所选", exact=True).click()
+            expect(page.locator(".invitation-history-card")).to_have_count(0)
+        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
+        audit_button.click()
+        expect(page.get_by_role("dialog", name="最近审计记录")).to_be_visible()
+        audit_scroll_style = page.locator(".admin-records-dialog").evaluate(
+            "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
+        )
+        assert audit_scroll_style["scrollHeight"] > audit_scroll_style["clientHeight"], audit_scroll_style
+        assert audit_scroll_style["clientHeight"] <= 400, audit_scroll_style
+        assert audit_scroll_style["scrollbarWidth"] == "thin", audit_scroll_style
+        audit_visible_rows = page.locator(".audit-entry").evaluate_all(
+            """elements => {
+                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                return elements.filter(element => {
+                    const rect = element.getBoundingClientRect()
+                    return rect.top >= panel.top && rect.bottom <= panel.bottom
+                }).length
+            }"""
+        )
+        assert audit_visible_rows == 5, audit_visible_rows
+        audit_entry = page.locator(".audit-entry").first
+        expect(audit_entry.locator(".audit-entry-actor-label")).to_have_text("用户")
+        expect(audit_entry.locator(".audit-entry-actor")).to_have_attribute("title", re.compile(r"^用户：.+"))
+        audit_time_text = " ".join(audit_entry.locator(".audit-entry-time").inner_text().split())
+        assert re.fullmatch(r"\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}", audit_time_text), audit_time_text
+        audit_layout = audit_entry.locator(".audit-entry-content").evaluate(
+            "element => ({ display: getComputedStyle(element).display, columns: getComputedStyle(element).gridTemplateColumns, gap: getComputedStyle(element).columnGap })"
+        )
+        assert audit_layout["display"] == "grid" and audit_layout["gap"] == "12px" and audit_layout["columns"].startswith("72px "), audit_layout
+        audit_select_alignment = page.locator('[data-admin-select-all="audit"]').evaluate(
+            "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"audit\"]').getBoundingClientRect().left })"
+        )
+        assert abs(audit_select_alignment["toolbar"] - audit_select_alignment["row"]) <= 1, audit_select_alignment
+        audit_alignment = page.locator(".audit-entry").evaluate_all(
+            """elements => {
+                const position = selector => elements.slice(0, 5).map(element => Math.round(element.querySelector(selector).getBoundingClientRect().left))
+                return { actor: [...new Set(position('.audit-entry-actor'))], time: [...new Set(position('.audit-entry-time'))] }
+            }"""
+        )
+        assert len(audit_alignment["actor"]) == 1 and len(audit_alignment["time"]) == 1, audit_alignment
+        audit_time_layout = audit_entry.locator(".audit-entry-time").evaluate(
+            "element => ({ width: getComputedStyle(element).width, minWidth: getComputedStyle(element).minWidth, justifyContent: getComputedStyle(element).justifyContent })"
+        )
+        assert audit_time_layout == {"width": "120px", "minWidth": "120px", "justifyContent": "flex-start"}, audit_time_layout
+        long_actor_layout = audit_entry.locator(".audit-entry-actor-name").evaluate(
+            """element => {
+                const original = element.textContent
+                element.textContent = 'very-long-user-name-'.repeat(20)
+                const row = element.closest('.audit-entry')
+                const result = {
+                    rowFits: row.scrollWidth <= row.clientWidth + 1,
+                    overflow: getComputedStyle(element).overflow,
+                    textOverflow: getComputedStyle(element).textOverflow,
+                    whiteSpace: getComputedStyle(element).whiteSpace,
+                }
+                element.textContent = original
+                return result
+            }"""
+        )
+        assert long_actor_layout == {"rowFits": True, "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}, long_actor_layout
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        mobile_audit_layout = page.locator(".audit-entry-content").first.evaluate(
+            "element => ({ display: getComputedStyle(element).display, rows: getComputedStyle(element).gridTemplateRows })"
+        )
+        assert mobile_audit_layout["display"] == "grid", mobile_audit_layout
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.screenshot(path=str(OUTPUT_DIR / "admin-audit-records-window-desktop.png"), full_page=True)
+        audit_records = page.locator(".audit-entry")
+        assert audit_records.count() >= 2
+        batch_audit_ids = []
+        for index in (0, 1):
+            record = audit_records.nth(index)
+            batch_audit_ids.append(record.get_attribute("data-id"))
+            record.locator('[data-admin-record-select="audit"]').check()
+        expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
+        page.get_by_role("button", name="删除所选", exact=True).click()
+        audit_bulk_confirm = page.get_by_role("dialog", name="删除选中的审计记录")
+        expect(audit_bulk_confirm).to_be_visible()
+        with page.expect_response(lambda response: response.url.endswith("/api/audit") and response.request.method == "DELETE") as audit_delete_response_info:
+            audit_bulk_confirm.get_by_role("button", name="删除所选", exact=True).click()
+        assert audit_delete_response_info.value.json().get("deleted") == 2
+        for record_id in batch_audit_ids:
+            expect(page.locator(f'.audit-entry[data-id="{record_id}"]')).to_have_count(0)
+        page.get_by_role("button", name="关闭最近审计记录", exact=True).click()
         page.get_by_role("button", name="关闭邀请码管理", exact=True).click()
         expect(admin_trigger).to_be_focused()
         expect(page.locator(".toast")).to_have_count(0, timeout=5000)
