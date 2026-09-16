@@ -86,7 +86,7 @@ def main() -> None:
         expect(page.locator(".login-field-error")).to_have_count(2)
         page.set_viewport_size({"width": 768, "height": 1024})
         tablet_login_box = page.locator(".login-form").bounding_box()
-        assert tablet_login_box and round(tablet_login_box["width"]) == 480 and round(tablet_login_box["height"]) == 516, tablet_login_box
+        assert tablet_login_box and round(tablet_login_box["width"]) == 480 and round(tablet_login_box["height"]) == 522, tablet_login_box
         page.screenshot(path=str(OUTPUT_DIR / "login-validation-tablet.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
         register_requests = []
@@ -189,24 +189,24 @@ def main() -> None:
         assert login_input_style["boxShadow"] == "none", login_input_style
         assert login_input_style["outline"] == "none", login_input_style
         assert login_input_style["backgroundColor"] == "rgb(0, 0, 0)", login_input_style
-        assert login_input_style["fontFamily"].startswith("Arial"), login_input_style
+        assert login_input_style["fontFamily"].startswith('"Noto Sans SC"'), login_input_style
         login_mode_style = page.locator(".login-mode").evaluate(
             "element => ({ borderBottomWidth: getComputedStyle(element).borderBottomWidth, paddingBottom: getComputedStyle(element).paddingBottom, fontFamily: getComputedStyle(element).fontFamily })"
         )
         assert login_mode_style["borderBottomWidth"] == "0px", login_mode_style
         assert login_mode_style["paddingBottom"] == "10px", login_mode_style
-        assert "Times New Roman" in login_mode_style["fontFamily"], login_mode_style
+        assert login_mode_style["fontFamily"].startswith('"Noto Sans SC"'), login_mode_style
         login_mode_button_style = page.locator(".login-mode button[aria-selected='true']").evaluate(
             "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontWeight: getComputedStyle(element).fontWeight })"
         )
-        assert login_mode_button_style["fontFamily"].startswith("Arial"), login_mode_button_style
+        assert login_mode_button_style["fontFamily"].startswith('"Noto Sans SC"'), login_mode_button_style
         assert login_mode_button_style["fontWeight"] == "600", login_mode_button_style
         separator_content = page.locator(".login-mode").evaluate(
             "element => getComputedStyle(element, '::before').content"
         )
         assert separator_content == '"|"', separator_content
         login_box = page.locator(".login-form").bounding_box()
-        assert login_box and round(login_box["width"]) == 480 and round(login_box["height"]) == 514, login_box
+        assert login_box and round(login_box["width"]) == 480 and round(login_box["height"]) == 520, login_box
         brand_box = page.locator(".login-brand").bounding_box()
         mode_box = page.locator(".login-mode").bounding_box()
         field_boxes = [locator.bounding_box() for locator in page.locator(".login-field").all()]
@@ -214,12 +214,12 @@ def main() -> None:
         button_style = page.locator(".login-form .button-primary").evaluate(
             "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontSize: getComputedStyle(element).fontSize, fontWeight: getComputedStyle(element).fontWeight })"
         )
-        assert brand_box and round(brand_box["height"]) == 154, brand_box
+        assert brand_box and round(brand_box["height"]) == 160, brand_box
         assert mode_box and round(mode_box["height"]) == 52, mode_box
         assert all(box and round(box["height"]) == 40 for box in field_boxes), field_boxes
         assert button_box and round(button_box["height"]) == 44, button_box
         assert button_box and round(button_box["width"]) == 400, button_box
-        assert button_style["fontFamily"].startswith("Arial"), button_style
+        assert button_style["fontFamily"].startswith('"Noto Sans SC"'), button_style
         assert button_style["fontSize"] == "15px" and button_style["fontWeight"] == "600", button_style
         login_animation_style = page.locator(".login-form").evaluate(
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
@@ -233,7 +233,7 @@ def main() -> None:
         mobile_brand_box = page.locator(".login-brand").bounding_box()
         mobile_logo_box = page.locator(".login-logo img").bounding_box()
         assert mobile_login_box and round(mobile_login_box["width"]) == 351, mobile_login_box
-        assert mobile_brand_box and round(mobile_brand_box["height"]) == 142, mobile_brand_box
+        assert mobile_brand_box and round(mobile_brand_box["height"]) == 147, mobile_brand_box
         assert mobile_logo_box and round(mobile_logo_box["width"]) == 60 and round(mobile_logo_box["height"]) == 60, mobile_logo_box
         page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_label("账号", exact=True).fill("wrong")
@@ -817,7 +817,7 @@ def main() -> None:
         dvwa_lab["status"] = "cataloged"
         page.reload(wait_until="networkidle")
         page.locator('.lab-card-media[data-id]').first.click()
-        expect(page.get_by_role("button", name="准备并启动", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="启动环境", exact=True)).to_be_visible()
         expect(page.get_by_text("待准备", exact=True)).to_be_visible()
         page.get_by_role("button", name="关闭靶场信息").click()
         dvwa_lab["status"] = "importing"
@@ -1049,16 +1049,16 @@ def main() -> None:
         reduced_login_animation = reduced_page.locator(".login-form").evaluate(
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
         )
-        assert reduced_login_animation == {"animationName": "login-form-in", "animationDuration": "0.5s"}, reduced_login_animation
-        assert reduced_page.evaluate("window.__vulnlabReducedLoginAnimationStarts >= 1")
+        assert reduced_login_animation["animationName"] == "none", reduced_login_animation
+        assert reduced_page.evaluate("window.__vulnlabReducedLoginAnimationStarts == 0")
         reduced_page.get_by_role("button", name="登录系统", exact=True).click()
         expect(reduced_page.locator(".login-field-error")).to_have_count(2)
         reduced_page.wait_for_timeout(50)
-        assert reduced_page.evaluate("window.__vulnlabReducedFieldErrorAnimationStarts >= 2")
+        assert reduced_page.evaluate("window.__vulnlabReducedFieldErrorAnimationStarts == 0")
         reduced_field_error_animation = reduced_page.locator(".login-field-error").first.evaluate(
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
         )
-        assert reduced_field_error_animation == {"animationName": "login-field-error-in", "animationDuration": "0.32s"}, reduced_field_error_animation
+        assert reduced_field_error_animation["animationName"] == "none", reduced_field_error_animation
         reduced_page.close()
         reduced_context.close()
         assert not console_errors, console_errors

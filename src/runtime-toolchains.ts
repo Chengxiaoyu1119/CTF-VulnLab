@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, createReadStream, mkdirSync, openSync, writeSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate'
 import { runtimePaths } from './paths.js'
@@ -410,10 +409,11 @@ export class RuntimeToolchainInstaller {
 
   private async installPackage(input: RuntimeToolchainPackage) {
     const finalRoot = this.installRoot(input)
-    const stagingRoot = join(this.paths.toolchains, `.staging-${input.id}-${randomUUID()}`)
+    const stagingRoot = join(this.paths.staging, `${input.id}-install-${randomUUID()}`)
     let quarantineRoot: string | undefined
     try {
-      quarantineRoot = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-'))
+      quarantineRoot = join(this.paths.staging, `${input.id}-${randomUUID()}`)
+      await mkdir(quarantineRoot, { recursive: true })
       const downloadPath = join(quarantineRoot, `${input.filename}.part`)
       await mkdir(dirname(finalRoot), { recursive: true })
       await mkdir(stagingRoot, { recursive: true })

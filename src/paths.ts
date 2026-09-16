@@ -16,12 +16,14 @@ export const runtimePaths = (runtimeDir: string) => {
   const toolchains = join(root, 'toolchains')
   const manifests = join(root, 'manifests')
   const downloads = join(root, 'downloads')
+  const staging = join(root, '.staging')
 
   return {
     root,
     toolchains,
     manifests,
     downloads,
+    staging,
     php: child(root, 'php', 'PHP 运行目录'),
     mysql: child(root, 'mysql', 'MariaDB 运行目录'),
     toolchain: (id: string, version: string, platform: string, arch: string) => child(child(child(toolchains, id, '运行时标识'), version, '运行时版本'), `${platform}-${arch}`, '运行时平台'),
@@ -56,6 +58,7 @@ export const dataPaths = (dataDir: string) => {
     runtimeToolchains: runtimeLayout.toolchains,
     runtimeManifests: runtimeLayout.manifests,
     runtimeDownloads: runtimeLayout.downloads,
+    runtimeStaging: runtimeLayout.staging,
     labRoot,
     lab,
     importJob: (jobId: string) => child(imports, jobId, '导入任务标识'),

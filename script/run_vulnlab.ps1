@@ -25,8 +25,8 @@ function Test-ProjectNode {
 
 function Install-ProjectNode {
   $nodeParent = Split-Path -Parent $nodeRoot
-  $staging = Join-Path $nodeParent ".staging-node-$([guid]::NewGuid().ToString('N'))"
-  $archive = Join-Path ([System.IO.Path]::GetTempPath()) "vulnlab-node-$([guid]::NewGuid().ToString('N')).zip"
+  $staging = Join-Path $runtime ".staging\node-$([guid]::NewGuid().ToString('N'))"
+  $archive = Join-Path $staging "node-$([guid]::NewGuid().ToString('N')).zip"
   try {
     New-Item -ItemType Directory -Force -Path $nodeParent, (Split-Path -Parent $manifestPath), $staging | Out-Null
     Invoke-WebRequest -UseBasicParsing -Uri $sourceUrl -OutFile $archive

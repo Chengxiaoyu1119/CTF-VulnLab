@@ -1,12 +1,11 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
-import { unzipSync } from 'fflate'
 import type { ImportManifest, Lab } from './types.js'
 import { dataPaths } from './paths.js'
+import { readZipEntries } from './zip.js'
 
 const MAX_ASSET_BYTES = 512 * 1024 ** 2
 const MAX_EXTRACTED_BYTES = 2 * 1024 ** 3
@@ -119,14 +118,14 @@ const bundledArchive = async (bundleDir: string | undefined, lab: Lab, asset: Bu
 }
 
 const extractZip = async (archivePath: string, targetRoot: string, onProgress: (progress: number, stage: string, message: string) => void) => {
-  const archive = await readFile(archivePath)
-  let files: Record<string, Uint8Array>
+  let files: Awaited<ReturnType<typeof readZipEntries>>
   try {
-    files = unzipSync(archive)
-  } catch {
-    throw new BuiltinAssetError('官方 ZIP 发行包解压失败。')
+    files = await readZipEntries(createReadStream(archivePath), { maxFiles: MAX_FILES, maxBytes: MAX_EXTRACTED_BYTES })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    throw new BuiltinAssetError(message.startsWith('ZIP ') ? `官方发行包${message.slice(4)}` : '官方 ZIP 发行包解压失败。')
   }
-  const entries = Object.entries(files).filter(([name]) => !name.endsWith('/')).map(([name, bytes]) => ({ segments: safeSegments(name), bytes }))
+  const entries = files.map(({ name, bytes }) => ({ segments: safeSegments(name), bytes }))
   if (!entries.length || entries.length > MAX_FILES) throw new BuiltinAssetError('官方发行包文件数量异常。')
   const totalBytes = entries.reduce((total, entry) => total + entry.bytes.byteLength, 0)
   if (totalBytes > MAX_EXTRACTED_BYTES) throw new BuiltinAssetError('官方发行包解压内容超过 2 GiB 上限。')
@@ -249,7 +248,8 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
   const installRoot = paths.lab(input.lab.slug, input.lab.version)
   let quarantineRoot: string | undefined
   try {
-    quarantineRoot = await mkdtemp(join(tmpdir(), 'vulnlab-builtin-'))
+    quarantineRoot = join(paths.runtimeStaging, `builtin-${randomUUID()}`)
+    await mkdir(quarantineRoot, { recursive: true })
     const archivePath = join(quarantineRoot, asset.filename)
     await rm(installRoot, { recursive: true, force: true })
     report(5, 'metadata', '正在读取官方发行信息。')

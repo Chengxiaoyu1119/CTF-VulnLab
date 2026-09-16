@@ -4,13 +4,12 @@ import helmet from '@fastify/helmet'
 import fastifyStatic from '@fastify/static'
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
 import { isIP } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { VulnLabDatabase } from './db.js'
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
-import { cleanupImportStaging, cleanupStaleVulnLabTempDirs, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
+import { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
@@ -123,7 +122,6 @@ const registrationUnavailableMessage = '注册失败，请检查注册信息后�
 const activeImports = new Map<string, { task: Promise<void>; controller: AbortController }>()
 const pendingStarts = new Map<string, Promise<LabInstance | null>>()
 const activeStarts = new Map<string, Promise<LabInstance>>()
-const runtimeAccessTokens = new Map<string, string>()
 let reapingExpiredInstances = false
 let runtimeStatusCache: { expiresAt: number; value: Awaited<ReturnType<typeof inspectRuntimeDependencies>> } | null = null
 
@@ -246,7 +244,6 @@ const reapExpiredInstances = async () => {
       }
       const expired = database.expireInstance(instance.id, '运行实例已过期，Provider 资源已回收')
       if (expired) {
-        runtimeAccessTokens.delete(expired.id)
         database.addAudit('system', 'instance.expired', expired.labTitle, expired.id)
       }
     }))
@@ -261,7 +258,6 @@ const expiredInstanceTimer = setInterval(() => {
 expiredInstanceTimer.unref()
 app.addHook('onClose', async () => {
   clearInterval(expiredInstanceTimer)
-  runtimeAccessTokens.clear()
 })
 
 const hashPassword = (password: string, salt: Buffer) => scryptSync(password, salt, 32)
@@ -404,88 +400,6 @@ const cleanupOutdatedBuiltinVersions = async (lab: Lab) => {
     .map(entry => rm(join(root, entry.name), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
 }
 
-const runtimeRequest = (url: string) => {
-  const parsed = new URL(url, 'http://vulnlab.internal')
-  const prefix = '/lab-runtime/'
-  if (!parsed.pathname.startsWith(prefix)) return null
-  const remainder = parsed.pathname.slice(prefix.length)
-  const separator = remainder.indexOf('/')
-  const rawId = separator === -1 ? remainder : remainder.slice(0, separator)
-  if (!rawId) return null
-  return { id: decodeURIComponent(rawId), suffix: separator === -1 ? '/' : remainder.slice(separator), search: parsed.search }
-}
-
-const runtimeCookieName = (instanceId: string) => `vulnlab_runtime_${instanceId}`
-
-const runtimeAccessCookie = (reply: FastifyReply, instance: LabInstance) => {
-  const path = `/lab-runtime/${instance.id}`
-  if (!instance.endpoint.includes(`${path}/`)) return
-  const token = runtimeAccessTokens.get(instance.id) ?? randomBytes(32).toString('hex')
-  runtimeAccessTokens.set(instance.id, token)
-  const maxAge = Math.max(1, Math.ceil((Date.parse(instance.expiresAt) - Date.now()) / 1000))
-  reply.setCookie(runtimeCookieName(instance.id), token, { path, httpOnly: true, sameSite: 'lax', secure: secureCookies, signed: true, maxAge })
-}
-
-const clearRuntimeAccess = (reply: FastifyReply, instanceId: string) => {
-  runtimeAccessTokens.delete(instanceId)
-  reply.clearCookie(runtimeCookieName(instanceId), { path: `/lab-runtime/${instanceId}` })
-}
-
-const runtimeAccessAllowed = (request: FastifyRequest, instanceId: string) => {
-  const expected = runtimeAccessTokens.get(instanceId)
-  const raw = request.cookies[runtimeCookieName(instanceId)]
-  const actual = raw ? request.unsignCookie(raw) : null
-  if (!expected || !actual?.valid) return false
-  const expectedHash = createHash('sha256').update(expected).digest()
-  const actualHash = createHash('sha256').update(actual.value).digest()
-  return timingSafeEqual(expectedHash, actualHash)
-}
-
-const stripControlCookies = (headers: Record<string, string | string[] | undefined>, instanceId: string) => {
-  const excluded = new Set(['vulnlab_session', runtimeCookieName(instanceId)])
-  if (typeof headers.cookie !== 'string') return
-  const forwarded = headers.cookie.split(';').map(value => value.trim()).filter(value => !excluded.has(value.split('=', 1)[0])).join('; ')
-  if (forwarded) headers.cookie = forwarded
-  else delete headers.cookie
-}
-
-const proxyRuntimeRequest = async (request: FastifyRequest, reply: FastifyReply) => {
-  const runtime = runtimeRequest(request.url)
-  if (!runtime) return false
-  const instance = database.getRunningInstance(runtime.id)
-  if (!instance) return reply.code(404).send({ code: 'RUNTIME_NOT_FOUND', message: '运行入口不存在或已经结束。' }), true
-  if (!runtimeAccessAllowed(request, runtime.id)) return reply.code(401).send({ code: 'RUNTIME_ACCESS_REQUIRED', message: '请从已登录的靶场入口进入。' }), true
-  const provider = providerRegistry.get(instance.provider)
-  if (!provider?.getProxyTarget) return reply.code(404).send({ code: 'RUNTIME_NOT_FOUND', message: '该实例没有可代理的运行入口。' }), true
-  const target = provider?.getProxyTarget?.(instance.id)
-  if (!target) return reply.code(409).send({ code: 'RUNTIME_PROCESS_MISSING', message: '运行进程已退出，请重新启动实例。' }), true
-  const targetUrl = new URL(target)
-  targetUrl.pathname = `${targetUrl.pathname.replace(/\/$/, '')}${runtime.suffix.startsWith('/') ? runtime.suffix : `/${runtime.suffix}`}` || '/'
-  targetUrl.search = runtime.search
-  const headers = { ...request.headers }
-  for (const header of ['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade']) delete headers[header]
-  stripControlCookies(headers, runtime.id)
-  await new Promise<void>(resolveProxy => {
-    const upstream = httpRequest({ hostname: targetUrl.hostname, port: Number(targetUrl.port), method: request.method, path: `${targetUrl.pathname}${targetUrl.search}`, headers }, response => {
-      const responseHeaders = { ...response.headers }
-      for (const header of ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade']) delete responseHeaders[header]
-      reply.hijack()
-      reply.raw.writeHead(response.statusCode ?? 502, responseHeaders)
-      response.once('end', resolveProxy)
-      response.once('error', resolveProxy)
-      response.pipe(reply.raw)
-    })
-    upstream.setTimeout(15_000, () => upstream.destroy(new Error('运行入口响应超时。')))
-    request.raw.once('aborted', () => upstream.destroy(new Error('客户端已断开运行入口请求。')))
-    upstream.once('error', error => {
-      if (!reply.sent) reply.code(502).send({ code: 'RUNTIME_PROXY_FAILED', message: error instanceof Error ? error.message : '运行入口连接失败。' })
-      resolveProxy()
-    })
-    request.raw.pipe(upstream)
-  })
-  return true
-}
-
 const runImportJob = (jobId: string, actor: string) => {
   const controller = new AbortController()
   const task = (async () => {
@@ -604,7 +518,6 @@ const startLabInstance = (lab: Lab, actor: string, origin: string): Promise<LabI
       instanceId,
       lab,
       publicOrigin: origin,
-      proxyEndpoint: lab.runtimeKind === 'native-php' ? `${origin}/lab-runtime/${instanceId}/` : undefined,
       lifetimeMinutes: instanceLifetimeMinutes,
       dataDir,
       runtime: nativeRuntime,
@@ -655,7 +568,6 @@ const queueStartAfterImport = (labId: string, jobId: string, actor: string, orig
 }
 
 const bootstrapBuiltinLabs = async () => {
-  await Promise.allSettled(['vulnhub', 'vulhub', 'crapi'].map(slug => rm(storage.labRoot(slug), { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })))
   for (const job of database.listJobsParsed().filter(item => item.status === 'queued')) {
     const lab = database.getLab(job.labId)
     if (!lab?.builtin) continue
@@ -709,10 +621,6 @@ app.addHook('onSend', async (_request, reply) => {
   reply.header('X-Content-Type-Options', 'nosniff')
   reply.header('Referrer-Policy', 'same-origin')
   reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-})
-
-app.addHook('onRequest', async (request, reply) => {
-  await proxyRuntimeRequest(request, reply)
 })
 
 app.get('/healthz', async () => ({ status: 'ok', product: 'VulnLab', runtime: 'node-fastify' }))
@@ -823,8 +731,6 @@ app.post('/api/auth/logout', async (request, reply) => {
   const rawSessionId = request.cookies.vulnlab_session
   const sessionId = rawSessionId ? request.unsignCookie(rawSessionId) : null
   if (sessionId?.valid) database.deleteSession(sessionId.value)
-  for (const instanceId of runtimeAccessTokens.keys()) reply.clearCookie(runtimeCookieName(instanceId), { path: `/lab-runtime/${instanceId}` })
-  runtimeAccessTokens.clear()
   reply.clearCookie('vulnlab_session', { path: '/api' })
   database.addAudit(session.userName, 'logout', 'session', '退出 VulnLab')
   return { ok: true }
@@ -875,9 +781,7 @@ app.post('/api/labs/:id/install', async (request, reply) => {
 app.get('/api/instances', async (request, reply) => {
   if (!requireUser(request, reply)) return
   await reapExpiredInstances()
-  const instances = database.listInstances()
-  for (const instance of instances.filter(item => item.status === 'running')) runtimeAccessCookie(reply, instance)
-  return instances
+  return database.listInstances()
 })
 
 app.post('/api/labs/:id/instances', async (request, reply) => {
@@ -897,7 +801,6 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
     return reply.code(202).send({ status: 'preparing', lab: database.getLab(lab.id), job: preparation.job })
   }
   const instance = await startLabInstance(lab, session.userName, publicOrigin(request))
-  runtimeAccessCookie(reply, instance)
   return reply.code(201).send(instance)
 })
 
@@ -930,7 +833,6 @@ app.delete('/api/instances/:id', async (request, reply) => {
   const stopped = await provider.stop({ lab, instance: current, runtime: nativeRuntime, dataDir })
   const instance = database.destroyInstance(id, stopped.log)
   if (!instance) return reply.code(404).send({ code: 'INSTANCE_NOT_FOUND', message: '运行实例不存在。' })
-  clearRuntimeAccess(reply, id)
   database.addAudit(session.userName, 'instance.destroy', instance.labTitle, id)
   return instance
 })
@@ -1036,6 +938,7 @@ app.get('/lab-cover/:slug', async (request, reply) => {
 
 app.setNotFoundHandler((request, reply) => {
   if (request.url.startsWith('/api/')) return reply.code(404).send({ code: 'NOT_FOUND', message: '接口不存在。' })
+  if (request.url.startsWith('/lab-runtime/')) return reply.code(404).send({ code: 'RUNTIME_ROUTE_REMOVED', message: '靶场入口已改为独立运行端口。' })
   return reply.sendFile('index.html')
 })
 
@@ -1052,8 +955,8 @@ app.setErrorHandler((error, _request, reply) => {
 })
 
 const start = async () => {
-  const removedTempDirs = await cleanupStaleVulnLabTempDirs()
-  if (removedTempDirs) app.log.info({ removedTempDirs }, '已清理异常退出遗留的 VulnLab 临时目录。')
+  const removedStagingDirs = await cleanupStaleVulnLabStaging(dataDir)
+  if (removedStagingDirs) app.log.info({ removedStagingDirs }, '已清理项目数据目录中的异常退出暂存目录。')
   const reconciliation = database.reconcileBuiltinPaths(dataDir)
   if (reconciliation.repaired.length || reconciliation.reset.length) {
     app.log.info(reconciliation, '内置靶场路径已完成启动前对账。')

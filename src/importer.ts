@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { tmpdir } from 'node:os'
 import { Readable } from 'node:stream'
-import { unzipSync } from 'fflate'
 import type { ImportManifest } from './types.js'
+import { dataPaths } from './paths.js'
+import { readZipEntries } from './zip.js'
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_FILE_COUNT = 20_000
@@ -13,8 +13,7 @@ const MAX_EXTRACTED_BYTES = 512 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 30_000
 const USER_AGENT = 'VulnLab/0.2'
 const stagingRoots = new Set<string>()
-const staleTempPrefixes = ['vulnlab-import-', 'vulnlab-builtin-', 'vulnlab-runtime-']
-const STALE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
+const STALE_STAGING_AGE_MS = 24 * 60 * 60 * 1000
 
 export class ImporterError extends Error {
   constructor(message: string) {
@@ -39,8 +38,10 @@ interface ImportInput {
   portablePathPolicy?: 'strict' | 'case-collision-lowercase'
 }
 
-const createStagingRoot = async () => {
-  const root = await mkdtemp(join(tmpdir(), 'vulnlab-import-'))
+const createStagingRoot = async (dataDir: string, jobId: string) => {
+  const root = join(dataPaths(dataDir).importJob(jobId), 'staging')
+  await rm(root, { recursive: true, force: true })
+  await mkdir(root, { recursive: true })
   stagingRoots.add(root)
   return root
 }
@@ -52,18 +53,27 @@ export const cleanupImportStaging = async (path: string) => {
     if (resolved !== root && !resolved.startsWith(prefix)) continue
     stagingRoots.delete(root)
     await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    await rm(dirname(root), { recursive: false, force: true }).catch(() => undefined)
     return
   }
 }
 
-export const cleanupStaleVulnLabTempDirs = async (tempRoot = tmpdir(), now = Date.now()) => {
-  const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => [])
+export const cleanupStaleVulnLabStaging = async (dataDir: string, now = Date.now()) => {
+  const paths = dataPaths(dataDir)
+  const candidates: string[] = []
+  const importJobs = await readdir(paths.imports, { withFileTypes: true }).catch(() => [])
+  for (const entry of importJobs) {
+    if (entry.isDirectory()) candidates.push(join(paths.imports, entry.name, 'staging'))
+  }
+  const runtimeEntries = await readdir(paths.runtimeStaging, { withFileTypes: true }).catch(() => [])
+  for (const entry of runtimeEntries) {
+    if (entry.isDirectory()) candidates.push(join(paths.runtimeStaging, entry.name))
+  }
   let removed = 0
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !staleTempPrefixes.some(prefix => entry.name.startsWith(prefix))) continue
-    const path = join(tempRoot, entry.name)
+  for (const path of candidates) {
+    if (stagingRoots.has(path)) continue
     const info = await stat(path).catch(() => null)
-    if (!info?.isDirectory() || now - info.mtimeMs < STALE_TEMP_AGE_MS) continue
+    if (!info?.isDirectory() || now - info.mtimeMs < STALE_STAGING_AGE_MS) continue
     try {
       await rm(path, { recursive: true, force: true })
       removed += 1
@@ -289,15 +299,14 @@ const importRepositoryArchive = async (input: ImportInput, options: ArchiveImpor
   await mkdir(options.root, { recursive: true })
 
   report(input, 52, 'inspect', `检查 ${options.sourceLabel} 压缩包目录和体积。`)
-  let files: Record<string, Uint8Array>
+  let files: Awaited<ReturnType<typeof readZipEntries>>
   try {
-    files = unzipSync(options.archive)
-  } catch {
-    throw new ImporterError('下载内容不是可解析的 ZIP 压缩包。')
+    files = await readZipEntries(options.archive, { maxFiles: MAX_FILE_COUNT, maxBytes: MAX_EXTRACTED_BYTES })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    throw new ImporterError(message.startsWith('ZIP ') ? `压缩包${message.slice(4)}` : '下载内容不是可解析的 ZIP 压缩包。')
   }
-  const names = Object.keys(files)
-  if (names.length > MAX_FILE_COUNT) throw new ImporterError(`压缩包文件数量超过 ${MAX_FILE_COUNT} 限制。`)
-  const fileEntries = names.map(name => ({ name, relativePath: safeRelativePath(name), bytes: files[name] })).filter((item): item is ArchiveFileEntry => Boolean(item.relativePath))
+  const fileEntries = files.map(file => ({ name: file.name, relativePath: safeRelativePath(file.name), bytes: file.bytes })).filter((item): item is ArchiveFileEntry => Boolean(item.relativePath))
   const portable = portableFiles(fileEntries, input.portablePathPolicy)
   const totalBytes = portable.entries.reduce((total, item) => total + item.bytes.byteLength, 0)
   if (totalBytes > MAX_EXTRACTED_BYTES) throw new ImporterError(`解包内容超过 ${Math.round(MAX_EXTRACTED_BYTES / 1024 / 1024)} MiB 限制。`)
@@ -335,7 +344,7 @@ const importRepositoryArchive = async (input: ImportInput, options: ArchiveImpor
 }
 
 export const importLocalArchive = async (input: ImportInput & { archivePath: string; sourceLabel?: string }): Promise<ImportManifest> => {
-  const root = await createStagingRoot()
+  const root = await createStagingRoot(input.dataDir, input.jobId)
   try {
     const archive = await readFile(resolve(input.archivePath))
     if (archive.byteLength > MAX_ARCHIVE_BYTES) throw new ImporterError(`本地发行包超过 ${Math.round(MAX_ARCHIVE_BYTES / 1024 / 1024)} MiB 限制。`)
@@ -362,7 +371,7 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
   const fetchImpl = input.fetchImpl ?? fetch
   const headers = { accept: 'application/vnd.github+json', 'user-agent': USER_AGENT }
   const apiBase = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}`
-  const root = await createStagingRoot()
+  const root = await createStagingRoot(input.dataDir, input.jobId)
   const extractRoot = join(root, 'source')
   try {
     report(input, 8, 'repository', '读取 GitHub 仓库信息。')
@@ -460,7 +469,7 @@ export const importGitLabRepository = async (input: ImportInput): Promise<Import
   const headers = { accept: 'application/json', 'user-agent': USER_AGENT }
   const encodedProject = encodeURIComponent(repository.projectPath)
   const apiBase = `https://gitlab.com/api/v4/projects/${encodedProject}`
-  const root = await createStagingRoot()
+  const root = await createStagingRoot(input.dataDir, input.jobId)
   const extractRoot = join(root, 'source')
   try {
     report(input, 8, 'repository', '读取 GitLab 仓库信息。')

@@ -33,7 +33,7 @@ npm run dev
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，先把原始包写入系统临时隔离目录，完成体积、路径和固定 SHA-256 校验后才写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后删除临时隔离目录；服务启动时还会清理超过 24 小时的 VulnLab 临时目录。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部内置资源。
+`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，先把原始包写入项目内 `data/imports/<job>/staging` 或 `data/runtime/.staging`，完成体积、路径和固定 SHA-256 校验后才写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后删除暂存目录；服务启动时还会清理超过 24 小时的项目内遗留暂存目录。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部内置资源。
 
 离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
@@ -57,9 +57,9 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 ## 项目运行环境
 
-启动时，VulnLab 会在 `data/runtime/` 创建运行状态。用户点击“启动环境”后，Windows x64 会自动准备当前靶场需要的 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 或 Python 3.11.16。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，准备通过临时目录原子切换；成功后压缩包立即清理。
+启动时，VulnLab 会在 `data/runtime/` 创建运行状态。用户点击“启动环境”后，Windows x64 会自动准备当前靶场需要的 Node.js 22.23.1、PHP 8.3.33 NTS、MariaDB 11.4.10、Eclipse Temurin JRE 21.0.12.1 或 Python 3.11.16。下载文件必须匹配仓库固定的 SHA-256，解压路径和体积受限，准备通过 `data/runtime/.staging` 原子切换；成功后压缩包立即清理。
 
-运行时目录结构为 `toolchains/`、`manifests/`、`php/` 和 `mysql/`。原始发行包只在准备阶段进入临时隔离目录，校验和安装完成后清理，不作为运行时持久目录。PHP 使用项目生成的 `php.ini`；Windows 会启用发行包内存在的 `mysqli`、`pdo_mysql`、`mbstring`、`gd`、`curl`、`openssl` 扩展。MariaDB 只绑定 `127.0.0.1`，默认端口 `7330`，数据、日志、PID 和随机管理凭据均留在项目数据目录，服务关闭时回收进程。
+运行时目录结构为 `toolchains/`、`manifests/`、`.staging/`、`php/` 和 `mysql/`。原始发行包只在准备阶段进入项目内 `.staging/`，校验和安装完成后清理，不作为运行时持久目录。PHP 使用项目生成的 `php.ini`；Windows 会启用发行包内存在的 `mysqli`、`pdo_mysql`、`mbstring`、`gd`、`curl`、`openssl` 扩展。MariaDB 只绑定 `127.0.0.1`，默认端口 `7330`，数据、日志、PID 和随机管理凭据均留在项目数据目录，服务关闭时回收进程。
 
 运行时二进制不提交进 Git。已下载的项目包优先级高于系统 `PATH`；显式环境变量和外部 MySQL 连接仍可覆盖。Juice Shop 使用项目 Node.js，PyGoat 直接用项目 Python 创建 `venv`，WebGoat 直接用项目 JRE 启动。用户点击“启动环境”后，服务自动完成依赖检查；失败原因通过启动操作提示返回。
 

@@ -49,10 +49,8 @@ assert.equal(labs.length, 9, 'built-in lab catalog must contain exactly nine ent
 assert.deepEqual(labs.map(lab => lab.slug), ['dvwa', 'pikachu', 'sqli-labs', 'upload-labs', 'xvwa', 'juice-shop', 'webgoat', 'mutillidae', 'pygoat'])
 const dvwa = labs.find(lab => lab.slug === 'dvwa')
 assert.ok(dvwa, 'DVWA seed is missing')
-const malformedRuntime = await fetch(`${baseUrl}/lab-runtime/%E0%A4%A`)
-assert.equal(malformedRuntime.status, 400)
-const runtimeWithoutTicket = await fetch(`${baseUrl}/lab-runtime/unknown/`)
-assert.equal(runtimeWithoutTicket.status, 404)
+const legacyRuntimeRoute = await fetch(`${baseUrl}/lab-runtime/unknown/`)
+assert.equal(legacyRuntimeRoute.status, 404)
 
 const settings = await request('/api/settings')
 assert.equal(Object.hasOwn(settings, 'provider'), false)

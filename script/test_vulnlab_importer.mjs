@@ -7,7 +7,8 @@ import { join, resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const require = createRequire(resolve(root, 'src/package.json'))
 const { zipSync } = require('fflate')
-const { cleanupImportStaging, cleanupStaleVulnLabTempDirs, importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../src/dist/importer.js', import.meta.url))
+const { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../src/dist/importer.js', import.meta.url))
+const { readZipEntries } = await import(new URL('../src/dist/zip.js', import.meta.url))
 
 const archive = zipSync({
   'DVWA-main/README.md': new TextEncoder().encode('# DVWA fixture'),
@@ -101,6 +102,7 @@ try {
   assert.throws(() => importerInternals.assertPortablePaths(['A', 'a/index.php']), /Windows 文件目录冲突/)
   assert.throws(() => importerInternals.assertPortablePaths(['CON.txt']), /Windows 不可用文件名/)
   assert.throws(() => importerInternals.assertPortablePaths(['report.txt:secret']), /Windows 不可用文件名/)
+  await assert.rejects(readZipEntries(zipSync({ 'expanded.txt': new Uint8Array(8) }), { maxFiles: 1, maxBytes: 4 }), /ZIP 解压内容超过大小限制/)
 
   const collisionArchive = zipSync({
     'Less-24/Logged-in.php': new TextEncoder().encode('<?php echo "upper";'),
@@ -239,16 +241,16 @@ try {
     await rm(abortDir, { recursive: true, force: true })
   }
 
-  const staleTempRoot = await mkdtemp(join(tmpdir(), 'vulnlab-stale-parent-'))
+  const staleDataDir = await mkdtemp(join(tmpdir(), 'vulnlab-stale-data-'))
   try {
-    const staleDir = join(staleTempRoot, 'vulnlab-import-stale')
-    await mkdir(staleDir)
+    const staleDir = join(staleDataDir, 'imports', 'stale-job', 'staging')
+    await mkdir(staleDir, { recursive: true })
     const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
     await utimes(staleDir, staleTime, staleTime)
-    assert.equal(await cleanupStaleVulnLabTempDirs(staleTempRoot), 1)
+    assert.equal(await cleanupStaleVulnLabStaging(staleDataDir), 1)
     await assert.rejects(stat(staleDir))
   } finally {
-    await rm(staleTempRoot, { recursive: true, force: true })
+    await rm(staleDataDir, { recursive: true, force: true })
   }
 
   console.log('VulnLab importer test passed: fixed revision, rate-limit fallback, hash manifest, safe extraction and traversal guard.')

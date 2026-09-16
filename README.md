@@ -30,7 +30,7 @@ VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面
 
 当前代码处于开发基线，当前版本为 `0.1.0`。主服务采用 Node.js 原生运行，当前只维护 Windows x64 本地运行链路。
 
-大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务先把原始包写入系统临时隔离目录，完成体积、路径和 SHA-256 校验后才进入 `src/data`。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
+大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务先把原始包写入项目内 `src/data/imports/<job>/staging` 或 `src/data/runtime/.staging`，完成体积、路径和 SHA-256 校验后才进入 `src/data`。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
 
 项目支持半联网和离线准备：设置 `VULNLAB_BUNDLE_DIR` 指向本地发行包目录后，启动流程按“本地 bundle → 已有 data 缓存 → 官方网络来源”选择资源；设置 `VULNLAB_OFFLINE=1` 后禁止联网，只使用本地发行包和已有缓存。发行包目录不提交到 Git。
 
