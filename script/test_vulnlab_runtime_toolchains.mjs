@@ -61,7 +61,7 @@ try {
   const binaries = await installer.binaries()
   assert.equal(await readFile(binaries.php, 'utf8'), 'fixture-php')
   assert.equal(await readFile(binaries.node, 'utf8'), 'fixture-node')
-  assert.equal((await stat(join(root, 'runtime', 'downloads'))).isDirectory(), true)
+  await assert.rejects(stat(join(root, 'runtime', 'downloads')))
 
   const fresh = new RuntimeToolchainInstaller(join(root, 'runtime'), {
     packages: [fixturePackage], fetchImpl: async () => { throw new Error('不应重复下载') },
@@ -69,6 +69,7 @@ try {
   assert.equal((await fresh.inspect())[0]?.state, 'ready')
   const manifestPath = join(root, 'runtime', 'manifests', `php-${fixturePackage.version}-win32-x64.json`)
   const manifest = await readFile(manifestPath, 'utf8')
+  assert.equal(JSON.parse(manifest).installedPath, `toolchains/php/${fixturePackage.version}/win32-x64`)
   await writeFile(manifestPath, `\uFEFF${manifest}`, 'utf8')
   const bomManifest = new RuntimeToolchainInstaller(join(root, 'runtime'), {
     packages: [fixturePackage], fetchImpl: async () => { throw new Error('不应重复下载带 BOM 的清单') },

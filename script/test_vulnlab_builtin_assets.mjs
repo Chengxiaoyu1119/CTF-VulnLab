@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { zipSync } from '../src/node_modules/fflate/esm/index.mjs'
@@ -10,10 +10,14 @@ const root = await mkdtemp(join(tmpdir(), 'vulnlab-assets-'))
 try {
   const content = 'console.log("fixture")\n'
   const archive = Buffer.from(zipSync({ 'juice-shop-fixture/build/app.js': Buffer.from(content) }))
-  const md5 = createHash('md5').update(archive).digest('hex')
-  const fetchImpl = async url => String(url).endsWith('.md5')
-    ? new Response(md5, { status: 200, headers: { 'content-type': 'text/plain' } })
-    : new Response(archive, { status: 200, headers: { 'content-length': String(archive.length) } })
+  const sha256 = createHash('sha256').update(archive).digest('hex')
+  const fixtureAsset = {
+    url: 'https://fixture.invalid/juice-shop.zip',
+    sha256,
+    kind: 'zip',
+    filename: 'juice-shop-20.2.0_node22_win32_x64.zip',
+  }
+  const fetchImpl = async () => new Response(archive, { status: 200, headers: { 'content-length': String(archive.length) } })
   const stages = []
   const manifest = await installBuiltinAsset({
     lab: {
@@ -25,11 +29,14 @@ try {
     jobId: 'fixture-job',
     dataDir: root,
     fetchImpl,
+    assetOverride: fixtureAsset,
     onProgress: (_progress, stage) => stages.push(stage),
   })
   assert.equal(await readFile(join(manifest.localPath, 'build', 'app.js'), 'utf8'), content)
   assert.equal(manifest.adapterId, 'builtin-release')
   assert.equal(manifest.archiveSha256, createHash('sha256').update(archive).digest('hex'))
+  assert.equal(JSON.parse(await readFile(join(manifest.localPath, 'vulnlab.manifest.json'), 'utf8')).localPath, 'labs/juice-shop/fixture')
+  await assert.rejects(stat(join(root, 'downloads')))
   assert.ok(stages.includes('download'))
   assert.ok(stages.includes('extract'))
   assert.ok(stages.includes('completed'))
@@ -49,18 +56,27 @@ try {
     dataDir: root,
     bundleDir,
     offline: true,
+    assetOverride: fixtureAsset,
     fetchImpl: async () => { throw new Error('离线模式不应联网') },
   })
   assert.equal(await readFile(join(offlineManifest.localPath, 'build', 'app.js'), 'utf8'), content)
 
   const unsafeArchive = Buffer.from(zipSync({ '../outside.txt': Buffer.from('blocked') }))
-  const unsafeMd5 = createHash('md5').update(unsafeArchive).digest('hex')
+  const unsafeSha256 = createHash('sha256').update(unsafeArchive).digest('hex')
   await assert.rejects(() => installBuiltinAsset({
     lab: { ...manifest, id: 'unsafe', slug: 'juice-shop', title: 'unsafe', category: 'Web', difficulty: '中等', sourceType: 'git', sourceUrl: '', license: '', runtimeKind: 'native-node', providerId: 'native-node', builtin: true, version: 'unsafe', status: 'importing', summary: '', tags: [], importedAt: null, createdAt: '', updatedAt: '' },
     jobId: 'unsafe-job',
     dataDir: root,
-    fetchImpl: async url => String(url).endsWith('.md5') ? new Response(unsafeMd5) : new Response(unsafeArchive, { headers: { 'content-length': String(unsafeArchive.length) } }),
+    fetchImpl: async () => new Response(unsafeArchive, { headers: { 'content-length': String(unsafeArchive.length) } }),
+    assetOverride: { ...fixtureAsset, sha256: unsafeSha256 },
   }), /路径/)
+
+  await assert.rejects(() => installBuiltinAsset({
+    lab: { ...manifest, id: 'pinned', slug: 'juice-shop', version: '20.2.0', title: 'pinned', category: 'Web', difficulty: '中等', sourceType: 'git', sourceUrl: '', license: '', runtimeKind: 'native-node', providerId: 'native-node', builtin: true, status: 'importing', summary: '', tags: [], importedAt: null, createdAt: '', updatedAt: '' },
+    jobId: 'pinned-job',
+    dataDir: root,
+    fetchImpl: async () => new Response(archive, { headers: { 'content-length': String(archive.length) } }),
+  }), /SHA-256/)
 
   await assert.rejects(() => installBuiltinAsset({
     lab: {

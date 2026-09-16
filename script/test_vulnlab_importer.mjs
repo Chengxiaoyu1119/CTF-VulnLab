@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const require = createRequire(resolve(root, 'src/package.json'))
 const { zipSync } = require('fflate')
-const { importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../src/dist/importer.js', import.meta.url))
+const { cleanupImportStaging, cleanupStaleVulnLabTempDirs, importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../src/dist/importer.js', import.meta.url))
 
 const archive = zipSync({
   'DVWA-main/README.md': new TextEncoder().encode('# DVWA fixture'),
@@ -38,6 +38,7 @@ try {
   assert.equal(manifest.licenseFiles.length, 1)
   assert.equal(await readFile(join(manifest.localPath, 'README.md'), 'utf8'), '# DVWA fixture')
   assert.ok(calls.some(url => url.includes('/zip/' + 'a'.repeat(40))))
+  await cleanupImportStaging(manifest.localPath)
   const localArchivePath = join(dataDir, 'offline-source.zip')
   await writeFile(localArchivePath, archive)
   const localManifest = await importLocalArchive({
@@ -51,6 +52,9 @@ try {
   assert.equal(localManifest.adapterId, 'local-archive')
   assert.equal(localManifest.resolvedRef, `local@archive-sha256:${localManifest.archiveSha256}`)
   assert.equal(await readFile(join(localManifest.localPath, 'README.md'), 'utf8'), '# DVWA fixture')
+  assert.equal(JSON.parse(await readFile(resolve(localManifest.localPath, '..', '..', 'manifest.json'), 'utf8')).localPath, 'source/DVWA-main')
+  await assert.rejects(stat(resolve(localManifest.localPath, '..', '..', 'source.zip')))
+  await cleanupImportStaging(localManifest.localPath)
   assert.deepEqual(importerInternals.parseGitLabRepository('https://gitlab.com/group/subgroup/project'), { projectPath: 'group/subgroup/project' })
   assert.throws(() => importerInternals.parseGitLabRepository('https://gitlab.com/group/project.git'), ImporterError)
 
@@ -79,6 +83,7 @@ try {
     assert.ok(gitlabCalls.some(url => url.includes('group%2Fsubgroup%2Fproject')))
     assert.ok(gitlabCalls.some(url => url.includes('archive.zip?sha=' + 'd'.repeat(40))))
     assert.equal(gitlabArchiveHeaders[0]?.get('accept'), 'application/zip')
+    await cleanupImportStaging(gitlabManifest.localPath)
   } finally {
     await rm(gitlabDir, { recursive: true, force: true })
   }
@@ -137,6 +142,7 @@ try {
     assert.equal(sqliManifest.fileCount, 1)
     assert.equal(sqliManifest.warnings.length, 1)
     assert.equal(await readFile(join(sqliManifest.localPath, 'logged-in.php'), 'utf8'), '<?php echo "lower";')
+    await cleanupImportStaging(sqliManifest.localPath)
   } finally {
     await rm(sqliCollisionDir, { recursive: true, force: true })
   }
@@ -160,6 +166,7 @@ try {
     assert.equal(fallbackManifest.revision, `archive-${fallbackManifest.archiveSha256}`)
     assert.equal(fallbackManifest.resolvedRef, `main@archive-sha256:${fallbackManifest.archiveSha256}`)
     assert.ok(fallbackCalls.some(url => url.includes('/zip/refs/heads/main')))
+    await cleanupImportStaging(fallbackManifest.localPath)
   } finally {
     await rm(fallbackDir, { recursive: true, force: true })
   }
@@ -183,6 +190,7 @@ try {
     assert.equal(pinnedManifest.resolvedRef, `${pinnedSha}@archive-sha256:${pinnedManifest.archiveSha256}`)
     assert.ok(pinnedFallbackCalls.some(url => url.endsWith(`/zip/${pinnedSha}`)))
     assert.ok(!pinnedFallbackCalls.some(url => url.includes('/refs/heads/')))
+    await cleanupImportStaging(pinnedManifest.localPath)
   } finally {
     await rm(pinnedFallbackDir, { recursive: true, force: true })
   }
@@ -207,6 +215,7 @@ try {
     assert.equal(branchFallbackManifest.resolvedRef, `master@archive-sha256:${branchFallbackManifest.archiveSha256}`)
     assert.ok(branchFallbackCalls.some(url => url.includes('/zip/refs/heads/main')))
     assert.ok(branchFallbackCalls.some(url => url.includes('/zip/refs/heads/master')))
+    await cleanupImportStaging(branchFallbackManifest.localPath)
   } finally {
     await rm(branchFallbackDir, { recursive: true, force: true })
   }
@@ -228,6 +237,18 @@ try {
     }), ImporterError)
   } finally {
     await rm(abortDir, { recursive: true, force: true })
+  }
+
+  const staleTempRoot = await mkdtemp(join(tmpdir(), 'vulnlab-stale-parent-'))
+  try {
+    const staleDir = join(staleTempRoot, 'vulnlab-import-stale')
+    await mkdir(staleDir)
+    const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
+    await utimes(staleDir, staleTime, staleTime)
+    assert.equal(await cleanupStaleVulnLabTempDirs(staleTempRoot), 1)
+    await assert.rejects(stat(staleDir))
+  } finally {
+    await rm(staleTempRoot, { recursive: true, force: true })
   }
 
   console.log('VulnLab importer test passed: fixed revision, rate-limit fallback, hash manifest, safe extraction and traversal guard.')

@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, createReadStream, mkdirSync, openSync, writeSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate'
+import { runtimePaths } from './paths.js'
 
 export type RuntimeToolchainId = 'php' | 'mariadb' | 'node' | 'java' | 'python'
 export type RuntimeToolchainState = 'missing' | 'installing' | 'ready' | 'error'
@@ -253,6 +255,11 @@ const extractZip = async (archivePath: string, targetRoot: string, input: Runtim
 }
 
 const extractTar = async (archivePath: string, targetRoot: string, input: RuntimeToolchainPackage) => {
+  const detailedListing = await command('tar', ['-tvzf', archivePath])
+  const detailedEntries = detailedListing.stdout.split(/\r?\n/).filter(Boolean)
+  if (!detailedEntries.length || detailedEntries.some(entry => !['-', 'd'].includes(entry.trimStart().charAt(0)))) {
+    throw new RuntimeToolchainError('运行时 TAR 包包含链接或特殊文件。')
+  }
   const listing = await command('tar', ['-tzf', archivePath])
   const entries = listing.stdout.split(/\r?\n/).filter(Boolean)
   if (!entries.length || entries.length > MAX_FILES) throw new RuntimeToolchainError('运行时 TAR 文件数量异常。')
@@ -281,11 +288,13 @@ export class RuntimeToolchainInstaller {
   private readonly fetchImpl: typeof fetch
   private readonly bundleDir?: string
   private readonly offline: boolean
+  private readonly paths: ReturnType<typeof runtimePaths>
   private statuses: RuntimeToolchainStatus[] = []
   private installPromise: Promise<RuntimeToolchainStatus[]> | null = null
 
   constructor(runtimeDir: string, options: RuntimeToolchainInstallerOptions = {}) {
     this.runtimeDir = resolve(runtimeDir)
+    this.paths = runtimePaths(this.runtimeDir)
     this.packages = options.packages ?? defaultPackages
     this.fetchImpl = options.fetchImpl ?? fetch
     this.bundleDir = options.bundleDir?.trim() ? resolve(options.bundleDir) : undefined
@@ -293,11 +302,11 @@ export class RuntimeToolchainInstaller {
   }
 
   private installRoot(input: RuntimeToolchainPackage) {
-    return join(this.runtimeDir, 'toolchains', input.id, input.version, `${input.platform}-${input.arch}`)
+    return this.paths.toolchain(input.id, input.version, input.platform, input.arch)
   }
 
   private manifestPath(input: RuntimeToolchainPackage) {
-    return join(this.runtimeDir, 'manifests', `${input.id}-${input.version}-${input.platform}-${input.arch}.json`)
+    return this.paths.manifest(`${input.id}-${input.version}-${input.platform}-${input.arch}.json`)
   }
 
   private status(input: RuntimeToolchainPackage, values: Partial<RuntimeToolchainStatus> = {}): RuntimeToolchainStatus {
@@ -401,13 +410,14 @@ export class RuntimeToolchainInstaller {
 
   private async installPackage(input: RuntimeToolchainPackage) {
     const finalRoot = this.installRoot(input)
-    const stagingRoot = join(this.runtimeDir, 'toolchains', `.staging-${input.id}-${randomUUID()}`)
-    const downloadPath = join(this.runtimeDir, 'downloads', `${input.filename}.part`)
-    await mkdir(dirname(downloadPath), { recursive: true })
-    await mkdir(dirname(finalRoot), { recursive: true })
-    await mkdir(stagingRoot, { recursive: true })
-    this.updateStatus(input.id, { state: 'installing', detail: '正在准备运行时包', downloadedBytes: 0 })
+    const stagingRoot = join(this.paths.toolchains, `.staging-${input.id}-${randomUUID()}`)
+    let quarantineRoot: string | undefined
     try {
+      quarantineRoot = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-'))
+      const downloadPath = join(quarantineRoot, `${input.filename}.part`)
+      await mkdir(dirname(finalRoot), { recursive: true })
+      await mkdir(stagingRoot, { recursive: true })
+      this.updateStatus(input.id, { state: 'installing', detail: '正在准备运行时包', downloadedBytes: 0 })
       const bundledBytes = await this.copyBundledArchive(input, downloadPath)
       const downloadedBytes = bundledBytes ?? (this.offline
         ? (() => { throw new RuntimeToolchainError(`${input.label} 离线模式未找到已校验发行包。`) })()
@@ -430,7 +440,7 @@ export class RuntimeToolchainInstaller {
         arch: input.arch,
         sourceUrl: input.url,
         archiveSha256: input.sha256,
-        installedPath: finalRoot,
+        installedPath: `toolchains/${input.id}/${input.version}/${input.platform}-${input.arch}`,
         installedBytes,
         fileCount: extracted.fileCount,
         executables: input.executables,
@@ -452,7 +462,7 @@ export class RuntimeToolchainInstaller {
       throw error instanceof RuntimeToolchainError ? error : new RuntimeToolchainError(detail)
     } finally {
       await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
-      await rm(downloadPath, { force: true }).catch(() => undefined)
+      if (quarantineRoot) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 

@@ -5,7 +5,7 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { mysqlClientArguments, type MySqlRuntimeConfig } from './mysql.js'
 import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainStatus } from './runtime-toolchains.js'
-import { dataPaths } from './paths.js'
+import { dataPaths, runtimePaths } from './paths.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 
@@ -242,8 +242,9 @@ export class ProjectEnvironmentManager {
     const paths = dataPaths(options.dataDir)
     this.dataDir = paths.root
     this.runtimeDir = paths.runtime
-    this.phpDir = join(this.runtimeDir, 'php')
-    this.mysqlDir = join(this.runtimeDir, 'mysql')
+    const runtime = runtimePaths(this.runtimeDir)
+    this.phpDir = runtime.php
+    this.mysqlDir = runtime.mysql
     this.mysqlDataDir = join(this.mysqlDir, 'data-mariadb')
     this.mysqlLogDir = join(this.mysqlDir, 'logs')
     this.phpBinaryOverride = options.phpBinary?.trim() || undefined

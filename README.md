@@ -11,7 +11,6 @@
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
   [![Fastify](https://img.shields.io/badge/Fastify-5-111111?logo=fastify&logoColor=white)](https://fastify.dev/)
   [![SQLite](https://img.shields.io/badge/SQLite-单文件-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
-  [![License](https://img.shields.io/badge/License-Apache--2.0-D22128)](LICENSE)
 </div>
 
 <p align="center">
@@ -31,7 +30,7 @@ VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面
 
 当前代码处于开发基线，当前版本为 `0.1.0`。主服务采用 Node.js 原生运行，当前只维护 Windows x64 本地运行链路。
 
-大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务会记录每次下载的 SHA-256，并在上游提供固定校验值时先完成比对。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
+大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务先把原始包写入系统临时隔离目录，完成体积、路径和 SHA-256 校验后才进入 `src/data`。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
 
 项目支持半联网和离线准备：设置 `VULNLAB_BUNDLE_DIR` 指向本地发行包目录后，启动流程按“本地 bundle → 已有 data 缓存 → 官方网络来源”选择资源；设置 `VULNLAB_OFFLINE=1` 后禁止联网，只使用本地发行包和已有缓存。发行包目录不提交到 Git。
 
@@ -72,7 +71,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | SQLi-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | Upload-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP |
 | XVWA | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| OWASP Juice Shop | 官方发行包 `20.2.0` | 页面按需校验后解包 | Node.js |
+| OWASP Juice Shop | 官方发行包 `20.2.0` | 页面按需固定 SHA-256 校验后解包 | Node.js |
 | OWASP WebGoat | 官方发行包 `2023.8` | 页面按需校验后安装 | Java |
 | OWASP Mutillidae II | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
 | OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
@@ -179,6 +178,4 @@ GitHub CI 当前在 Windows runner 上执行类型检查、构建、fixture 测�
 
 ## 许可证
 
-项目自有代码采用 [Apache License 2.0](LICENSE)。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
-
-安全问题请通过 [GitHub Private Vulnerability Reporting](SECURITY.md) 提交。
+项目自有代码采用 Apache License 2.0。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。

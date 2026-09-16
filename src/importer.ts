@@ -1,17 +1,20 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Readable } from 'node:stream'
 import { unzipSync } from 'fflate'
 import type { ImportManifest } from './types.js'
-import { dataPaths } from './paths.js'
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_FILE_COUNT = 20_000
 const MAX_EXTRACTED_BYTES = 512 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 30_000
 const USER_AGENT = 'VulnLab/0.2'
+const stagingRoots = new Set<string>()
+const staleTempPrefixes = ['vulnlab-import-', 'vulnlab-builtin-', 'vulnlab-runtime-']
+const STALE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
 
 export class ImporterError extends Error {
   constructor(message: string) {
@@ -34,6 +37,41 @@ interface ImportInput {
   onProgress?: (progress: number, stage: string, message: string) => void
   fetchImpl?: typeof fetch
   portablePathPolicy?: 'strict' | 'case-collision-lowercase'
+}
+
+const createStagingRoot = async () => {
+  const root = await mkdtemp(join(tmpdir(), 'vulnlab-import-'))
+  stagingRoots.add(root)
+  return root
+}
+
+export const cleanupImportStaging = async (path: string) => {
+  const resolved = resolve(path)
+  for (const root of stagingRoots) {
+    const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+    if (resolved !== root && !resolved.startsWith(prefix)) continue
+    stagingRoots.delete(root)
+    await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    return
+  }
+}
+
+export const cleanupStaleVulnLabTempDirs = async (tempRoot = tmpdir(), now = Date.now()) => {
+  const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => [])
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !staleTempPrefixes.some(prefix => entry.name.startsWith(prefix))) continue
+    const path = join(tempRoot, entry.name)
+    const info = await stat(path).catch(() => null)
+    if (!info?.isDirectory() || now - info.mtimeMs < STALE_TEMP_AGE_MS) continue
+    try {
+      await rm(path, { recursive: true, force: true })
+      removed += 1
+    } catch {
+      // Keep the next startup responsible for a directory that is still locked.
+    }
+  }
+  return removed
 }
 
 const report = (input: ImportInput, progress: number, stage: string, message: string) => input.onProgress?.(progress, stage, message)
@@ -237,7 +275,6 @@ const licenseNames = new Set(['license', 'license.md', 'license.txt', 'copying',
 interface ArchiveImportOptions {
   archive: Uint8Array
   root: string
-  archivePath: string
   extractRoot: string
   adapterId: string
   branch: string
@@ -250,7 +287,6 @@ const importRepositoryArchive = async (input: ImportInput, options: ArchiveImpor
   const archiveSha256 = sha256(options.archive)
   const revision = options.revision || `archive-${archiveSha256}`
   await mkdir(options.root, { recursive: true })
-  await writeFile(options.archivePath, options.archive)
 
   report(input, 52, 'inspect', `检查 ${options.sourceLabel} 压缩包目录和体积。`)
   let files: Record<string, Uint8Array>
@@ -293,15 +329,13 @@ const importRepositoryArchive = async (input: ImportInput, options: ArchiveImpor
     warnings: portable.warnings,
     importedAt: new Date().toISOString(),
   }
-  await writeFile(join(options.root, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
-  await rm(options.archivePath, { force: true })
+  await writeFile(join(options.root, 'manifest.json'), JSON.stringify({ ...manifest, localPath: relative(options.root, localPath).replaceAll('\\', '/') }, null, 2), 'utf8')
   report(input, 100, 'completed', `${options.sourceLabel} 导入完成，共 ${manifest.fileCount} 个文件。`)
   return manifest
 }
 
 export const importLocalArchive = async (input: ImportInput & { archivePath: string; sourceLabel?: string }): Promise<ImportManifest> => {
-  const root = dataPaths(input.dataDir).importJob(input.jobId)
-  const archivePath = join(root, 'source.zip')
+  const root = await createStagingRoot()
   try {
     const archive = await readFile(resolve(input.archivePath))
     if (archive.byteLength > MAX_ARCHIVE_BYTES) throw new ImporterError(`本地发行包超过 ${Math.round(MAX_ARCHIVE_BYTES / 1024 / 1024)} MiB 限制。`)
@@ -309,7 +343,6 @@ export const importLocalArchive = async (input: ImportInput & { archivePath: str
     return await importRepositoryArchive(input, {
       archive,
       root,
-      archivePath,
       extractRoot: join(root, 'source'),
       adapterId: 'local-archive',
       branch: 'local',
@@ -318,7 +351,7 @@ export const importLocalArchive = async (input: ImportInput & { archivePath: str
       sourceLabel: input.sourceLabel ?? '本地',
     })
   } catch (error) {
-    await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    await cleanupImportStaging(root)
     if (error instanceof ImporterError) throw error
     throw new ImporterError(error instanceof Error ? error.message : '读取本地发行包失败。')
   }
@@ -329,8 +362,7 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
   const fetchImpl = input.fetchImpl ?? fetch
   const headers = { accept: 'application/vnd.github+json', 'user-agent': USER_AGENT }
   const apiBase = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}`
-  const root = dataPaths(input.dataDir).importJob(input.jobId)
-  const archivePath = join(root, 'source.zip')
+  const root = await createStagingRoot()
   const extractRoot = join(root, 'source')
   try {
     report(input, 8, 'repository', '读取 GitHub 仓库信息。')
@@ -382,7 +414,6 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
     return await importRepositoryArchive(input, {
       archive,
       root,
-      archivePath,
       extractRoot,
       adapterId: 'github-git',
       branch,
@@ -391,7 +422,7 @@ export const importGitHubRepository = async (input: ImportInput): Promise<Import
       sourceLabel: 'GitHub',
     })
   } catch (error) {
-    await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    await cleanupImportStaging(root)
     if (error instanceof ImporterError) throw error
     throw new ImporterError(error instanceof Error ? error.message : '导入过程出现未知错误。')
   }
@@ -429,8 +460,7 @@ export const importGitLabRepository = async (input: ImportInput): Promise<Import
   const headers = { accept: 'application/json', 'user-agent': USER_AGENT }
   const encodedProject = encodeURIComponent(repository.projectPath)
   const apiBase = `https://gitlab.com/api/v4/projects/${encodedProject}`
-  const root = dataPaths(input.dataDir).importJob(input.jobId)
-  const archivePath = join(root, 'source.zip')
+  const root = await createStagingRoot()
   const extractRoot = join(root, 'source')
   try {
     report(input, 8, 'repository', '读取 GitLab 仓库信息。')
@@ -484,7 +514,6 @@ export const importGitLabRepository = async (input: ImportInput): Promise<Import
     return await importRepositoryArchive(input, {
       archive,
       root,
-      archivePath,
       extractRoot,
       adapterId: 'gitlab-git',
       branch: archiveBranch,
@@ -493,7 +522,7 @@ export const importGitLabRepository = async (input: ImportInput): Promise<Import
       sourceLabel: 'GitLab',
     })
   } catch (error) {
-    await rm(root, { recursive: true, force: true }).catch(() => undefined)
+    await cleanupImportStaging(root)
     if (error instanceof ImporterError) throw error
     throw new ImporterError(error instanceof Error ? error.message : 'GitLab 导入过程出现未知错误。')
   }

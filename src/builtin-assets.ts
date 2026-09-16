@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
 import { unzipSync } from 'fflate'
 import type { ImportManifest, Lab } from './types.js'
@@ -20,7 +21,6 @@ export class BuiltinAssetError extends Error {
 
 interface BuiltinAsset {
   url: string
-  checksumUrl?: string
   sha256?: string
   kind: 'zip' | 'tgz' | 'file'
   filename: string
@@ -30,7 +30,12 @@ const juiceShopAsset = (): BuiltinAsset => {
   const suffix = 'win32_x64.zip'
   const filename = `juice-shop-20.2.0_node22_${suffix}`
   const url = `https://github.com/juice-shop/juice-shop/releases/download/v20.2.0/${filename}`
-  return { url, checksumUrl: `${url}.md5`, kind: 'zip', filename }
+  return {
+    url,
+    sha256: '33b253bfdce5e964c485d709277f9e54d357d3163a7bf798ac3998aee7c071c6',
+    kind: 'zip',
+    filename,
+  }
 }
 
 const assets: Record<string, () => BuiltinAsset> = {
@@ -60,12 +65,6 @@ const safeTarget = (root: string, segments: string[]) => {
   const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`
   if (target !== resolvedRoot && !target.startsWith(prefix)) throw new BuiltinAssetError('发行包路径越出安装目录。')
   return target
-}
-
-const fetchText = async (url: string, signal?: AbortSignal, fetchImpl: typeof fetch = fetch) => {
-  const response = await fetchImpl(url, { signal, headers: { accept: 'text/plain', 'user-agent': 'VulnLab/0.3' } })
-  if (!response.ok) throw new BuiltinAssetError(`读取官方校验文件失败（HTTP ${response.status}）。`)
-  return response.text()
 }
 
 const download = async (url: string, destination: string, signal: AbortSignal | undefined, onProgress: (progress: number, stage: string, message: string) => void, fetchImpl: typeof fetch) => {
@@ -237,33 +236,33 @@ export interface InstallBuiltinAssetInput {
   fetchImpl?: typeof fetch
   bundleDir?: string
   offline?: boolean
+  assetOverride?: BuiltinAsset
 }
 
 export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Promise<ImportManifest> => {
   const assetFactory = assets[input.lab.slug]
   if (!assetFactory) throw new BuiltinAssetError('该靶场没有内置发行包安装器。')
-  const asset = assetFactory()
+  const asset = input.assetOverride ?? assetFactory()
   const fetchImpl = input.fetchImpl ?? fetch
   const report = input.onProgress ?? (() => undefined)
   const paths = dataPaths(input.dataDir)
   const installRoot = paths.lab(input.lab.slug, input.lab.version)
-  const downloadRoot = paths.labDownload(input.lab.slug, input.lab.version)
-  const archivePath = join(downloadRoot, asset.filename)
-  await rm(installRoot, { recursive: true, force: true })
-  await mkdir(installRoot, { recursive: true })
+  let quarantineRoot: string | undefined
   try {
+    quarantineRoot = await mkdtemp(join(tmpdir(), 'vulnlab-builtin-'))
+    const archivePath = join(quarantineRoot, asset.filename)
+    await rm(installRoot, { recursive: true, force: true })
     report(5, 'metadata', '正在读取官方发行信息。')
     const bundled = await bundledArchive(input.bundleDir, input.lab, asset, archivePath, report)
     const expectedMd5 = bundled?.checksumPath
       ? (await readFile(bundled.checksumPath, 'utf8').catch(() => '')).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
-      : asset.checksumUrl && !input.offline
-        ? (await fetchText(asset.checksumUrl, input.signal, fetchImpl)).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
-        : ''
+      : ''
     const downloaded = bundled ?? (input.offline
       ? (() => { throw new BuiltinAssetError(`${asset.filename} 离线模式未找到发行包。`) })()
       : await download(asset.url, archivePath, input.signal, report, fetchImpl))
     if (expectedMd5 && downloaded.md5 !== expectedMd5) throw new BuiltinAssetError('官方发行包 MD5 校验不一致。')
     if (asset.sha256 && downloaded.sha256 !== asset.sha256) throw new BuiltinAssetError('官方发行包 SHA-256 校验不一致。')
+    await mkdir(installRoot, { recursive: true })
     let localPath = installRoot
     let fileCount = 1
     let totalBytes = downloaded.bytes
@@ -297,14 +296,15 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
       warnings: expectedMd5 || asset.sha256 ? [] : ['上游未提供独立校验文件，已记录本次下载的 SHA-256。'],
       importedAt: new Date().toISOString(),
     }
-    await writeFile(join(installRoot, 'vulnlab.manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
-    await rm(downloadRoot, { recursive: true, force: true })
+    const persistedManifest = { ...manifest, localPath: relative(paths.root, localPath).replaceAll('\\', '/') }
+    await writeFile(join(installRoot, 'vulnlab.manifest.json'), JSON.stringify(persistedManifest, null, 2), 'utf8')
     report(100, 'completed', '官方发行包安装完成。')
     return manifest
   } catch (error) {
     await rm(installRoot, { recursive: true, force: true }).catch(() => undefined)
-    await rm(downloadRoot, { recursive: true, force: true }).catch(() => undefined)
     if (error instanceof BuiltinAssetError) throw error
     throw new BuiltinAssetError(error instanceof Error ? error.message : '内置发行包安装失败。')
+  } finally {
+    if (quarantineRoot) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
   }
 }

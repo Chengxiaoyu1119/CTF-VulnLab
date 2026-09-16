@@ -148,6 +148,17 @@ const login = async baseUrl => {
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-operational-'))
 let server = null
 try {
+  const wildcardHostError = await assertStartupRejected({
+    port: 6740,
+    dataDir: join(root, 'wildcard-host'),
+    overrides: {
+      VULNLAB_HOST: '0.0.0.0',
+      VULNLAB_PUBLIC_URL: '',
+      VULNLAB_COOKIE_SECRET: '0123456789abcdef0123456789abcdef',
+      VULNLAB_ADMIN_PASSWORD: 'ProductionAdmin-2026!',
+    },
+  })
+  assert.match(wildcardHostError, /VULNLAB_PUBLIC_URL/)
   const sessionDir = join(root, 'session')
   server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)

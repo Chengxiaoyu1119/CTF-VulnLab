@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { VulnLabDatabase } from './db.js'
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
-import { importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
+import { cleanupImportStaging, cleanupStaleVulnLabTempDirs, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
@@ -98,6 +98,7 @@ const persistedHost = persistedSettings.bindHost === 'localhost' || isIP(persist
 const persistedPort = Number(persistedSettings.port)
 const host = hasHostOverride ? configuredHost : persistedHost
 const port = hasPortOverride || !Number.isInteger(persistedPort) || persistedPort < 1024 || persistedPort > 65535 ? fallbackPort : persistedPort
+if ((host === '0.0.0.0' || host === '::') && !configuredPublicUrl) throw new Error('监听所有网卡时必须设置 VULNLAB_PUBLIC_URL。')
 const recoverProviderInstances = async () => {
   for (const instance of database.listInstances().filter(item => item.status === 'running')) {
     const lab = database.getLab(instance.labId)
@@ -352,12 +353,10 @@ const requestIds = (request: FastifyRequest, reply: FastifyReply): string[] | nu
   return [...new Set(ids)]
 }
 
-const publicOrigin = (request: FastifyRequest) => {
+const publicOrigin = (_request: FastifyRequest) => {
   if (configuredPublicUrl) return configuredPublicUrl
   if (host !== '0.0.0.0' && host !== '::') return `http://${host}:${port}`
-  const protocol = request.protocol
-  const requestHost = request.headers.host
-  return requestHost ? `${protocol}://${requestHost}` : `http://127.0.0.1:${port}`
+  return configuredPublicUrl
 }
 
 const isDirectory = async (path: string) => (await stat(path).catch(() => null))?.isDirectory() ?? false
@@ -539,11 +538,15 @@ const runImportJob = (jobId: string, actor: string) => {
             onProgress: progress,
           })
         : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
-      const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
-      await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary)
-      database.completeJob(jobId, manifest)
-      await cleanupOutdatedBuiltinVersions({ ...lab, localPath: manifest.localPath })
-      database.addAudit(actor, 'import.completed', lab.title, `${manifest.resolvedRef} · sha256:${manifest.archiveSha256}`)
+      try {
+        const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
+        await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary)
+        database.completeJob(jobId, manifest)
+        await cleanupOutdatedBuiltinVersions({ ...lab, localPath: manifest.localPath })
+        database.addAudit(actor, 'import.completed', lab.title, `${manifest.resolvedRef} · sha256:${manifest.archiveSha256}`)
+      } finally {
+        await cleanupImportStaging(importedManifest.localPath)
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         database.updateJob(jobId, { status: 'importing', stage: 'stopping', message: '服务关闭，任务将在下次启动后恢复。' })
@@ -1049,6 +1052,8 @@ app.setErrorHandler((error, _request, reply) => {
 })
 
 const start = async () => {
+  const removedTempDirs = await cleanupStaleVulnLabTempDirs()
+  if (removedTempDirs) app.log.info({ removedTempDirs }, '已清理异常退出遗留的 VulnLab 临时目录。')
   const reconciliation = database.reconcileBuiltinPaths(dataDir)
   if (reconciliation.repaired.length || reconciliation.reset.length) {
     app.log.info(reconciliation, '内置靶场路径已完成启动前对账。')

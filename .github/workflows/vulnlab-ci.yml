@@ -14,6 +14,7 @@ on:
       - "script/test_vulnlab_importer.mjs"
       - "script/test_vulnlab_builtin_assets.mjs"
       - "script/test_vulnlab_runtime_status.mjs"
+      - "script/test_vulnlab_runtime_prep.mjs"
       - "script/test_vulnlab_database.mjs"
       - "script/test_vulnlab_expiration.mjs"
       - "script/test_vulnlab_provider.mjs"
@@ -23,6 +24,7 @@ on:
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
       - "script/run_vulnlab.ps1"
+      - "README.md"
   pull_request:
     paths:
       - ".github/workflows/vulnlab-ci.yml"
@@ -38,6 +40,7 @@ on:
       - "script/test_vulnlab_importer.mjs"
       - "script/test_vulnlab_builtin_assets.mjs"
       - "script/test_vulnlab_runtime_status.mjs"
+      - "script/test_vulnlab_runtime_prep.mjs"
       - "script/test_vulnlab_provider.mjs"
       - "script/test_vulnlab_mysql.mjs"
       - "script/test_vulnlab_runtime_toolchains.mjs"
@@ -45,6 +48,7 @@ on:
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
       - "script/run_vulnlab.ps1"
+      - "README.md"
   workflow_dispatch:
 
 permissions:
@@ -74,9 +78,9 @@ jobs:
         working-directory: src
         run: npm ci
 
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         working-directory: src
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Type check
         working-directory: src

@@ -15,6 +15,10 @@ try {
   assert.equal(paths.importJob('job-fixture'), join(dataDir, 'imports', 'job-fixture'))
   assert.equal(paths.labDownload('upload-labs', 'fixture'), join(dataDir, 'downloads', 'upload-labs', 'fixture'))
   assert.equal(paths.runtimeInstance('instance-fixture'), join(dataDir, 'runtime', 'instance-fixture'))
+  assert.equal(paths.runtimeToolchain('php', '8.3.33', 'win32', 'x64'), join(dataDir, 'runtime', 'toolchains', 'php', '8.3.33', 'win32-x64'))
+  assert.equal(paths.runtimeManifest('php-8.3.33-win32-x64.json'), join(dataDir, 'runtime', 'manifests', 'php-8.3.33-win32-x64.json'))
+  assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
+  assert.equal(paths.runtimeMysql, join(dataDir, 'runtime', 'mysql'))
   assert.throws(() => paths.lab('bad/slug', 'fixture'), /不是有效的路径片段/)
   assert.throws(() => paths.runtimeInstance('../escape'), /不是有效的路径片段/)
 
