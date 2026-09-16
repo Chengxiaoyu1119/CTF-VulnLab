@@ -90,10 +90,14 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-validation-tablet.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
         register_requests = []
+        login_animation_starts_before_switch = page.evaluate("window.__vulnlabLoginAnimationStarts")
 
         def block_register(route, request):
             register_requests.append(request.url)
             route.abort()
+
+        def fulfill_register(route, request):
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true,"message":"注册成功"}')
 
         page.route("**/api/auth/register", block_register)
         page.get_by_role("tab", name="注册", exact=True).click()
@@ -107,8 +111,9 @@ def main() -> None:
         expect(page.get_by_role("button", name="注册账号", exact=True)).to_be_enabled()
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_count(1)
         expect(page.locator('[data-field="confirm"] .login-field-icon svg')).to_have_attribute("viewBox", "0 0 1024 1024")
+        expect(page.get_by_role("tab", name="注册", exact=True)).to_be_focused()
         page.wait_for_timeout(520)
-        assert page.evaluate("window.__vulnlabLoginAnimationStarts >= 2")
+        assert page.evaluate("window.__vulnlabLoginAnimationStarts") == login_animation_starts_before_switch
         page.get_by_role("button", name="注册账号", exact=True).click()
         expect(page.locator("#login-error")).to_have_count(0)
         expect(page.locator(".login-field-error")).to_have_count(4)
@@ -140,6 +145,22 @@ def main() -> None:
         page.get_by_label("邀请码", exact=True).press("Enter")
         expect(page.locator("#login-error")).to_contain_text("网络连接失败，请检查网络后重试")
         assert register_requests
+        expect(page.locator('[data-field="password"] .password-toggle')).to_have_count(1)
+        expect(page.locator('[data-field="confirm"] .password-toggle')).to_have_count(1)
+        page.locator('[data-field="password"] .password-toggle').click()
+        expect(page.get_by_label("密码", exact=True)).to_have_attribute("type", "text")
+        page.locator('[data-field="password"] .password-toggle').click()
+        page.locator('[data-field="confirm"] .password-toggle').click()
+        expect(page.get_by_label("确认密码", exact=True)).to_have_attribute("type", "text")
+        page.locator('[data-field="confirm"] .password-toggle').click()
+        page.unroute("**/api/auth/register")
+        page.route("**/api/auth/register", fulfill_register)
+        login_animation_starts_before_register_success = page.evaluate("window.__vulnlabLoginAnimationStarts")
+        page.get_by_role("button", name="注册账号", exact=True).click()
+        expect(page.get_by_role("tab", name="登录", exact=True)).to_have_attribute("aria-selected", "true")
+        expect(page.locator("#auth-success-notice")).to_contain_text("注册成功")
+        expect(page.get_by_label("账号", exact=True)).to_be_focused()
+        assert page.evaluate("window.__vulnlabLoginAnimationStarts") == login_animation_starts_before_register_success
         page.get_by_role("tab", name="登录", exact=True).click()
         expect(page.get_by_role("button", name="登录系统", exact=True)).to_be_visible()
         expect(page.get_by_label("确认密码", exact=True)).to_have_count(0)
