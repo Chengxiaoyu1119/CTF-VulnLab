@@ -192,6 +192,17 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .audit-entry-time { display: inline-flex; width: 120px; min-width: 120px; box-sizing: border-box; align-items: baseline; justify-content: flex-start; gap: 6px; border-left: 1px solid #3b3b3b; padding-left: 8px; color: #858585; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .audit-entry-date { color: #777; }
 .audit-entry-clock { color: #b5b5b5; font-weight: 600; }
+.admin-user-entry { display: flex; min-width: 0; align-items: center; gap: 12px; border: 1px solid #353535; border-radius: 7px; padding: 9px 10px; background-color: #1b1b1b; font-size: 10px; }
+.admin-user-entry.is-selected { border-color: #72502f; background-color: #211d19; }
+.admin-user-entry > .admin-record-select { flex: 0 0 auto; }
+.admin-user-content { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) 170px; align-items: center; gap: 12px; }
+.admin-user-heading { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.admin-user-heading strong { min-width: 0; color: #d9d9d9; font-size: 11px; font-weight: 650; }
+.admin-user-name { overflow-wrap: anywhere; word-break: break-word; }
+.admin-user-current { flex: 0 0 auto; color: #ffb15f; font-size: 10px; white-space: nowrap; }
+.admin-user-time { display: flex; min-width: 0; align-items: baseline; justify-content: flex-start; gap: 6px; color: #858585; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-user-time-label, .admin-user-date { color: #777; }
+.admin-user-clock { color: #b5b5b5; font-weight: 600; }
 .invitation-history-card strong, .audit-entry strong { color: #d9d9d9; font-size: 11px; font-weight: 650; }
 .invitation-history-card time, .invitation-history-meta > span, .audit-entry > div > span { color: #858585; white-space: nowrap; }
 .invitation-history-card[data-status="active"] strong { color: #ffb15f; }
@@ -352,6 +363,8 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .login-logo { width: 60px; height: 60px; }
   .login-brand h1 { font-size: 22px; }
   .audit-entry-content { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+  .admin-user-content { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+  .admin-user-time { white-space: normal; }
 }
 
 @media (max-width: 350px) {

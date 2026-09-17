@@ -6,6 +6,7 @@ import os
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -278,7 +279,7 @@ def main() -> None:
         expect(page.locator(".labs-screen")).to_be_visible()
         expect(page.locator(".workspace-account")).to_have_count(0)
         expect(page.get_by_role("button", name="vulnlab", exact=True)).to_have_count(0)
-        expect(page.get_by_role("button", name="邀请码管理", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
         page.set_viewport_size({"width": 390, "height": 844})
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
@@ -353,13 +354,13 @@ def main() -> None:
         page.keyboard.press("Escape")
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
         expect(notice_detail_trigger).to_be_focused()
-        admin_trigger = page.get_by_role("button", name="邀请码管理", exact=True)
+        admin_trigger = page.get_by_role("button", name="管理中心", exact=True)
         with page.expect_response(lambda response: response.url.endswith("/api/auth/invitations") and response.request.method == "GET") as invitations_response_info:
             with page.expect_response(lambda response: response.url.endswith("/api/audit") and response.request.method == "GET") as audit_response_info:
                 admin_trigger.click()
         assert invitations_response_info.value.headers.get("cache-control") == "no-store"
         assert audit_response_info.value.headers.get("cache-control") == "no-store"
-        expect(page.get_by_role("dialog", name="邀请码管理")).to_be_visible()
+        expect(page.get_by_role("dialog", name="管理中心")).to_be_visible()
         expect(page.locator(".admin-loading")).to_have_count(0)
         expect(page.locator(".admin-inline-error")).to_have_count(0)
         expect(page.locator(".invitation-empty-state")).to_be_visible()
@@ -368,8 +369,10 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
         invitation_button = page.locator('[data-action="open-admin-records"][data-panel="invitations"]')
         audit_button = page.locator('[data-action="open-admin-records"][data-panel="audit"]')
+        account_button = page.locator('[data-action="open-admin-records"][data-panel="users"]')
         expect(invitation_button).to_have_count(1)
         expect(audit_button).to_have_count(1)
+        expect(account_button).to_have_count(1)
         invitation_button.click()
         expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
         page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
@@ -450,6 +453,97 @@ def main() -> None:
             invitation_cleanup_confirm.get_by_role("button", name="删除所选", exact=True).click()
             expect(page.locator(".invitation-history-card")).to_have_count(0)
         page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
+
+        account_password = "secret123"
+        account_names = [f"ui-delete-{os.getpid()}-{time.time_ns() % 100000}-{index}" for index in range(6)]
+        registration_results = page.evaluate(
+            """async ({ names, password }) => {
+                const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
+                const results = []
+                for (const userName of names) {
+                    const authHeaders = { 'X-CSRF-Token': session.csrfToken }
+                    const invitationResponse = await fetch('/api/auth/invitations', { method: 'POST', headers: authHeaders })
+                    const invitation = await invitationResponse.json()
+                    const registerResponse = await fetch('/api/auth/register', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userName, password, passwordConfirm: password, inviteCode: invitation.code }),
+                    })
+                    const registration = await registerResponse.json()
+                    const cleanupResponse = await fetch(`/api/auth/invitations/${invitation.id}/record`, { method: 'DELETE', headers: authHeaders })
+                    results.push({ userName, invitationStatus: invitationResponse.status, invitation, registerStatus: registerResponse.status, registration, cleanupStatus: cleanupResponse.status })
+                }
+                return results
+            }""",
+            {"names": account_names, "password": account_password},
+        )
+        assert all(item["registerStatus"] == 200 and item["registration"].get("ok") and item["cleanupStatus"] == 200 for item in registration_results), registration_results
+        account_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+        account_page = account_context.new_page()
+        account_page.goto(BASE_URL, wait_until="networkidle")
+        account_page.get_by_label("账号", exact=True).fill(account_names[0])
+        account_page.get_by_label("密码", exact=True).fill(account_password)
+        account_page.get_by_label("密码", exact=True).press("Enter")
+        expect(account_page.locator(".labs-screen")).to_be_visible()
+        account_button.click()
+        expect(page.get_by_role("dialog", name="账号管理")).to_be_visible()
+        expect(page.locator(".admin-user-entry")).to_have_count(6)
+        account_scroll_style = page.locator(".admin-records-dialog").evaluate(
+            "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
+        )
+        assert account_scroll_style["scrollHeight"] > account_scroll_style["clientHeight"], account_scroll_style
+        assert account_scroll_style["clientHeight"] <= 400, account_scroll_style
+        account_visible_rows = page.locator(".admin-user-entry").evaluate_all(
+            """elements => {
+                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                return elements.filter(element => {
+                    const rect = element.getBoundingClientRect()
+                    return rect.top >= panel.top && rect.bottom <= panel.bottom
+                }).length
+            }"""
+        )
+        assert account_visible_rows <= 5, account_visible_rows
+        account_select_alignment = page.locator('[data-admin-select-all="users"]').evaluate(
+            "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
+        )
+        assert abs(account_select_alignment["toolbar"] - account_select_alignment["row"]) <= 1, account_select_alignment
+        for user_name in account_names[:2]:
+            row = page.locator(f'.admin-user-entry[data-id="{user_name}"]')
+            expect(row).to_have_count(1)
+            row.locator('[data-admin-record-select="users"]').check()
+        expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
+        page.get_by_role("button", name="删除所选", exact=True).click()
+        account_bulk_confirm = page.get_by_role("dialog", name="删除选中的账号")
+        expect(account_bulk_confirm).to_be_visible()
+        account_bulk_confirm.get_by_role("button", name="删除账号", exact=True).click()
+        for user_name in account_names[:2]:
+            expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
+        account_page.reload(wait_until="networkidle")
+        expect(account_page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
+        account_page.get_by_label("账号", exact=True).fill(account_names[2])
+        account_page.get_by_label("密码", exact=True).fill(account_password)
+        account_page.get_by_label("密码", exact=True).press("Enter")
+        expect(account_page.locator(".labs-screen")).to_be_visible()
+        account_page.locator('[data-action="open-admin-panel"]').click()
+        account_page.locator('[data-action="open-admin-records"][data-panel="users"]').click()
+        expect(account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')).to_have_count(1)
+        current_account_row = account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')
+        expect(current_account_row).to_contain_text("当前登录")
+        current_account_row.locator(".record-delete").click()
+        current_delete_confirm = account_page.get_by_role("dialog", name="删除账号")
+        expect(current_delete_confirm).to_be_visible()
+        current_delete_confirm.get_by_role("button", name="删除账号", exact=True).click()
+        expect(account_page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
+        for user_name in account_names[3:]:
+            page.locator(f'.admin-user-entry[data-id="{user_name}"] [data-admin-record-select="users"]').check()
+        page.get_by_role("button", name="删除所选", exact=True).click()
+        account_cleanup_confirm = page.get_by_role("dialog", name="删除选中的账号")
+        expect(account_cleanup_confirm).to_be_visible()
+        account_cleanup_confirm.get_by_role("button", name="删除账号", exact=True).click()
+        for user_name in account_names[3:]:
+            expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
+        account_context.close()
+        page.get_by_role("button", name="关闭账号管理", exact=True).click()
         audit_button.click()
         expect(page.get_by_role("dialog", name="最近审计记录")).to_be_visible()
         audit_scroll_style = page.locator(".admin-records-dialog").evaluate(
@@ -533,7 +627,7 @@ def main() -> None:
         for record_id in batch_audit_ids:
             expect(page.locator(f'.audit-entry[data-id="{record_id}"]')).to_have_count(0)
         page.get_by_role("button", name="关闭最近审计记录", exact=True).click()
-        page.get_by_role("button", name="关闭邀请码管理", exact=True).click()
+        page.get_by_role("button", name="关闭管理中心", exact=True).click()
         expect(admin_trigger).to_be_focused()
         expect(page.locator(".toast")).to_have_count(0, timeout=5000)
         poll_requests = {"count": 0}
@@ -562,7 +656,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .lab-workspace-head")).to_have_count(0)
         expect(page.locator(".workspace-account")).to_have_count(0)
-        expect(page.get_by_role("button", name="邀请码管理", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
         expect(page.locator(".lab-card-head")).to_have_count(0)
         expect(page.locator(".lab-card-status")).to_have_count(0)
         expect(page.locator(".lab-card-title")).to_have_count(9)

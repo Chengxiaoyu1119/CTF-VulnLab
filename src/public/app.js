@@ -52,10 +52,11 @@ const state = {
   adminPanelOpen: false,
   adminRecordsPanel: null,
   adminRecordsReturnFocus: null,
-  adminSelectedRecordIds: { invitations: [], audit: [] },
+  adminSelectedRecordIds: { invitations: [], audit: [], users: [] },
   invitation: null,
   invitations: [],
   audit: [],
+  users: [],
   adminLoading: false,
   adminError: '',
 }
@@ -195,7 +196,7 @@ function recordArrowIcon() {
 
 function labsShell() {
   return `<div class="labs-screen">
-    <div class="workspace-toolbar"><button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="邀请码管理" title="邀请码管理">${adminKeyIcon()}</button></div>
+    <div class="workspace-toolbar"><button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="管理中心">${adminKeyIcon()}</button></div>
     <section class="lab-workspace">
       <main class="lab-canvas" tabindex="-1"></main>
     </section>
@@ -588,27 +589,35 @@ function adminPanel() {
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const adminDataReady = !state.adminLoading && !state.adminError
   const countLabel = count => count ? `最近 ${count} 条` : '暂无记录'
-  const auditCount = state.audit.filter(item => ['invitation.create', 'invitation.revoke', 'register', 'login', 'logout'].includes(item.action)).length
-  const recordButtons = adminDataReady ? `<div class="admin-record-actions"><button class="admin-record-button" type="button" data-action="open-admin-records" data-panel="invitations"><span>邀请码记录</span><span>${countLabel(state.invitations.length)}${recordArrowIcon()}</span></button><button class="admin-record-button" type="button" data-action="open-admin-records" data-panel="audit"><span>最近审计记录</span><span>${countLabel(auditCount)}${recordArrowIcon()}</span></button></div>` : ''
+  const auditCount = state.audit.filter(item => ['invitation.create', 'invitation.revoke', 'account.delete', 'register', 'login', 'logout'].includes(item.action)).length
+  const recordButtons = adminDataReady ? `<div class="admin-record-actions"><button class="admin-record-button" type="button" data-action="open-admin-records" data-panel="invitations"><span>邀请码记录</span><span>${countLabel(state.invitations.length)}${recordArrowIcon()}</span></button><button class="admin-record-button" type="button" data-action="open-admin-records" data-panel="audit"><span>最近审计记录</span><span>${countLabel(auditCount)}${recordArrowIcon()}</span></button><button class="admin-record-button" type="button" data-action="open-admin-records" data-panel="users"><span>账号管理</span><span>查看账号${recordArrowIcon()}</span></button></div>` : ''
   const loading = state.adminLoading ? '<div class="admin-loading" role="status">正在读取管理记录…</div>' : ''
   const error = state.adminError ? `<div class="admin-inline-error" role="alert">${esc(state.adminError)}</div>` : ''
   const invitationContent = invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>本次生成的邀请码</span><time datetime="${esc(invitation.expiresAt)}">有效至 ${esc(date(invitation.expiresAt))}</time></div><code>${esc(invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(invitation.id)}">撤销</button></div></div>` : '<div class="admin-empty-state invitation-empty-state">当前没有可用的邀请码。</div>'
-  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-dialog-heading"><div><h2 id="admin-dialog-title">邀请码管理</h2><p>邀请码有效期 24 小时，每个邀请码只能使用一次。</p><p>明文只在生成成功时显示一次。</p></div><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭邀请码管理">×</button></div>${loading}${error}${adminDataReady ? invitationContent + recordButtons : ''}<div class="dialog-actions"><button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button><button class="button button-quiet" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-dialog-heading"><div><h2 id="admin-dialog-title">管理中心</h2><p>邀请码有效期 24 小时，每个邀请码只能使用一次。</p><p>明文只在生成成功时显示一次。</p></div><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭管理中心">×</button></div>${loading}${error}${adminDataReady ? invitationContent + recordButtons : ''}<div class="dialog-actions"><button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button><button class="button button-quiet" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></section></div>`
 }
 
 function adminRecordsPanel() {
   if (!state.adminPanelOpen || !state.adminRecordsPanel) return ''
   const statusLabels = { active: '有效', expired: '已过期', used: '已使用', revoked: '已撤销' }
-  const actionLabels = { 'invitation.create': '生成邀请码', 'invitation.revoke': '撤销邀请码', register: '注册账号', login: '登录系统', logout: '退出系统' }
+  const actionLabels = { 'invitation.create': '生成邀请码', 'invitation.revoke': '撤销邀请码', 'account.delete': '删除账号', register: '注册账号', login: '登录系统', logout: '退出系统' }
   const isInvitationPanel = state.adminRecordsPanel === 'invitations'
-  const title = isInvitationPanel ? '邀请码记录' : '最近审计记录'
-  const description = isInvitationPanel ? '管理员可以删除不再需要的邀请码记录。' : '管理员可以删除不再需要的历史记录。'
-  const records = isInvitationPanel ? state.invitations : state.audit.filter(item => item.action in actionLabels)
-  const selectedIds = state.adminSelectedRecordIds[state.adminRecordsPanel].filter(id => records.some(item => item.id === id))
+  const isAuditPanel = state.adminRecordsPanel === 'audit'
+  const isUserPanel = state.adminRecordsPanel === 'users'
+  const title = isInvitationPanel ? '邀请码记录' : isAuditPanel ? '最近审计记录' : '账号管理'
+  const description = isInvitationPanel ? '管理员可以删除不再需要的邀请码记录。' : isAuditPanel ? '管理员可以删除不再需要的历史记录。' : '管理员可以删除不再使用的注册账号。'
+  const records = isInvitationPanel ? state.invitations : isAuditPanel ? state.audit.filter(item => item.action in actionLabels) : state.users
+  const recordId = item => isUserPanel ? item.userName : item.id
+  const selectedIds = (state.adminSelectedRecordIds[state.adminRecordsPanel] ?? []).filter(id => records.some(item => recordId(item) === id))
   const selected = new Set(selectedIds)
   const allSelected = records.length > 0 && selectedIds.length === records.length
-  const recordLabel = isInvitationPanel ? '邀请码' : '审计'
+  const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
   const selectionToolbar = records.length ? `<div class="admin-record-toolbar"><label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label><span class="admin-selection-count">已选 ${selectedIds.length} 条</span><button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button></div>` : ''
+  const userRows = isUserPanel ? records.map(item => {
+    const timestamp = auditTimestamp(item.createdAt)
+    const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
+    return `<div class="admin-user-entry${selected.has(item.userName) ? ' is-selected' : ''}" data-id="${esc(item.userName)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="users" data-id="${esc(item.userName)}" aria-label="选择账号 ${esc(item.userName)}" ${selected.has(item.userName) ? 'checked' : ''}></label><div class="admin-user-content"><div class="admin-user-heading"><strong>账号 <span class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</span></strong>${current ? '<span class="admin-user-current">当前登录</span>' : ''}</div><time class="admin-user-time" datetime="${esc(item.createdAt)}"><span class="admin-user-time-label">注册于</span><span class="admin-user-date">${esc(timestamp.date)}</span><span class="admin-user-clock">${esc(timestamp.time)}</span></time></div><button class="record-delete" type="button" data-action="delete-user-record" data-id="${esc(item.userName)}" aria-label="删除账号 ${esc(item.userName)}" title="删除账号">${deleteRecordIcon()}</button></div>`
+  }).join('') : ''
   const content = state.adminLoading
     ? '<div class="admin-loading" role="status">正在更新记录…</div>'
     : state.adminError
@@ -616,8 +625,10 @@ function adminRecordsPanel() {
       : records.length
         ? isInvitationPanel
           ? `${selectionToolbar}<div class="admin-record-list invitation-history">${records.map(item => `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="invitation-history-main"><strong>${esc(statusLabels[item.status] ?? item.status)}</strong><time datetime="${esc(item.createdAt)}">生成于 ${esc(date(item.createdAt))}</time></div><div class="invitation-history-meta"><span>有效至 ${esc(date(item.expiresAt))}</span><button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button></div></div>`).join('')}</div>`
-          : `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div></div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>`
-        : `<div class="admin-empty-state">暂无${isInvitationPanel ? '邀请码' : '相关审计'}记录。</div>`
+          : isAuditPanel
+            ? `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div></div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>`
+            : `${selectionToolbar}<div class="admin-record-list user-history">${userRows}</div>`
+        : `<div class="admin-empty-state">暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</div>`
   return `<div class="dialog-backdrop workspace-dialog-backdrop admin-records-backdrop" data-action="close-admin-records"><section class="dialog admin-dialog admin-records-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-records-title"><div class="admin-dialog-heading"><div><h2 id="admin-records-title">${title}</h2><p>${description}</p></div><button class="dialog-close" type="button" data-action="close-admin-records" aria-label="关闭${title}">×</button></div>${content}</section></div>`
 }
 
@@ -631,6 +642,20 @@ async function refreshAdminPanel() {
     state.audit = audit
     state.adminSelectedRecordIds.invitations = state.adminSelectedRecordIds.invitations.filter(id => invitations.some(item => item.id === id))
     state.adminSelectedRecordIds.audit = state.adminSelectedRecordIds.audit.filter(id => audit.some(item => item.id === id))
+    state.adminError = ''
+  } catch (error) {
+    state.adminError = error.message
+  } finally {
+    state.adminLoading = false
+    render()
+  }
+}
+
+async function refreshAdminUsers() {
+  try {
+    const users = await request('/api/auth/users', { cache: 'no-store' })
+    state.users = users
+    state.adminSelectedRecordIds.users = state.adminSelectedRecordIds.users.filter(userName => users.some(item => item.userName === userName))
     state.adminError = ''
   } catch (error) {
     state.adminError = error.message
@@ -660,8 +685,9 @@ function patchOverlays() {
   const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
   patchSlot('success', successNotice, { key: state.successNotice ?? '' })
   patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
-  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.invitation?.id ?? 'open'}:${state.adminLoading}:${state.invitations.length}:${state.audit.length}:${state.adminError}` : '' })
-  patchSlot('records', adminRecordsPanel(), { focus: true, key: state.adminRecordsPanel ? `${state.adminRecordsPanel}:${state.adminLoading}:${state.invitations.length}:${state.audit.length}:${state.adminError}` : '' })
+  const userKey = state.users.map(item => item.userName).join(',')
+  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.invitation?.id ?? 'open'}:${state.adminLoading}:${state.invitations.length}:${state.audit.length}:${userKey}:${state.adminError}` : '' })
+  patchSlot('records', adminRecordsPanel(), { focus: true, key: state.adminRecordsPanel ? `${state.adminRecordsPanel}:${state.adminLoading}:${state.invitations.length}:${state.audit.length}:${userKey}:${state.adminError}` : '' })
   patchSlot('detail', labDetailModal(), { focus: true })
   patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
 }
@@ -719,6 +745,28 @@ function rememberAdminRecordsFocus(element) {
   state.adminRecordsReturnFocus = element ? { element, panel: element.dataset.panel } : null
 }
 
+function clearAuthenticatedState() {
+  clearLoginSuccessNoticeTimer()
+  state.successNotice = null
+  state.authNotice = ''
+  state.session = null
+  state.csrfToken = ''
+  state.labs = []
+  state.jobs = []
+  state.instances = []
+  state.labDetailId = null
+  state.adminPanelOpen = false
+  state.adminRecordsPanel = null
+  state.adminSelectedRecordIds = { invitations: [], audit: [], users: [] }
+  state.invitation = null
+  state.invitations = []
+  state.audit = []
+  state.users = []
+  state.toast = null
+  resetPasswordVisibility()
+  location.hash = 'labs'
+}
+
 function openConfirm(title, message, action, confirmLabel = '继续') {
   state.confirm = { title, message, action, confirmLabel }
   render()
@@ -760,7 +808,7 @@ async function runAction(action, element) {
     rememberModalFocus(element)
     state.adminPanelOpen = true
     state.adminRecordsPanel = null
-    state.adminSelectedRecordIds = { invitations: [], audit: [] }
+    state.adminSelectedRecordIds = { invitations: [], audit: [], users: [] }
     state.adminLoading = true
     state.adminError = ''
     render()
@@ -770,17 +818,21 @@ async function runAction(action, element) {
   if (action === 'close-admin-panel') {
     state.adminPanelOpen = false
     state.adminRecordsPanel = null
-    state.adminSelectedRecordIds = { invitations: [], audit: [] }
+    state.adminSelectedRecordIds = { invitations: [], audit: [], users: [] }
+    state.users = []
     render()
     restoreModalFocus()
     return
   }
   if (action === 'open-admin-records') {
-    if (!['invitations', 'audit'].includes(element.dataset.panel)) return
+    if (!['invitations', 'audit', 'users'].includes(element.dataset.panel)) return
     rememberAdminRecordsFocus(element)
     state.adminRecordsPanel = element.dataset.panel
     state.adminSelectedRecordIds[state.adminRecordsPanel] = []
+    state.adminError = ''
+    if (state.adminRecordsPanel === 'users') state.adminLoading = true
     render()
+    if (state.adminRecordsPanel === 'users') await refreshAdminUsers()
     return
   }
   if (action === 'close-admin-records') {
@@ -868,12 +920,24 @@ async function runAction(action, element) {
     openConfirm('删除审计记录', '删除后这条审计记录将从系统中移除。', { action: 'confirm-delete-audit-record', id: element.dataset.id }, '删除记录')
     return
   }
+  if (action === 'delete-user-record') {
+    const isCurrent = element.dataset.id?.toLowerCase() === state.session?.userName?.toLowerCase()
+    const message = isCurrent
+      ? '删除当前账号后，该账号的全部登录会话会立即失效，并退出当前系统。此操作无法恢复。'
+      : '删除后，该账号及其全部登录会话会立即失效，且无法恢复。'
+    openConfirm('删除账号', message, { action: 'confirm-delete-selected-admin-records', panel: 'users', ids: [element.dataset.id] }, '删除账号')
+    return
+  }
   if (action === 'delete-selected-admin-records') {
     const panel = element.dataset.panel
     const ids = panel && state.adminSelectedRecordIds[panel]
     if (!panel || !ids?.length) return
-    const label = panel === 'invitations' ? '邀请码' : '审计'
-    openConfirm(`删除选中的${label}记录`, `确定删除已选中的 ${ids.length} 条${label}记录吗？删除后无法恢复。`, { action: 'confirm-delete-selected-admin-records', panel, ids: [...ids] }, '删除所选')
+    const label = panel === 'invitations' ? '邀请码' : panel === 'audit' ? '审计' : '账号'
+    const currentIncluded = panel === 'users' && ids.some(id => id.toLowerCase() === state.session?.userName?.toLowerCase())
+    const message = currentIncluded
+      ? `已选中的 ${ids.length} 个账号包含当前账号，确认后当前登录会话将立即退出，且删除后无法恢复。`
+      : `确定删除已选中的 ${ids.length} 个${label}${panel === 'users' ? '' : '记录'}吗？删除后无法恢复。`
+    openConfirm(`删除选中的${label}${panel === 'users' ? '' : '记录'}`, message, { action: 'confirm-delete-selected-admin-records', panel, ids: [...ids] }, panel === 'users' ? '删除账号' : '删除所选')
     return
   }
   if (action === 'confirm-revoke-invitation') {
@@ -897,20 +961,27 @@ async function runAction(action, element) {
     if (!panel || !ids.length) return
     beginBusy(action, panel)
     try {
-      const path = panel === 'invitations' ? '/api/auth/invitations' : '/api/audit'
-      const result = await request(path, { method: 'DELETE', body: JSON.stringify({ ids }) })
+      const isUserPanel = panel === 'users'
+      const path = panel === 'invitations' ? '/api/auth/invitations' : isUserPanel ? '/api/auth/users' : '/api/audit'
+      const body = isUserPanel ? { userNames: ids } : { ids }
+      const result = await request(path, { method: 'DELETE', body: JSON.stringify(body) })
       if (result.deleted !== ids.length) throw new ApiError(`仅删除了 ${result.deleted ?? 0} 条记录，请刷新后重试。`, 409, 'RECORD_DELETE_INCOMPLETE')
       state.adminSelectedRecordIds[panel] = []
       if (panel === 'invitations' && state.invitation && ids.includes(state.invitation.id)) state.invitation = null
+      if (result.signedOut) {
+        clearAuthenticatedState()
+        return
+      }
       state.adminLoading = true
-      setToast(`已删除 ${result.deleted ?? ids.length} 条${panel === 'invitations' ? '邀请码' : '审计'}记录。`)
-      await refreshAdminPanel()
+      setToast(`已删除 ${result.deleted ?? ids.length} 个${isUserPanel ? '账号' : panel === 'invitations' ? '邀请码' : '审计记录'}。`)
+      if (isUserPanel) await refreshAdminUsers()
+      else await refreshAdminPanel()
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, panel); render() }
     return
   }
   if (action === 'logout') {
     beginBusy('logout')
-    try { await request('/api/auth/logout', { method: 'POST' }); clearLoginSuccessNoticeTimer(); state.successNotice = null; state.session = null; state.csrfToken = ''; state.labs = []; state.jobs = []; state.instances = []; state.labDetailId = null; state.adminPanelOpen = false; state.adminRecordsPanel = null; state.adminSelectedRecordIds = { invitations: [], audit: [] }; state.invitation = null; resetPasswordVisibility(); location.hash = 'labs' } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
+    try { await request('/api/auth/logout', { method: 'POST' }); clearAuthenticatedState() } catch (error) { setToast(error.message, 'error') } finally { endBusy('logout'); render() }
     return
   }
   if (action === 'refresh-labs') {

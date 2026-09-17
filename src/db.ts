@@ -25,6 +25,11 @@ export interface RegisteredUser {
   createdAt: string
 }
 
+export interface RegisteredUserView {
+  userName: string
+  createdAt: string
+}
+
 export interface InvitationRecord {
   id: string
   createdBy: string
@@ -657,6 +662,28 @@ export class VulnLabDatabase {
       role: 'admin',
       createdAt: asString(row.createdAt),
     }
+  }
+
+  listRegisteredUsers(): RegisteredUserView[] {
+    return this.db.prepare("SELECT user_name AS userName, created_at AS createdAt FROM users WHERE role = 'admin' ORDER BY created_at DESC LIMIT 100").all() as RegisteredUserView[]
+  }
+
+  deleteRegisteredUsers(userNames: readonly string[]): number {
+    if (!userNames.length) return 0
+    const findUser = this.db.prepare('SELECT user_name AS userName FROM users WHERE user_name = ? COLLATE NOCASE')
+    const deleteSessions = this.db.prepare('DELETE FROM sessions WHERE user_name = ? COLLATE NOCASE')
+    const deleteUser = this.db.prepare('DELETE FROM users WHERE user_name = ? COLLATE NOCASE')
+    const transaction = this.db.transaction((values: readonly string[]) => {
+      const actualNames = values.map(userName => (findUser.get(userName) as { userName: string } | undefined)?.userName)
+      if (actualNames.some(userName => !userName)) return 0
+      const names = actualNames as string[]
+      for (const userName of names) {
+        deleteSessions.run(userName)
+        if (deleteUser.run(userName).changes !== 1) throw new Error('账号删除失败。')
+      }
+      return names.length
+    })
+    return transaction(userNames)
   }
 
   createInvitation(id: string, codeHash: string, createdBy: string, expiresAt: string): InvitationRecord {

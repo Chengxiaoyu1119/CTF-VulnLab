@@ -349,6 +349,20 @@ const requestIds = (request: FastifyRequest, reply: FastifyReply): string[] | nu
   return [...new Set(ids)]
 }
 
+const requestUserNames = (request: FastifyRequest, reply: FastifyReply): string[] | null => {
+  const userNames = requestBody(request).userNames
+  if (!Array.isArray(userNames) || userNames.length === 0 || userNames.length > 100 || !userNames.every((userName): userName is string => typeof userName === 'string' && accountPattern.test(userName))) {
+    reply.code(400).send({ code: 'ACCOUNT_NAMES_INVALID', message: '请选择要删除的账号。' })
+    return null
+  }
+  const normalizedNames = userNames.map(userName => userName.toLowerCase())
+  if (new Set(normalizedNames).size !== userNames.length) {
+    reply.code(400).send({ code: 'ACCOUNT_NAMES_INVALID', message: '请选择不重复的账号。' })
+    return null
+  }
+  return userNames
+}
+
 const publicOrigin = (_request: FastifyRequest) => {
   if (configuredPublicUrl) return configuredPublicUrl
   if (host !== '0.0.0.0' && host !== '::') return `http://${host}:${port}`
@@ -699,6 +713,25 @@ app.get('/api/auth/invitations', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
   reply.header('Cache-Control', 'no-store')
   return database.listInvitations()
+})
+
+app.get('/api/auth/users', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return
+  reply.header('Cache-Control', 'no-store')
+  return database.listRegisteredUsers()
+})
+
+app.delete('/api/auth/users', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const userNames = requestUserNames(request, reply)
+  if (!userNames) return
+  const deleted = database.deleteRegisteredUsers(userNames)
+  if (deleted !== userNames.length) return reply.code(409).send({ code: 'ACCOUNT_DELETE_INCOMPLETE', message: '部分账号不存在，未执行删除。' })
+  const currentDeleted = userNames.some(userName => userName.toLowerCase() === session.userName.toLowerCase())
+  database.addAudit(session.userName, 'account.delete', 'account', `删除账号：${userNames.join('、')}`)
+  if (currentDeleted) reply.clearCookie('vulnlab_session', { path: '/api' })
+  return { ok: true, deleted, signedOut: currentDeleted }
 })
 
 app.delete('/api/auth/invitations', async (request, reply) => {
