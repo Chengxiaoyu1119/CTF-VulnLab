@@ -162,10 +162,11 @@ npm run smoke:toolchains
 ```powershell
 node script/smoke_vulnlab.mjs
 node script/smoke_vulnlab_builtin_runtimes.mjs
-python script/browser_check_vulnlab.py
+cd src
+npm run test:browser
 ```
 
-运行冒烟会依次验证九个内置靶场的真实入口，并覆盖重复启动、续期、停止、入口失效和重新启动；浏览器回归验证当前界面、响应式布局、交互状态和控制台错误。
+运行冒烟会依次验证九个内置靶场的真实入口，并覆盖重复启动、续期、停止、入口失效和重新启动；浏览器回归验证当前界面、响应式布局、交互状态和控制台错误。`npm run test:browser` 使用 `src/data/browser-check-*` 启动独立服务，禁止自动安装和网络下载，完成后删除测试数据与截图，不会写入开发数据库。
 
 GitHub CI 当前在 Windows runner 上执行类型检查、构建、fixture 测试、API/服务生命周期冒烟和浏览器回归，不执行上述真实运行时下载与靶场启动冒烟。
 

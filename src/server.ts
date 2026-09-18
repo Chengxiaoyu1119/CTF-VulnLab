@@ -7,7 +7,7 @@ import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:
 import { isIP } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import { VulnLabDatabase } from './db.js'
+import { VulnLabDatabase, type RecordCursor, type RecordPage, type RecordPageOptions } from './db.js'
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
 import { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
@@ -70,24 +70,19 @@ const explicitExternalRuntime = {
 }
 const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae', 'xvwa'])
 const isProduction = process.env.NODE_ENV === 'production'
-const secureCookies = isProduction
 const configuredPublicUrl = process.env.VULNLAB_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
-if (configuredPublicUrl) {
-  const publicUrl = new URL(configuredPublicUrl)
+const publicUrl = configuredPublicUrl ? new URL(configuredPublicUrl) : null
+if (publicUrl) {
   if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash) {
     throw new Error('VULNLAB_PUBLIC_URL 必须是没有账号、密码、查询参数和片段的 HTTP(S) 地址。')
   }
 }
+const secureCookies = isProduction || publicUrl?.protocol === 'https:'
 
 const defaultAdminUser = 'vulnlab'
 const defaultAdminPassword = 'vulnlab'
 const cookieSecret = process.env.VULNLAB_COOKIE_SECRET ?? (isProduction ? '' : 'vulnlab-development-cookie-secret')
 const adminPassword = process.env.VULNLAB_ADMIN_PASSWORD ?? (isProduction ? '' : defaultAdminPassword)
-
-if (isProduction) {
-  if (cookieSecret.length < 32) throw new Error('生产环境必须设置长度至少为 32 的 VULNLAB_COOKIE_SECRET。')
-  if (!process.env.VULNLAB_ADMIN_PASSWORD || adminPassword === defaultAdminPassword || adminPassword.length < 12) throw new Error('生产环境必须通过 VULNLAB_ADMIN_PASSWORD 设置至少 12 个字符的管理员密码。')
-}
 
 const adminAccount = { userName: defaultAdminUser, password: adminPassword, role: 'admin' as const }
 
@@ -98,6 +93,11 @@ const persistedPort = Number(persistedSettings.port)
 const host = hasHostOverride ? configuredHost : persistedHost
 const port = hasPortOverride || !Number.isInteger(persistedPort) || persistedPort < 1024 || persistedPort > 65535 ? fallbackPort : persistedPort
 if ((host === '0.0.0.0' || host === '::') && !configuredPublicUrl) throw new Error('监听所有网卡时必须设置 VULNLAB_PUBLIC_URL。')
+const requiresExplicitCredentials = isProduction || !['127.0.0.1', '::1', 'localhost'].includes(host)
+if (requiresExplicitCredentials) {
+  if (!process.env.VULNLAB_COOKIE_SECRET || cookieSecret.length < 32) throw new Error('生产环境或对外监听必须设置长度至少为 32 的 VULNLAB_COOKIE_SECRET。')
+  if (!process.env.VULNLAB_ADMIN_PASSWORD || adminPassword === defaultAdminPassword || adminPassword.length < 12) throw new Error('生产环境或对外监听必须通过 VULNLAB_ADMIN_PASSWORD 设置至少 12 个字符的管理员密码。')
+}
 const recoverProviderInstances = async () => {
   for (const instance of database.listInstances().filter(item => item.status === 'running')) {
     const lab = database.getLab(instance.labId)
@@ -339,6 +339,31 @@ const requireCsrf = (request: FastifyRequest, reply: FastifyReply, session: Sess
 }
 
 const requestBody = (request: FastifyRequest) => (request.body ?? {}) as Record<string, unknown>
+
+const recordPageSize = 50
+
+const requestRecordPage = (request: FastifyRequest, reply: FastifyReply): RecordPageOptions | null => {
+  const query = (request.query ?? {}) as { cursor?: unknown }
+  if (query.cursor === undefined) return { limit: recordPageSize, cursor: null }
+  if (typeof query.cursor !== 'string' || !query.cursor) {
+    reply.code(400).send({ code: 'RECORD_CURSOR_INVALID', message: '记录分页参数无效。' })
+    return null
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8')) as Partial<RecordCursor>
+    if (typeof parsed.createdAt !== 'string' || !Number.isFinite(Date.parse(parsed.createdAt)) || typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 256) throw new Error('invalid cursor')
+    return { limit: recordPageSize, cursor: { createdAt: parsed.createdAt, id: parsed.id } }
+  } catch {
+    reply.code(400).send({ code: 'RECORD_CURSOR_INVALID', message: '记录分页参数无效。' })
+    return null
+  }
+}
+
+const recordPageResponse = <T>(reply: FastifyReply, page: RecordPage<T>) => {
+  reply.header('X-VulnLab-Record-Total', String(page.total))
+  if (page.nextCursor) reply.header('X-VulnLab-Next-Cursor', Buffer.from(JSON.stringify(page.nextCursor)).toString('base64url'))
+  return page.items
+}
 
 const requestIds = (request: FastifyRequest, reply: FastifyReply): string[] | null => {
   const ids = requestBody(request).ids
@@ -711,14 +736,18 @@ app.post('/api/auth/invitations', async (request, reply) => {
 
 app.get('/api/auth/invitations', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
+  const page = requestRecordPage(request, reply)
+  if (!page) return
   reply.header('Cache-Control', 'no-store')
-  return database.listInvitations()
+  return recordPageResponse(reply, database.listInvitations(page))
 })
 
 app.get('/api/auth/users', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
+  const page = requestRecordPage(request, reply)
+  if (!page) return
   reply.header('Cache-Control', 'no-store')
-  return database.listRegisteredUsers()
+  return recordPageResponse(reply, database.listRegisteredUsers(page))
 })
 
 app.delete('/api/auth/users', async (request, reply) => {
@@ -930,8 +959,10 @@ app.put('/api/settings', async (request, reply) => {
 
 app.get('/api/audit', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
+  const page = requestRecordPage(request, reply)
+  if (!page) return
   reply.header('Cache-Control', 'no-store')
-  return database.listAudit()
+  return recordPageResponse(reply, database.listAudit(page))
 })
 
 app.delete('/api/audit', async (request, reply) => {

@@ -23,6 +23,7 @@ on:
       - "script/test_vulnlab_project_environment.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
+      - "script/run_browser_check_vulnlab.mjs"
       - "script/run_vulnlab.ps1"
       - "README.md"
   pull_request:
@@ -47,6 +48,7 @@ on:
       - "script/test_vulnlab_project_environment.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
+      - "script/run_browser_check_vulnlab.mjs"
       - "script/run_vulnlab.ps1"
       - "README.md"
   workflow_dispatch:
@@ -113,6 +115,7 @@ jobs:
           node --check script/test_vulnlab_runtime_toolchains.mjs
           node --check script/test_vulnlab_project_environment.mjs
           node --check script/smoke_vulnlab_operational.mjs
+          node --check script/run_browser_check_vulnlab.mjs
           node script/check_vulnlab_node.mjs
 
       - name: Start VulnLab
@@ -149,6 +152,7 @@ jobs:
         env:
           VULNLAB_BASE_URL: http://127.0.0.1:6710
           VULNLAB_SCREENSHOT_DIR: ${{ runner.temp }}/vulnlab-browser
+          VULNLAB_BROWSER_ISOLATED: "1"
         run: python script/browser_check_vulnlab.py
 
       - name: Stop VulnLab

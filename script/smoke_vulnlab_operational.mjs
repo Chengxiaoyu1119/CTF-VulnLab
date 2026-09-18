@@ -48,10 +48,10 @@ const stopServer = async child => {
   await Promise.race([exited, wait(5000).then(() => { child.kill(); return undefined })])
 }
 
-const assertStartupRejected = async ({ port, dataDir, overrides = {} }) => {
+const assertStartupRejected = async ({ port, dataDir, nodeEnv = 'production', overrides = {} }) => {
   const env = {
     ...process.env,
-    NODE_ENV: 'production',
+    NODE_ENV: nodeEnv,
     VULNLAB_HOST: '127.0.0.1',
     VULNLAB_PORT: String(port),
     VULNLAB_DATA_DIR: dataDir,
@@ -134,11 +134,11 @@ const cookiePathMatches = (cookiePath, requestPath) => requestPath === cookiePat
   requestPath.startsWith(cookiePath) && (cookiePath.endsWith('/') || requestPath[cookiePath.length] === '/')
 )
 
-const login = async baseUrl => {
+const login = async (baseUrl, password = 'vulnlab') => {
   const result = await request(baseUrl, '/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userName: 'vulnlab', password: 'vulnlab' }),
+    body: JSON.stringify({ userName: 'vulnlab', password }),
   })
   const setCookie = result.response.headers.getSetCookie()[0]
   assert.ok(setCookie, 'login did not set vulnlab_session')
@@ -159,6 +159,13 @@ try {
     },
   })
   assert.match(wildcardHostError, /VULNLAB_PUBLIC_URL/)
+  const externalHostCredentialError = await assertStartupRejected({
+    port: 6746,
+    dataDir: join(root, 'external-host-credentials'),
+    nodeEnv: 'test',
+    overrides: { VULNLAB_HOST: '0.0.0.0', VULNLAB_PUBLIC_URL: 'https://lab.example.com', VULNLAB_COOKIE_SECRET: '', VULNLAB_ADMIN_PASSWORD: '' },
+  })
+  assert.match(externalHostCredentialError, /VULNLAB_COOKIE_SECRET/)
   const sessionDir = join(root, 'session')
   server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)
@@ -251,8 +258,9 @@ try {
 
   const endpointDir = join(root, 'endpoint')
   await seedRelocatedState(endpointDir)
-  server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com' })
-  const endpointSession = await login(server.baseUrl)
+  server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com', production: true })
+  const endpointSession = await login(server.baseUrl, 'ProductionAdmin-2026!')
+  assert.match(endpointSession.setCookie, /Secure/)
   let labs = (await request(server.baseUrl, '/api/labs', { headers: { cookie: endpointSession.cookie } })).body
   const dvwa = labs.find(lab => lab.slug === 'dvwa')
   assert.ok(dvwa)
@@ -270,7 +278,7 @@ try {
   assert.equal(preparingStart.status, 202)
   assert.equal((await preparingStart.json()).status, 'preparing')
   await stopServer(server.child)
-  server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com' })
+  server = await startServer({ port: 6742, dataDir: endpointDir, host: '0.0.0.0', publicUrl: 'https://lab.example.com', production: true })
   let resumedJob = null
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const jobs = (await request(server.baseUrl, '/api/import-jobs', { headers: { cookie: endpointSession.cookie } })).body

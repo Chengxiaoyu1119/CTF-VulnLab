@@ -51,7 +51,7 @@ try {
   assert.equal(instance?.status, 'expired')
   const overview = await app.inject({ method: 'GET', url: '/api/overview', headers: { cookie } })
   assert.equal(overview.json().runningInstanceCount, 0)
-  assert.ok(database.listAudit().some(item => item.action === 'instance.expired' && item.target === 'Expiration Fixture'))
+  assert.ok(database.listAudit().items.some(item => item.action === 'instance.expired' && item.target === 'Expiration Fixture'))
 
   const unknownProviderId = 'unknown-provider-instance'
   const unknownProviderInstance = database.createInstance({

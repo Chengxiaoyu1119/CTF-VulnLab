@@ -103,6 +103,12 @@ try {
     runtime: { bindHost: '127.0.0.1', portStart: 6800, portEnd: 6899, phpBinary: 'php', mysql: { host: '127.0.0.1', port: 3306, adminUser: 'admin', adminPassword: 'secret', appHost: '127.0.0.1', mysqlBinary: 'mysql' } },
   })
   assert.equal(started.endpoint, 'http://127.0.0.1:6711/lab-runtime/xvwa-fixture/xvwa/')
+  const renewed = await xvwaProvider.renew({
+    lab: { ...xvwaLab, localPath: sourceRoot },
+    instance: { ...instance, id: 'xvwa-fixture', labId: xvwaLab.id, labTitle: 'XVWA', provider: 'native-php', expiresAt: started.expiresAt },
+    lifetimeMinutes: 5,
+  })
+  assert.ok(Date.parse(renewed.expiresAt) >= Date.parse(started.expiresAt) + 5 * 60_000 - 1_000)
   const runtimeConfig = await readFile(join(xvwaRoot, 'runtime', 'xvwa-fixture', 'xvwa', 'config.php'), 'utf8')
   const runtimeSetup = await readFile(join(xvwaRoot, 'runtime', 'xvwa-fixture', 'xvwa', 'setup', 'home.php'), 'utf8')
   const runtimeHeader = await readFile(join(xvwaRoot, 'runtime', 'xvwa-fixture', 'xvwa', 'header.php'), 'utf8')

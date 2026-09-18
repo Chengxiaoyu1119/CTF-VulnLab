@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import json
 import re
-import tempfile
 import time
 from pathlib import Path
 
@@ -13,8 +12,14 @@ from playwright.sync_api import expect, sync_playwright
 
 
 BASE_URL = os.environ.get("VULNLAB_BASE_URL", "http://127.0.0.1:6710")
-OUTPUT_DIR = Path(os.environ.get("VULNLAB_SCREENSHOT_DIR", tempfile.mkdtemp(prefix="vulnlab-browser-")))
+SCREENSHOT_DIR = os.environ.get("VULNLAB_SCREENSHOT_DIR")
 PRIMARY_SCREENSHOT = os.environ.get("VULNLAB_PRIMARY_SCREENSHOT")
+
+if os.environ.get("VULNLAB_BROWSER_ISOLATED") != "1":
+    raise SystemExit("请使用 npm run test:browser 运行浏览器回归，避免写入开发数据目录。")
+if not SCREENSHOT_DIR:
+    raise SystemExit("浏览器回归缺少受管的截图目录。")
+OUTPUT_DIR = Path(SCREENSHOT_DIR)
 
 
 def main() -> None:
@@ -360,10 +365,15 @@ def main() -> None:
                 admin_trigger.click()
         assert invitations_response_info.value.headers.get("cache-control") == "no-store"
         assert audit_response_info.value.headers.get("cache-control") == "no-store"
+        assert isinstance(invitations_response_info.value.json(), list)
+        assert isinstance(audit_response_info.value.json(), list)
+        assert invitations_response_info.value.headers.get("x-vulnlab-record-total") == "0"
+        assert audit_response_info.value.headers.get("x-vulnlab-record-total")
         expect(page.get_by_role("dialog", name="管理中心")).to_be_visible()
         expect(page.locator(".admin-loading")).to_have_count(0)
         expect(page.locator(".admin-inline-error")).to_have_count(0)
         expect(page.locator(".invitation-empty-state")).to_be_visible()
+        expect(page.get_by_role("heading", name="靶场", exact=True)).to_be_visible()
         compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
         assert compact_admin_box and compact_admin_box["height"] < 520, compact_admin_box
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
@@ -376,13 +386,30 @@ def main() -> None:
         invitation_button.click()
         expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
         page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
+        generated_invitations = page.evaluate(
+            """async () => {
+                const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
+                const headers = { 'X-CSRF-Token': session.csrfToken }
+                const records = []
+                for (let index = 0; index < 51; index += 1) {
+                    const response = await fetch('/api/auth/invitations', { method: 'POST', headers })
+                    if (!response.ok) throw new Error(`invitation fixture failed: ${response.status}`)
+                    records.push((await response.json()).id)
+                }
+                return records
+            }"""
+        )
+        assert len(generated_invitations) == 51
         invitation_code = page.locator(".invitation-card code")
-        for _ in range(6):
-            page.get_by_role("button", name="生成邀请码", exact=True).click()
-            expect(invitation_code).to_have_count(1)
-            assert len(invitation_code.inner_text()) == 32
+        page.get_by_role("button", name="生成邀请码", exact=True).click()
+        expect(invitation_code).to_have_count(1)
+        assert len(invitation_code.inner_text()) == 32
         invitation_button.click()
         expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        expect(page.locator(".invitation-history-card")).to_have_count(50)
+        expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
+        page.get_by_role("button", name="加载更多", exact=True).click()
+        expect(page.locator(".invitation-history-card")).to_have_count(52)
         invitation_scroll_style = page.locator(".admin-records-dialog").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
@@ -404,7 +431,7 @@ def main() -> None:
         generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
         assert generated_invitation_id
         generated_invitation_records = page.locator(".invitation-history-card").count()
-        assert generated_invitation_records >= 6, generated_invitation_records
+        assert generated_invitation_records == 52, generated_invitation_records
         invitation_select_alignment = page.locator('[data-admin-select-all="invitations"]').evaluate(
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"invitations\"]').getBoundingClientRect().left })"
         )
@@ -546,6 +573,10 @@ def main() -> None:
         page.get_by_role("button", name="关闭账号管理", exact=True).click()
         audit_button.click()
         expect(page.get_by_role("dialog", name="最近审计记录")).to_be_visible()
+        expect(page.locator(".audit-entry")).to_have_count(50)
+        expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
+        page.get_by_role("button", name="加载更多", exact=True).click()
+        expect(page.locator(".audit-entry")).not_to_have_count(50)
         audit_scroll_style = page.locator(".admin-records-dialog").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
@@ -672,7 +703,7 @@ def main() -> None:
         )
         assert caption_color["color"] == "rgb(245, 245, 245)", caption_color
         assert caption_color["backgroundImage"] != "none", caption_color
-        assert caption_color["backdropFilter"] != "none", caption_color
+        assert caption_color["backdropFilter"] == "none", caption_color
         focus_layer = page.locator('.lab-card-media').first.evaluate(
             "element => ({ backgroundImage: getComputedStyle(element, '::after').backgroundImage, backgroundColor: getComputedStyle(element, '::after').backgroundColor })"
         )
@@ -695,6 +726,10 @@ def main() -> None:
             })"""
         )
         assert all(item["cardWidth"] - 0.1 <= item["width"] <= item["cardWidth"] and 41 <= item["height"] <= 43 and -0.1 <= item["left"] - item["cardLeft"] <= 0.1 and -0.1 <= item["cardBottom"] - item["bottom"] <= 0.1 and item["childCount"] == 1 for item in caption_metrics), caption_metrics
+        card_ratio = page.locator('.lab-card').first.evaluate(
+            "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
+        )
+        assert abs(card_ratio - 1.5) <= 0.03, card_ratio
         card_tops = page.locator('.lab-card').evaluate_all(
             "elements => elements.map(element => element.getBoundingClientRect().top)"
         )
@@ -749,7 +784,7 @@ def main() -> None:
                 overflow: getComputedStyle(element).overflow
             })"""
         )
-        assert card_corner_style == {"cardRadius": "14px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "inset(0px 0px 42px)", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)", "overflow": "hidden"}, card_corner_style
+        assert card_corner_style == {"cardRadius": "14px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)", "overflow": "hidden"}, card_corner_style
         all_card_corner_styles = page.locator(".lab-card").evaluate_all(
             """elements => elements.map(element => {
                 const media = element.querySelector('.lab-card-media')
@@ -773,7 +808,7 @@ def main() -> None:
             and item["mediaRadius"] == item["coverRadius"] == "0px"
             and item["captionRadius"] == "0px"
             and item["mediaBackground"] == "rgb(24, 24, 24)"
-            and item["coverClipPath"] == "inset(0px 0px 42px)"
+            and item["coverClipPath"] == "none"
             and item["cardBackground"] == "rgb(24, 24, 24)"
             and item["captionBackground"] == "rgb(24, 24, 24)"
             and item["overflow"] == "hidden"
@@ -781,6 +816,17 @@ def main() -> None:
         ), all_card_corner_styles
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
+        page.set_viewport_size({"width": 1002, "height": 978})
+        expect(page.get_by_role("heading", name="靶场", exact=True)).to_be_visible()
+        medium_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        assert len(medium_columns.split()) == 3, medium_columns
+        medium_card_ratio = page.locator('.lab-card').first.evaluate(
+            "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
+        )
+        assert abs(medium_card_ratio - 1.5) <= 0.03, medium_card_ratio
+        canvas_overflow = page.locator(".lab-canvas").evaluate("element => getComputedStyle(element).overflowY")
+        assert canvas_overflow == "auto", canvas_overflow
+        page.set_viewport_size({"width": 1440, "height": 900})
         detail_trigger = page.locator(".lab-card-media").first
         detail_trigger.click()
         expect(page.get_by_role("dialog")).to_be_visible()
@@ -815,7 +861,11 @@ def main() -> None:
         running_detail_trigger = page.locator('.lab-card[data-state="running"] .lab-card-media').first
         if running_detail_trigger.count():
             running_detail_trigger.click()
-            expect(page.locator(".lab-detail-running")).to_be_visible()
+            expect(page.locator(".lab-detail-runtime")).to_be_visible()
+            remaining_text = page.locator(".lab-detail-remaining").inner_text()
+            assert re.fullmatch(r"剩余 \d+ 分钟|即将到期|不足 1 分钟", remaining_text), remaining_text
+            expiry_text = page.locator(".lab-detail-runtime-meta > time").inner_text()
+            assert re.fullmatch(r"到期 \d{4}/\d{2}/\d{2} \d{2}:\d{2}", expiry_text), expiry_text
             expect(page.locator(".lab-detail-state")).to_have_count(0)
             detail_dialog = page.get_by_role("dialog")
             expect(detail_dialog.get_by_role("button", name="续期", exact=True)).to_be_visible()
@@ -836,6 +886,15 @@ def main() -> None:
             primary.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(primary), full_page=True)
 
+        page.set_viewport_size({"width": 890, "height": 978})
+        expect(page.locator(".labs-screen")).to_be_visible()
+        wide_tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        assert len(wide_tablet_columns.split()) == 3, wide_tablet_columns
+        wide_tablet_card_ratio = page.locator('.lab-card').first.evaluate(
+            "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
+        )
+        assert abs(wide_tablet_card_ratio - 1.5) <= 0.03, wide_tablet_card_ratio
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 768, "height": 1024})
         expect(page.locator(".labs-screen")).to_be_visible()
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
@@ -945,6 +1004,7 @@ def main() -> None:
         expect(page.locator(".lab-detail-progress")).to_contain_text("正在解压靶场资源")
         expect(page.get_by_role("button", name="准备中…", exact=True)).to_have_count(0)
         expect(page.get_by_text("准备中…", exact=True)).to_be_visible()
+        expect(page.locator('.lab-card[data-state="preparing"] .lab-card-status')).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "lab-detail-preparing-desktop.png"), full_page=True)
         page.get_by_role("button", name="关闭靶场信息").click()
         page.unroute("**/api/import-jobs", preparing_jobs)
@@ -976,6 +1036,7 @@ def main() -> None:
         page.route("**/api/labs/*/instances", hold_start)
         detail_start_button.click()
         expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
+        expect(page.locator('.lab-card[data-state="starting"] .lab-card-status')).to_have_count(0)
         expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
         expect(page.locator(".lab-detail-state")).to_have_count(0)
         starting_action_style = page.locator(".lab-detail-action").evaluate(
@@ -988,8 +1049,9 @@ def main() -> None:
         assert "route" in pending_start
         start_state["completed"] = True
         pending_start["route"].fulfill(status=201, content_type="application/json", body='{"status":"running"}')
-        expect(page.locator(".lab-detail-running")).to_be_visible()
+        expect(page.locator(".lab-detail-runtime")).to_be_visible()
         expect(page.locator('.lab-card[data-state="running"]')).to_have_count(1)
+        expect(page.locator('.lab-card[data-state="running"] .lab-card-status')).to_have_count(0)
         expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
         assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
         page.get_by_role("button", name="关闭靶场信息").click()
@@ -1031,6 +1093,7 @@ def main() -> None:
         page.route("**/api/import-jobs", failed_jobs)
         page.reload(wait_until="networkidle")
         expect(page.locator(".lab-grid")).to_be_visible()
+        expect(page.locator('.lab-card[data-state="error"] .lab-card-status')).to_have_count(0)
         page.locator('.lab-card-media[data-id]').first.click()
         expect(page.locator(".lab-detail-error")).to_contain_text("内置靶场本地资源路径已失效")
         expect(page.locator(".lab-detail-runtime")).to_have_count(0)
@@ -1083,7 +1146,7 @@ def main() -> None:
                 captionBackground: getComputedStyle(element.querySelector('.lab-card-caption')).backgroundColor
             })"""
         )
-        assert mobile_corner_style == {"cardRadius": "12px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "inset(0px 0px 38px)", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)"}, mobile_corner_style
+        assert mobile_corner_style == {"cardRadius": "12px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)"}, mobile_corner_style
         mobile_caption_metrics = page.locator('.lab-card-caption').evaluate_all(
             "elements => elements.map(element => ({ visibility: getComputedStyle(element).visibility, opacity: getComputedStyle(element).opacity, width: element.getBoundingClientRect().width, cardWidth: element.closest('.lab-card').getBoundingClientRect().width }))"
         )
@@ -1157,7 +1220,7 @@ def main() -> None:
         reduced_context.close()
         assert not console_errors, console_errors
         browser.close()
-    print(f"VulnLab browser check passed; screenshots: {OUTPUT_DIR}")
+    print("VulnLab browser check passed.")
 
 
 if __name__ == "__main__":

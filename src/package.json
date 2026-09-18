@@ -13,6 +13,7 @@
     "start": "node dist/server.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node ../script/test_vulnlab_importer.mjs && node ../script/test_vulnlab_builtin_assets.mjs && node ../script/test_vulnlab_database.mjs && node ../script/test_vulnlab_expiration.mjs && node ../script/test_vulnlab_mysql.mjs && node ../script/test_vulnlab_runtime_status.mjs && node ../script/test_vulnlab_runtime_prep.mjs && node ../script/test_vulnlab_runtime_toolchains.mjs && node ../script/test_vulnlab_project_environment.mjs && node ../script/test_vulnlab_provider.mjs",
+    "test:browser": "npm run build && node ../script/run_browser_check_vulnlab.mjs",
     "smoke": "node ../script/smoke_vulnlab.mjs",
     "smoke:native-php": "node ../script/smoke_vulnlab_native_php.mjs",
     "smoke:native-php:mysql": "node ../script/smoke_vulnlab_native_php_mysql.mjs",

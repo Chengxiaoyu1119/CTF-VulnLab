@@ -45,9 +45,35 @@ export interface InvitationView extends InvitationRecord {
   status: InvitationStatus
 }
 
+export interface RecordCursor {
+  createdAt: string
+  id: string
+}
+
+export interface RecordPageOptions {
+  limit: number
+  cursor: RecordCursor | null
+}
+
+export interface RecordPage<T> {
+  items: T[]
+  nextCursor: RecordCursor | null
+  total: number
+}
+
 const now = () => new Date().toISOString()
 
 const asString = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
+
+const pageResult = <T extends { createdAt: string }>(rows: T[], options: RecordPageOptions, total: number, idFor: (item: T) => string): RecordPage<T> => {
+  const items = rows.slice(0, options.limit)
+  const last = items.at(-1)
+  return {
+    items,
+    nextCursor: rows.length > options.limit && last ? { createdAt: last.createdAt, id: idFor(last) } : null,
+    total,
+  }
+}
 
 const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
   if (runtimeKind === 'native-php') return 'native-php'
@@ -273,6 +299,8 @@ export class VulnLabDatabase {
       CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
       CREATE INDEX IF NOT EXISTS idx_login_attempts_reset_at ON login_attempts(reset_at);
       CREATE INDEX IF NOT EXISTS idx_invitations_expires_at ON invitations(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_invitations_created_id ON invitations(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_role_created_name ON users(role, created_at DESC, user_name DESC);
       CREATE INDEX IF NOT EXISTS idx_import_jobs_lab_status ON import_jobs(lab_id, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at ON import_jobs(created_at);
       CREATE INDEX IF NOT EXISTS idx_vm_downloads_lab_status ON vm_downloads(lab_id, status, updated_at);
@@ -280,6 +308,7 @@ export class VulnLabDatabase {
       CREATE INDEX IF NOT EXISTS idx_instances_status_expires_at ON instances(status, expires_at);
       CREATE INDEX IF NOT EXISTS idx_instances_created_at ON instances(created_at);
       CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit(created_at);
+      CREATE INDEX IF NOT EXISTS idx_audit_created_id ON audit(created_at DESC, id DESC);
     `)
     this.ensureColumn('import_jobs', 'requested_by', "TEXT NOT NULL DEFAULT 'system'")
     this.ensureColumn('import_jobs', 'manifest_json', 'TEXT')
@@ -664,8 +693,18 @@ export class VulnLabDatabase {
     }
   }
 
-  listRegisteredUsers(): RegisteredUserView[] {
-    return this.db.prepare("SELECT user_name AS userName, created_at AS createdAt FROM users WHERE role = 'admin' ORDER BY created_at DESC LIMIT 100").all() as RegisteredUserView[]
+  listRegisteredUsers(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<RegisteredUserView> {
+    const cursor = options.cursor
+    const rows = this.db.prepare(`
+      SELECT user_name AS userName, created_at AS createdAt
+      FROM users
+      WHERE role = 'admin'
+        AND (? IS NULL OR created_at < ? OR (created_at = ? AND user_name < ?))
+      ORDER BY created_at DESC, user_name DESC
+      LIMIT ?
+    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as RegisteredUserView[]
+    const total = Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get() as { count: number }).count)
+    return pageResult(rows, options, total, item => item.userName)
   }
 
   deleteRegisteredUsers(userNames: readonly string[]): number {
@@ -708,11 +747,20 @@ export class VulnLabDatabase {
     return transaction(ids)
   }
 
-  listInvitations(): InvitationView[] {
-    return (this.db.prepare('SELECT id, created_by AS createdBy, expires_at AS expiresAt, used_at AS usedAt, revoked_at AS revokedAt, created_at AS createdAt FROM invitations ORDER BY created_at DESC LIMIT 100').all() as InvitationRecord[]).map(item => ({
+  listInvitations(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<InvitationView> {
+    const cursor = options.cursor
+    const rows: InvitationView[] = (this.db.prepare(`
+      SELECT id, created_by AS createdBy, expires_at AS expiresAt, used_at AS usedAt, revoked_at AS revokedAt, created_at AS createdAt
+      FROM invitations
+      WHERE ? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as InvitationRecord[]).map(item => ({
       ...item,
-      status: item.revokedAt ? 'revoked' : item.usedAt ? 'used' : Date.parse(item.expiresAt) <= Date.now() ? 'expired' : 'active',
+      status: (item.revokedAt ? 'revoked' : item.usedAt ? 'used' : Date.parse(item.expiresAt) <= Date.now() ? 'expired' : 'active') as InvitationStatus,
     }))
+    const total = Number((this.db.prepare('SELECT COUNT(*) AS count FROM invitations').get() as { count: number }).count)
+    return pageResult(rows, options, total, item => item.id)
   }
 
   registerUserWithInvitation(userName: string, passwordHash: string, codeHash: string, reservedUserNames: readonly string[] = []): 'created' | 'user_exists' | 'invalid_invitation' {
@@ -810,8 +858,17 @@ export class VulnLabDatabase {
     this.db.prepare('INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), actor, action, target, detail, now())
   }
 
-  listAudit() {
-    return this.db.prepare('SELECT id, actor, action, target, detail, created_at AS createdAt FROM audit ORDER BY created_at DESC LIMIT 100').all()
+  listAudit(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<{ id: string, actor: string, action: string, target: string, detail: string, createdAt: string }> {
+    const cursor = options.cursor
+    const rows = this.db.prepare(`
+      SELECT id, actor, action, target, detail, created_at AS createdAt
+      FROM audit
+      WHERE ? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as { id: string, actor: string, action: string, target: string, detail: string, createdAt: string }[]
+    const total = Number((this.db.prepare('SELECT COUNT(*) AS count FROM audit').get() as { count: number }).count)
+    return pageResult(rows, options, total, item => item.id)
   }
 
   deleteAudit(id: string): boolean {

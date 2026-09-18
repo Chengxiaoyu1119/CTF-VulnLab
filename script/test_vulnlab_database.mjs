@@ -7,6 +7,7 @@ const { VulnLabDatabase } = await import(new URL('../src/dist/db.js', import.met
 const { dataPaths } = await import(new URL('../src/dist/paths.js', import.meta.url))
 const dataDir = await mkdtemp(join(tmpdir(), 'vulnlab-database-'))
 const database = new VulnLabDatabase(dataDir)
+const firstRecordPage = { limit: 100, cursor: null }
 try {
   const paths = dataPaths(dataDir)
   assert.equal(paths.root, resolve(dataDir))
@@ -26,7 +27,7 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   const invitation = database.createInvitation('invite-fixture', 'code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(invitation.usedAt, null)
   assert.equal(database.registerUserWithInvitation('student-fixture', 'scrypt-fixture-hash', 'code-hash-fixture'), 'created')
-  assert.equal(database.listInvitations().find(item => item.id === invitation.id)?.status, 'used')
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === invitation.id)?.status, 'used')
   assert.equal(database.getUser('STUDENT-FIXTURE')?.userName, 'student-fixture')
   assert.equal(database.getUser('student-fixture')?.passwordHash, 'scrypt-fixture-hash')
   assert.equal(database.registerUserWithInvitation('another-student', 'scrypt-fixture-hash', 'code-hash-fixture'), 'invalid_invitation')
@@ -38,7 +39,7 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.registerUserWithInvitation('STUDENT-FIXTURE', 'scrypt-fixture-hash', 'duplicate-code-hash-fixture', ['vulnlab']), 'user_exists')
   assert.equal(database.registerUserWithInvitation('available-student', 'scrypt-fixture-hash', 'missing-code-hash-fixture-2', ['vulnlab']), 'invalid_invitation')
   assert.equal(database.registerUserWithInvitation('available-student', 'scrypt-fixture-hash', 'duplicate-code-hash-fixture', ['vulnlab']), 'created')
-  const listedUsers = database.listRegisteredUsers()
+  const listedUsers = database.listRegisteredUsers(firstRecordPage).items
   assert.ok(listedUsers.some(item => item.userName === 'student-fixture'))
   assert.ok(listedUsers.every(item => Object.keys(item).sort().join(',') === 'createdAt,userName'))
   database.createSession('student-session-a', 'student-fixture', 'admin', 'csrf-fixture-a', Date.now() + 86_400_000)
@@ -52,13 +53,13 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.getSession('student-session-a'), null)
   assert.equal(database.getSession('student-session-b'), null)
   assert.ok(database.getSession('available-session'))
-  assert.ok(database.listAudit().some(item => item.detail === 'account deletion is retained in audit history'))
+  assert.ok(database.listAudit(firstRecordPage).items.some(item => item.detail === 'account deletion is retained in audit history'))
   const revoked = database.createInvitation('revoked-invite-fixture', 'revoked-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(database.revokeInvitation(revoked.id), true)
-  assert.equal(database.listInvitations().find(item => item.id === revoked.id)?.status, 'revoked')
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === revoked.id)?.status, 'revoked')
   assert.equal(database.registerUserWithInvitation('revoked-student', 'scrypt-fixture-hash', 'revoked-code-hash-fixture'), 'invalid_invitation')
   const expiredInvitation = database.createInvitation('expired-invite-fixture', 'expired-code-hash-fixture', 'vulnlab', new Date(Date.now() - 1_000).toISOString())
-  assert.equal(database.listInvitations().find(item => item.id === expiredInvitation.id)?.status, 'expired')
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === expiredInvitation.id)?.status, 'expired')
   assert.equal(database.registerUserWithInvitation('expired-student', 'scrypt-fixture-hash', 'expired-code-hash-fixture'), 'invalid_invitation')
   assert.equal(database.revokeInvitation(expiredInvitation.id), true)
   assert.equal(database.revokeInvitation(expiredInvitation.id), false)
@@ -69,13 +70,13 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.deleteInvitations(batchInvitations.map(item => item.id)), 2)
   assert.equal(database.deleteInvitations(batchInvitations.map(item => item.id)), 0)
   database.addAudit('vulnlab', 'test.record', 'fixture', 'deletable audit')
-  const deletableAudit = database.listAudit().find(item => item.detail === 'deletable audit')
+  const deletableAudit = database.listAudit(firstRecordPage).items.find(item => item.detail === 'deletable audit')
   assert.ok(deletableAudit)
   assert.equal(database.deleteAudit(deletableAudit.id), true)
   assert.equal(database.deleteAudit(deletableAudit.id), false)
   database.addAudit('vulnlab', 'test.record', 'fixture', 'batch audit a')
   database.addAudit('vulnlab', 'test.record', 'fixture', 'batch audit b')
-  const batchAudits = database.listAudit().filter(item => item.detail?.startsWith('batch audit '))
+  const batchAudits = database.listAudit(firstRecordPage).items.filter(item => item.detail?.startsWith('batch audit '))
   assert.equal(database.deleteAudits(batchAudits.map(item => item.id)), 2)
   assert.equal(database.deleteAudits(batchAudits.map(item => item.id)), 0)
 
@@ -195,9 +196,48 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   const marked = database.expireInstance(retryInstance.id, 'fixture provider stopped')
   assert.equal(marked?.status, 'expired')
   assert.match(marked?.logs.at(-1), /fixture provider stopped/)
+
+  const pagedInvitationIds = []
+  const pagedUserNames = []
+  const pagedAuditDetails = []
+  for (let index = 0; index < 51; index += 1) {
+    const suffix = String(index).padStart(2, '0')
+    const invitationId = `page-invitation-${suffix}`
+    const codeHash = `page-code-hash-${suffix}`
+    const userName = `page-user-${suffix}`
+    database.createInvitation(invitationId, codeHash, 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
+    assert.equal(database.registerUserWithInvitation(userName, 'scrypt-fixture-hash', codeHash), 'created')
+    const detail = `pagination audit ${suffix}`
+    database.addAudit('vulnlab', 'instance.renew', 'fixture', detail)
+    pagedInvitationIds.push(invitationId)
+    pagedUserNames.push(userName)
+    pagedAuditDetails.push(detail)
+  }
+
+  const assertSecondPage = (first, second, expected, key) => {
+    assert.equal(first.items.length, 50)
+    assert.ok(first.nextCursor)
+    assert.equal(new Set([...first.items, ...second.items].map(item => item[key])).size, first.items.length + second.items.length)
+    const loaded = new Set([...first.items, ...second.items].map(item => item[key]))
+    expected.forEach(value => assert.ok(loaded.has(value), `missing paged record: ${value}`))
+  }
+  const invitationPage = database.listInvitations({ limit: 50, cursor: null })
+  const invitationNextPage = database.listInvitations({ limit: 50, cursor: invitationPage.nextCursor })
+  assertSecondPage(invitationPage, invitationNextPage, pagedInvitationIds, 'id')
+  assert.ok(invitationPage.total >= pagedInvitationIds.length)
+
+  const userPage = database.listRegisteredUsers({ limit: 50, cursor: null })
+  const userNextPage = database.listRegisteredUsers({ limit: 50, cursor: userPage.nextCursor })
+  assertSecondPage(userPage, userNextPage, pagedUserNames, 'userName')
+  assert.ok(userPage.total >= pagedUserNames.length)
+
+  const auditPage = database.listAudit({ limit: 50, cursor: null })
+  const auditNextPage = database.listAudit({ limit: 50, cursor: auditPage.nextCursor })
+  assertSecondPage(auditPage, auditNextPage, pagedAuditDetails, 'detail')
+  assert.ok(auditPage.total >= pagedAuditDetails.length)
 } finally {
   database.close()
   await rm(dataDir, { recursive: true, force: true })
 }
 
-console.log('VulnLab database lifecycle test passed: expired instances are claimed once and removed from running capacity.')
+console.log('VulnLab database lifecycle test passed: expired instances are claimed once and paged records remain complete.')

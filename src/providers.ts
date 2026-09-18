@@ -89,15 +89,22 @@ export class ProviderError extends Error {
   }
 }
 
-const lease = (lifetimeMinutes: number) => {
+const lease = (lifetimeMinutes: number, baseTime = Date.now()) => {
   if (!Number.isFinite(lifetimeMinutes) || lifetimeMinutes <= 0) {
     throw new ProviderError('PROVIDER_LIFETIME_INVALID', '运行实例时长必须是正数。', 400)
   }
-  const createdAt = new Date()
+  const createdAt = new Date(baseTime)
   return {
     createdAt: createdAt.toISOString(),
     expiresAt: new Date(createdAt.getTime() + lifetimeMinutes * 60_000).toISOString(),
   }
+}
+
+const renewalLease = (instance: LabInstance, lifetimeMinutes: number) => {
+  const now = Date.now()
+  const currentExpiry = Date.parse(instance.expiresAt)
+  const baseTime = Number.isFinite(currentExpiry) ? Math.max(now, currentExpiry) : now
+  return lease(lifetimeMinutes, baseTime)
 }
 
 type SpawnFunction = typeof spawn
@@ -780,7 +787,7 @@ export class NativePhpProvider implements LabProvider {
 
   async renew(input: ProviderRenewInput): Promise<ProviderRenewResult> {
     if (!this.runtimes.has(input.instance.id)) throw new ProviderError('NATIVE_PHP_PROCESS_MISSING', '原生 PHP 进程已退出，请重新启动实例。', 409)
-    const { expiresAt } = lease(input.lifetimeMinutes)
+    const { expiresAt } = renewalLease(input.instance, input.lifetimeMinutes)
     return { expiresAt, log: `${new Date().toISOString()} 原生 PHP 实例续期` }
   }
 
@@ -1098,7 +1105,7 @@ export class NativeProcessProvider implements LabProvider {
 
   async renew(input: ProviderRenewInput): Promise<ProviderRenewResult> {
     if (!this.runtimes.has(input.instance.id)) throw new ProviderError(`${processErrorPrefix[this.id]}_PROCESS_MISSING`, `${processLabels[this.id]} 进程已退出。`, 409)
-    const { expiresAt } = lease(input.lifetimeMinutes)
+    const { expiresAt } = renewalLease(input.instance, input.lifetimeMinutes)
     return { expiresAt, log: `${new Date().toISOString()} 原生 ${processLabels[this.id]} 实例续期` }
   }
 
