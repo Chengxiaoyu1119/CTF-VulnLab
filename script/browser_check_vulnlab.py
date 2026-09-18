@@ -314,6 +314,17 @@ def main() -> None:
         mutillidae_trigger = page.locator(".lab-card-media").nth(7)
         mutillidae_trigger.click()
         expect(page.get_by_role("heading", name="OWASP Mutillidae II", exact=True)).to_be_visible()
+        detail_entry_animation = page.locator(".lab-detail-heading").evaluate(
+            "element => getComputedStyle(element).animationName"
+        )
+        assert detail_entry_animation == "lab-detail-item-in", detail_entry_animation
+        detail_backdrop_box = page.locator(".lab-detail-backdrop").bounding_box()
+        viewport = page.evaluate("({ width: window.innerWidth, height: window.innerHeight })")
+        assert detail_backdrop_box and abs(detail_backdrop_box["x"]) <= 0.1 and abs(detail_backdrop_box["y"]) <= 0.1 and abs(detail_backdrop_box["width"] - viewport["width"]) <= 0.1 and abs(detail_backdrop_box["height"] - viewport["height"]) <= 0.1, (detail_backdrop_box, viewport)
+        detail_body_overflow = page.locator(".lab-detail-body").evaluate(
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
+        )
+        assert detail_body_overflow["scrollHeight"] <= detail_body_overflow["clientHeight"], detail_body_overflow
         expect(page.locator(".lab-detail-runtime")).to_have_count(0)
         if mutillidae_lab.get("version"):
             expect(page.get_by_text(mutillidae_lab["version"], exact=True)).to_have_count(0)
@@ -374,6 +385,10 @@ def main() -> None:
         expect(page.locator(".admin-inline-error")).to_have_count(0)
         expect(page.locator(".invitation-empty-state")).to_be_visible()
         expect(page.get_by_role("heading", name="靶场", exact=True)).to_be_visible()
+        admin_entry_animation = page.locator(".admin-record-button").first.evaluate(
+            "element => getComputedStyle(element).animationName"
+        )
+        assert admin_entry_animation == "admin-item-in", admin_entry_animation
         compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
         assert compact_admin_box and compact_admin_box["height"] < 520, compact_admin_box
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
@@ -704,6 +719,16 @@ def main() -> None:
         assert caption_color["color"] == "rgb(245, 245, 245)", caption_color
         assert caption_color["backgroundImage"] != "none", caption_color
         assert caption_color["backdropFilter"] == "none", caption_color
+        card_motion = page.locator('.lab-card').first.evaluate(
+            """element => ({
+                animationName: getComputedStyle(element).animationName,
+                transitionProperty: getComputedStyle(element).transitionProperty,
+                coverTransition: getComputedStyle(element.querySelector('.lab-card-cover')).transitionProperty,
+            })"""
+        )
+        assert card_motion["animationName"] == "lab-card-in", card_motion
+        assert "transform" in card_motion["transitionProperty"].split(', '), card_motion
+        assert "transform" in card_motion["coverTransition"].split(', '), card_motion
         focus_layer = page.locator('.lab-card-media').first.evaluate(
             "element => ({ backgroundImage: getComputedStyle(element, '::after').backgroundImage, backgroundColor: getComputedStyle(element, '::after').backgroundColor })"
         )
@@ -740,16 +765,17 @@ def main() -> None:
         )
         assert card_idle_style["borderWidth"] == "0px", card_idle_style
         assert card_idle_style["boxShadow"] == "none", card_idle_style
+        page.wait_for_timeout(600)
         page.locator(".lab-card-media").first.hover()
         page.wait_for_timeout(220)
         card_hover_style = page.locator(".lab-card").first.evaluate(
             "element => ({ boxShadow: getComputedStyle(element).boxShadow, transform: getComputedStyle(element).transform })"
         )
-        assert card_hover_style == {"boxShadow": "none", "transform": "none"}, card_hover_style
+        assert card_hover_style["boxShadow"] != "none" and card_hover_style["transform"] != "none", card_hover_style
         hover_cover_style = page.locator(".lab-card-cover").first.evaluate(
             "element => ({ filter: getComputedStyle(element).filter, transform: getComputedStyle(element).transform })"
         )
-        assert hover_cover_style == {"filter": "saturate(0.96) contrast(1.02)", "transform": "none"}, hover_cover_style
+        assert hover_cover_style["filter"] != "saturate(0.96) contrast(1.02)" and hover_cover_style["transform"] != "none", hover_cover_style
         hover_overlay_opacity = page.locator(".lab-card-media").first.evaluate(
             "element => getComputedStyle(element, '::before').opacity"
         )
@@ -868,6 +894,10 @@ def main() -> None:
             assert re.fullmatch(r"到期 \d{4}/\d{2}/\d{2} \d{2}:\d{2}", expiry_text), expiry_text
             expect(page.locator(".lab-detail-state")).to_have_count(0)
             detail_dialog = page.get_by_role("dialog")
+            running_indicator = detail_dialog.locator(".lab-detail-running-dot").evaluate(
+                "element => getComputedStyle(element).animationName"
+            )
+            assert running_indicator == "lab-running-pulse", running_indicator
             expect(detail_dialog.get_by_role("button", name="续期", exact=True)).to_be_visible()
             expect(detail_dialog.get_by_role("button", name="停止", exact=True)).to_be_visible()
             with page.expect_popup() as popup_info:
@@ -1156,6 +1186,9 @@ def main() -> None:
         mobile_detail_trigger = page.locator(".lab-card-media").first
         mobile_detail_trigger.click()
         expect(page.get_by_role("dialog")).to_be_visible()
+        mobile_detail_backdrop_box = page.locator(".lab-detail-backdrop").bounding_box()
+        mobile_viewport = page.evaluate("({ width: window.innerWidth, height: window.innerHeight })")
+        assert mobile_detail_backdrop_box and abs(mobile_detail_backdrop_box["x"]) <= 0.1 and abs(mobile_detail_backdrop_box["y"]) <= 0.1 and abs(mobile_detail_backdrop_box["width"] - mobile_viewport["width"]) <= 0.1 and abs(mobile_detail_backdrop_box["height"] - mobile_viewport["height"]) <= 0.1, (mobile_detail_backdrop_box, mobile_viewport)
         detail_box = page.locator(".lab-detail-dialog").bounding_box()
         mobile_workspace_box = page.locator(".lab-workspace").bounding_box()
         assert detail_box and detail_box["width"] <= 370, detail_box
@@ -1187,9 +1220,10 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "labs-compact.png"), full_page=True)
         page.emulate_media(reduced_motion="reduce")
         reduced_motion = page.locator(".lab-card").first.evaluate(
-            "element => ({ transitionDuration: getComputedStyle(element).transitionDuration, hoverTransform: getComputedStyle(element).transform })"
+            "element => ({ transitionDuration: getComputedStyle(element).transitionDuration, animationName: getComputedStyle(element).animationName, hoverTransform: getComputedStyle(element).transform })"
         )
         assert float(reduced_motion["transitionDuration"].replace("s", "")) <= 0.001, reduced_motion
+        assert reduced_motion["animationName"] == "none" and reduced_motion["hoverTransform"] == "none", reduced_motion
         reduced_context = browser.new_context(viewport={"width": 739, "height": 953}, device_scale_factor=1)
         reduced_page = reduced_context.new_page()
         reduced_page.emulate_media(reduced_motion="reduce")
