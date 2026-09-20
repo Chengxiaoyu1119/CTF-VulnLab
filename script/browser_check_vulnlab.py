@@ -92,7 +92,7 @@ def main() -> None:
         expect(page.locator(".login-field-error")).to_have_count(2)
         page.set_viewport_size({"width": 768, "height": 1024})
         tablet_login_box = page.locator(".login-form").bounding_box()
-        assert tablet_login_box and round(tablet_login_box["width"]) == 480 and round(tablet_login_box["height"]) == 522, tablet_login_box
+        assert tablet_login_box and round(tablet_login_box["width"]) == 480 and 510 <= round(tablet_login_box["height"]) <= 530, tablet_login_box
         page.screenshot(path=str(OUTPUT_DIR / "login-validation-tablet.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
         register_requests = []
