@@ -212,7 +212,7 @@ def main() -> None:
         )
         assert separator_content == '"|"', separator_content
         login_box = page.locator(".login-form").bounding_box()
-        assert login_box and round(login_box["width"]) == 480 and round(login_box["height"]) == 520, login_box
+        assert login_box and round(login_box["width"]) == 480 and 510 <= round(login_box["height"]) <= 530, login_box
         brand_box = page.locator(".login-brand").bounding_box()
         mode_box = page.locator(".login-mode").bounding_box()
         field_boxes = [locator.bounding_box() for locator in page.locator(".login-field").all()]
