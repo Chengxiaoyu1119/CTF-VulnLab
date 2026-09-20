@@ -309,6 +309,9 @@ def main() -> None:
         assert page.locator(".lab-card-cover").evaluate_all(
             "elements => elements.every(element => element.complete && element.naturalWidth > 0)"
         )
+        assert page.locator(".lab-grid .lab-card-cover").evaluate_all(
+            "elements => elements.map(element => element.getAttribute('loading'))"
+        ) == [None, None, None, "lazy", "lazy", "lazy", "lazy", "lazy", "lazy"]
         initial_labs_payload = page.evaluate("async () => await (await fetch('/api/labs')).json()")
         mutillidae_lab = next(lab for lab in initial_labs_payload if lab["slug"] == "mutillidae")
         mutillidae_trigger = page.locator(".lab-card-media").nth(7)
@@ -791,8 +794,8 @@ def main() -> None:
         workspace_display = page.locator(".labs-screen").evaluate("element => getComputedStyle(element).display")
         assert workspace_display == "flex", workspace_display
         screen_box = page.locator(".labs-screen").bounding_box()
-        assert screen_box and abs(screen_box["x"] - 160) <= 1 and abs(screen_box["y"] - 90) <= 1, screen_box
-        assert screen_box and abs(screen_box["width"] - 1120) <= 1 and abs(screen_box["height"] - 720) <= 1, screen_box
+        assert screen_box and abs(screen_box["x"] - 160) <= 1 and abs(screen_box["y"] - 30) <= 1, screen_box
+        assert screen_box and abs(screen_box["width"] - 1120) <= 1 and abs(screen_box["height"] - 840) <= 1, screen_box
         screen_edge_style = page.locator(".labs-screen").evaluate(
             "element => ({ borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth, boxShadow: getComputedStyle(element).boxShadow })"
         )
@@ -850,9 +853,20 @@ def main() -> None:
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
         )
         assert abs(medium_card_ratio - 1.5) <= 0.03, medium_card_ratio
-        canvas_overflow = page.locator(".lab-canvas").evaluate("element => getComputedStyle(element).overflowY")
-        assert canvas_overflow == "auto", canvas_overflow
+        canvas_style = page.locator(".lab-canvas").evaluate(
+            "element => ({ overflowY: getComputedStyle(element).overflowY, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
+        )
+        assert canvas_style == {"overflowY": "auto", "scrollbarWidth": "none"}, canvas_style
+        page.set_viewport_size({"width": 1280, "height": 900})
+        desktop_canvas = page.locator(".lab-canvas").evaluate(
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
+        )
+        assert desktop_canvas["scrollHeight"] <= desktop_canvas["clientHeight"], desktop_canvas
         page.set_viewport_size({"width": 1440, "height": 900})
+        desktop_canvas = page.locator(".lab-canvas").evaluate(
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
+        )
+        assert desktop_canvas["scrollHeight"] <= desktop_canvas["clientHeight"], desktop_canvas
         detail_trigger = page.locator(".lab-card-media").first
         detail_trigger.click()
         expect(page.get_by_role("dialog")).to_be_visible()

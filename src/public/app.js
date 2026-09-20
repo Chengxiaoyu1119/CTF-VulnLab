@@ -7,10 +7,11 @@ const consoleBanner = [
   '                         |___/                    |___/',
 ].join('\n')
 
-console.info('%c何辰风的主页', 'color:#ff8a3d;font-size:18px;font-weight:700;')
-console.info('%c%s', 'color:#ff8a3d;line-height:1.35;', consoleBanner)
 console.info(
-  '%c版本: 0.1.0\nGithub: https://github.com/Chengxiaoyu1119/CTF-VulnLab',
+  '%c何辰风的攻防控制台\n%c%s\n%c版本: 0.1.0\nGithub: https://github.com/Chengxiaoyu1119/CTF-VulnLab',
+  'color:#ff8a3d;font-size:18px;font-weight:700;',
+  'color:#ff8a3d;line-height:1.35;',
+  consoleBanner,
   'color:#55a8ff;font-weight:500;',
 )
 
@@ -262,8 +263,8 @@ const coverAssets = Object.freeze({
   pygoat: '/covers/pygoat.svg',
 })
 const coverVariant = lab => Object.hasOwn(coverAssets, lab.slug) ? lab.slug : 'default'
-const coverArt = (lab, imageClass = 'lab-card-cover') => coverAssets[lab.slug]
-  ? `<img class="${esc(imageClass)}" data-cover-image="true" src="${coverAssets[lab.slug]}" alt="${esc(lab.title)} 封面" loading="lazy" decoding="async" />`
+const coverArt = (lab, imageClass = 'lab-card-cover', lazy = false) => coverAssets[lab.slug]
+  ? `<img class="${esc(imageClass)}" data-cover-image="true" src="${coverAssets[lab.slug]}" alt="${esc(lab.title)} 封面"${lazy ? ' loading="lazy"' : ''} decoding="async" />`
   : ''
 const latestFailedJob = lab => state.jobs
   .filter(job => job.labId === lab.id && job.status === 'error')
@@ -295,10 +296,10 @@ function labCardView(lab) {
   return { cardState, statusLabel, busy: starting || importing || queued }
 }
 
-function labCard(lab) {
+function labCard(lab, index) {
   const view = labCardView(lab)
   return `<article class="lab-card" data-state="${view.cardState}" data-runtime="${esc(lab.runtimeKind ?? '')}" aria-label="${esc(lab.title)}，${view.statusLabel}"${view.busy ? ' aria-busy="true"' : ''}>
-    <button class="lab-card-media" type="button" data-action="open-lab-details" data-id="${esc(lab.id)}" data-cover="${coverVariant(lab)}" aria-label="查看 ${esc(lab.title)} 信息">${coverArt(lab)}<span class="lab-card-caption" title="${esc(lab.title)}"><span class="lab-card-title">${esc(lab.title)}</span></span></button>
+    <button class="lab-card-media" type="button" data-action="open-lab-details" data-id="${esc(lab.id)}" data-cover="${coverVariant(lab)}" aria-label="查看 ${esc(lab.title)} 信息">${coverArt(lab, 'lab-card-cover', index >= 3)}<span class="lab-card-caption" title="${esc(lab.title)}"><span class="lab-card-title">${esc(lab.title)}</span></span></button>
   </article>`
 }
 
@@ -448,7 +449,7 @@ function loginPage() {
     ? `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '注册中…' : '注册账号'}</button>`
     : `<button class="button button-primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? '登录中…' : '登录系统'}</button>`
   const authNotice = state.authNotice ? loginNoticeCard({ id: 'auth-success-notice', title: '注册成功', message: state.authNotice, action: 'dismiss-auth-notice', kind: 'success' }) : ''
-  return `<div class="login-page"><div data-login-notice-slot>${authNotice}</div><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><div class="login-logo"><img src="/favicon.png?v=16" alt="攻防控制台Logo"></div><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${state.error ? loginErrorMarkup() : ''}<div class="login-fields">${fields}</div>${submit}</form></div>`
+  return `<div class="login-page"><div data-login-notice-slot>${authNotice}</div><form class="login-form${registerMode ? ' login-form-register' : ''}" id="login-form" novalidate><div class="login-brand"><div class="login-logo"><img src="/favicon.png" alt="攻防控制台Logo"></div><h1>攻防控制台</h1><p>网络攻防靶场管理系统</p></div><div class="login-mode" role="tablist" aria-label="账号操作"><button type="button" role="tab" data-action="switch-auth-mode" data-mode="login" aria-selected="${!registerMode}" ${state.busy ? 'disabled' : ''}>登录</button><button type="button" role="tab" data-action="switch-auth-mode" data-mode="register" aria-selected="${registerMode}" ${state.busy ? 'disabled' : ''}>注册</button></div>${state.error ? loginErrorMarkup() : ''}<div class="login-fields">${fields}</div>${submit}</form></div>`
 }
 
 function updateLoginNoticeView() {
@@ -587,7 +588,7 @@ function patchLabs() {
     let card = cards.get(lab.id)
     if (!card) {
       const template = document.createElement('template')
-      template.innerHTML = labCard(lab)
+      template.innerHTML = labCard(lab, index)
       card = template.content.firstElementChild
     }
     if (grid.children[index] !== card) grid.insertBefore(card, grid.children[index] ?? null)
@@ -596,6 +597,11 @@ function patchLabs() {
     card.dataset.state = view.cardState
     card.dataset.runtime = lab.runtimeKind ?? ''
     card.setAttribute('aria-label', `${lab.title}，${view.statusLabel}`)
+    const cover = card.querySelector('[data-cover-image]')
+    if (cover) {
+      if (index < 3) cover.removeAttribute('loading')
+      else cover.setAttribute('loading', 'lazy')
+    }
     if (view.busy) card.setAttribute('aria-busy', 'true')
     else card.removeAttribute('aria-busy')
   })

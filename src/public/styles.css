@@ -312,7 +312,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 @keyframes loading-pulse { 0%, 100% { opacity: .36; transform: scaleY(.72); } 50% { opacity: 1; transform: scaleY(1); } }
 @keyframes loading-spin { to { transform: rotate(360deg); } }
 
-.labs-screen { position: relative; width: min(1120px, calc(100% - 48px)); height: min(720px, calc(100dvh - 48px)); min-height: 0; display: flex; flex-direction: column; margin: 0 auto; overflow: hidden; border: 0; border-radius: 0; color: var(--workspace-ink); background-color: var(--workspace-canvas); box-shadow: none; animation: labs-workspace-in 420ms cubic-bezier(.2, .8, .2, 1) both; }
+.labs-screen { position: relative; width: min(1120px, calc(100% - 48px)); height: min(840px, calc(100dvh - 48px)); min-height: 0; display: flex; flex-direction: column; margin: 0 auto; overflow: hidden; border: 0; border-radius: 0; color: var(--workspace-ink); background-color: var(--workspace-canvas); box-shadow: none; animation: labs-workspace-in 420ms cubic-bezier(.2, .8, .2, 1) both; }
 .workspace-toolbar { display: flex; flex: 0 0 42px; align-items: center; justify-content: space-between; padding: 8px 20px 0; background-color: var(--workspace-canvas); animation: labs-workspace-in 360ms 80ms cubic-bezier(.22, .61, .36, 1) both; }
 .workspace-title { margin: 0; color: #d8d8d8; font-size: 13px; font-weight: 650; letter-spacing: .01em; }
 .workspace-admin-trigger { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #333; border-radius: 7px; padding: 0; color: #969696; background-color: #181818; transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, transform 140ms ease; }
@@ -321,8 +321,9 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .workspace-admin-trigger:active { transform: scale(.94); }
 .workspace-admin-trigger svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
 .lab-workspace { min-width: 0; min-height: 0; width: 100%; height: auto; flex: 1 1 auto; overflow: hidden; border: 0; border-radius: 0; background-color: var(--workspace-canvas); box-shadow: none; }
-.lab-canvas { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding: 20px; background-color: var(--workspace-canvas); scrollbar-width: thin; scrollbar-color: #444 transparent; }
-.lab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; align-content: start; gap: 16px; }
+.lab-canvas { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: auto; padding: 20px; background-color: var(--workspace-canvas); scrollbar-width: none; }
+.lab-canvas::-webkit-scrollbar { display: none; }
+.lab-grid { width: 100%; max-width: 1080px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; align-content: start; gap: 16px; margin: 0 auto; }
 
 .lab-card { --caption-height: 42px; position: relative; min-width: 0; min-height: 0; aspect-ratio: 3 / 2; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; isolation: isolate; border: 0; border-radius: var(--radius-card); background-color: #181818; background-clip: border-box; box-shadow: var(--shadow-card); animation: lab-card-in 480ms cubic-bezier(.2, .8, .2, 1) both; transition: transform 220ms cubic-bezier(.2, .8, .2, 1), box-shadow 220ms ease; }
 .lab-card:nth-child(1) { animation-delay: 80ms; }
