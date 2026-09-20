@@ -720,7 +720,7 @@ def main() -> None:
             "element => ({ color: getComputedStyle(element).color, backgroundImage: getComputedStyle(element).backgroundImage, backdropFilter: getComputedStyle(element).backdropFilter })"
         )
         assert caption_color["color"] == "rgb(245, 245, 245)", caption_color
-        assert caption_color["backgroundImage"] != "none", caption_color
+        assert caption_color["backgroundImage"] == "none", caption_color
         assert caption_color["backdropFilter"] == "none", caption_color
         card_motion = page.locator('.lab-card').first.evaluate(
             """element => ({
@@ -753,7 +753,7 @@ def main() -> None:
                 return { width: caption.width, height: caption.height, left: caption.left, bottom: caption.bottom, cardWidth: card.width, cardLeft: card.left, cardBottom: card.bottom, childCount: element.children.length }
             })"""
         )
-        assert all(item["cardWidth"] - 0.1 <= item["width"] <= item["cardWidth"] and 41 <= item["height"] <= 43 and -0.1 <= item["left"] - item["cardLeft"] <= 0.1 and -0.1 <= item["cardBottom"] - item["bottom"] <= 0.1 and item["childCount"] == 1 for item in caption_metrics), caption_metrics
+        assert all(item["cardWidth"] - 2.1 <= item["width"] <= item["cardWidth"] and 37 <= item["height"] <= 39 and 0.9 <= item["left"] - item["cardLeft"] <= 1.1 and 0.9 <= item["cardBottom"] - item["bottom"] <= 1.1 and item["childCount"] == 1 for item in caption_metrics), caption_metrics
         card_ratio = page.locator('.lab-card').first.evaluate(
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
         )
@@ -766,7 +766,7 @@ def main() -> None:
         card_idle_style = page.locator(".lab-card").first.evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderWidth, boxShadow: getComputedStyle(element).boxShadow })"
         )
-        assert card_idle_style["borderWidth"] == "0px", card_idle_style
+        assert card_idle_style["borderWidth"] == "1px", card_idle_style
         assert card_idle_style["boxShadow"] == "none", card_idle_style
         page.wait_for_timeout(600)
         page.locator(".lab-card-media").first.hover()
@@ -813,7 +813,7 @@ def main() -> None:
                 overflow: getComputedStyle(element).overflow
             })"""
         )
-        assert card_corner_style == {"cardRadius": "14px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)", "overflow": "hidden"}, card_corner_style
+        assert card_corner_style == {"cardRadius": "8px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)", "overflow": "hidden"}, card_corner_style
         all_card_corner_styles = page.locator(".lab-card").evaluate_all(
             """elements => elements.map(element => {
                 const media = element.querySelector('.lab-card-media')
@@ -833,7 +833,7 @@ def main() -> None:
             })"""
         )
         assert all(
-            item["cardRadius"] == "14px"
+            item["cardRadius"] == "8px"
             and item["mediaRadius"] == item["coverRadius"] == "0px"
             and item["captionRadius"] == "0px"
             and item["mediaBackground"] == "rgb(24, 24, 24)"
@@ -1190,11 +1190,16 @@ def main() -> None:
                 captionBackground: getComputedStyle(element.querySelector('.lab-card-caption')).backgroundColor
             })"""
         )
-        assert mobile_corner_style == {"cardRadius": "12px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)"}, mobile_corner_style
+        assert mobile_corner_style == {"cardRadius": "8px", "mediaRadius": "0px", "coverRadius": "0px", "captionRadius": "0px", "mediaBackground": "rgb(24, 24, 24)", "coverClipPath": "none", "cardBackground": "rgb(24, 24, 24)", "captionBackground": "rgb(24, 24, 24)"}, mobile_corner_style
         mobile_caption_metrics = page.locator('.lab-card-caption').evaluate_all(
             "elements => elements.map(element => ({ visibility: getComputedStyle(element).visibility, opacity: getComputedStyle(element).opacity, width: element.getBoundingClientRect().width, cardWidth: element.closest('.lab-card').getBoundingClientRect().width }))"
         )
         assert mobile_caption_metrics and all(item["visibility"] == "visible" and item["opacity"] == "1" and item["cardWidth"] - 2.1 <= item["width"] <= item["cardWidth"] for item in mobile_caption_metrics), mobile_caption_metrics
+        mobile_grid_box = page.locator(".lab-grid").bounding_box()
+        mobile_last_card_box = page.locator(".lab-card").nth(8).bounding_box()
+        assert mobile_grid_box and mobile_last_card_box and abs(
+            mobile_last_card_box["x"] + mobile_last_card_box["width"] / 2 - (mobile_grid_box["x"] + mobile_grid_box["width"] / 2)
+        ) <= 1, {"grid": mobile_grid_box, "lastCard": mobile_last_card_box}
         no_horizontal_overflow = page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert no_horizontal_overflow
         mobile_detail_trigger = page.locator(".lab-card-media").first
