@@ -118,27 +118,32 @@ jobs:
           node --check script/run_browser_check_vulnlab.mjs
           node script/check_vulnlab_node.mjs
 
-      - name: Start VulnLab
+      - name: Run API smoke test
         env:
+          VULNLAB_BASE_URL: http://127.0.0.1:6710
           VULNLAB_PORT: 6710
           VULNLAB_DATA_DIR: ${{ runner.temp }}/vulnlab-data
           VULNLAB_AUTO_INSTALL_BUILTINS: 0
         run: |
+          $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:RUNNER_TEMP 'vulnlab.log'
           $errorLog = Join-Path $env:RUNNER_TEMP 'vulnlab-error.log'
+          $pidPath = Join-Path $env:RUNNER_TEMP 'vulnlab.pid'
           $process = Start-Process -FilePath node -ArgumentList 'src/dist/server.js' -WorkingDirectory $env:GITHUB_WORKSPACE -RedirectStandardOutput $log -RedirectStandardError $errorLog -PassThru
-          $process.Id | Set-Content -Path (Join-Path $env:RUNNER_TEMP 'vulnlab.pid')
-          for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:6710/healthz | Out-Null; exit 0 } catch { Start-Sleep -Seconds 1 }
+          $process.Id | Set-Content -Path $pidPath
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:6710/healthz | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'VulnLab did not become ready on port 6710.' }
+            node script/smoke_vulnlab.mjs
+            if ($LASTEXITCODE -ne 0) { throw "API smoke test exited with code $LASTEXITCODE." }
+          } finally {
+            if (Test-Path $pidPath) { Stop-Process -Id (Get-Content $pidPath) -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $log) { Get-Content $log }
+            if (Test-Path $errorLog) { Get-Content $errorLog }
           }
-          if (Test-Path $log) { Get-Content $log }
-          if (Test-Path $errorLog) { Get-Content $errorLog }
-          exit 1
-
-      - name: Run API smoke test
-        env:
-          VULNLAB_BASE_URL: http://127.0.0.1:6710
-        run: node script/smoke_vulnlab.mjs
 
       - name: Run operational smoke test
         run: node script/smoke_vulnlab_operational.mjs
@@ -149,25 +154,4 @@ jobs:
           python -m playwright install chromium
 
       - name: Run browser and responsive smoke test
-        env:
-          VULNLAB_BASE_URL: http://127.0.0.1:6710
-          VULNLAB_SCREENSHOT_DIR: ${{ runner.temp }}/vulnlab-browser
-          VULNLAB_BROWSER_ISOLATED: "1"
-        run: python script/browser_check_vulnlab.py
-
-      - name: Stop VulnLab
-        if: always()
-        run: |
-          $pidPath = Join-Path $env:RUNNER_TEMP 'vulnlab.pid'
-          $log = Join-Path $env:RUNNER_TEMP 'vulnlab.log'
-          $errorLog = Join-Path $env:RUNNER_TEMP 'vulnlab-error.log'
-          if (Test-Path $pidPath) { Stop-Process -Id (Get-Content $pidPath) -Force -ErrorAction SilentlyContinue }
-          if (Test-Path $log) { Get-Content $log }
-          if (Test-Path $errorLog) { Get-Content $errorLog }
-
-      - name: Upload browser evidence on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: vulnlab-browser-evidence
-          path: ${{ runner.temp }}/vulnlab-browser
+        run: node script/run_browser_check_vulnlab.mjs
