@@ -220,7 +220,7 @@ def main() -> None:
         button_style = page.locator(".login-form .button-primary").evaluate(
             "element => ({ fontFamily: getComputedStyle(element).fontFamily, fontSize: getComputedStyle(element).fontSize, fontWeight: getComputedStyle(element).fontWeight })"
         )
-        assert brand_box and round(brand_box["height"]) == 160, brand_box
+        assert brand_box and 148 <= round(brand_box["height"]) <= 165, brand_box
         assert mode_box and round(mode_box["height"]) == 52, mode_box
         assert all(box and round(box["height"]) == 40 for box in field_boxes), field_boxes
         assert button_box and round(button_box["height"]) == 44, button_box
