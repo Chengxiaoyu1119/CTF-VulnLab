@@ -26,7 +26,7 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        # Desktop reference viewport for the fixed 3×3 workspace.
+        # Desktop reference viewport for the wide, borderless split workspace.
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.emulate_media(reduced_motion="no-preference")
         page.add_init_script(
@@ -282,6 +282,13 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_text("DVWA", exact=True)).to_have_count(1)
         expect(page.locator(".labs-screen")).to_be_visible()
+        expect(page.locator(".workspace-brand")).to_be_visible()
+        expect(page.locator(".workspace-brand-mark")).to_be_visible()
+        assert page.locator(".workspace-brand-mark").evaluate("element => element.complete && element.naturalWidth > 0")
+        expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
+        expect(page.get_by_text("攻防控制台", exact=True)).to_be_visible()
+        expect(page.get_by_text("LOCAL SECURITY TRAINING", exact=True)).to_have_count(0)
+        brand_mark = page.locator(".workspace-brand-mark").element_handle()
         expect(page.locator(".workspace-account")).to_have_count(0)
         expect(page.get_by_role("button", name="vulnlab", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
@@ -304,6 +311,10 @@ def main() -> None:
             "elements => elements.map(element => getComputedStyle(element).backgroundColor)"
         )
         assert workspace_backgrounds == ["rgb(18, 18, 18)", "rgb(18, 18, 18)", "rgb(18, 18, 18)"], workspace_backgrounds
+        brand_edge_style = page.locator(".workspace-brand").evaluate(
+            "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, borderLeftWidth: getComputedStyle(element).borderLeftWidth, borderRightWidth: getComputedStyle(element).borderRightWidth, boxShadow: getComputedStyle(element).boxShadow })"
+        )
+        assert brand_edge_style == {"backgroundColor": "rgb(18, 18, 18)", "borderLeftWidth": "0px", "borderRightWidth": "0px", "boxShadow": "none"}, brand_edge_style
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
         expect(page.locator(".lab-card-cover")).to_have_count(9)
         assert page.locator(".lab-card-cover").evaluate_all(
@@ -352,6 +363,7 @@ def main() -> None:
         notice_canvas = page.locator(".lab-canvas").element_handle()
         notice_card = page.locator(".lab-card").first.element_handle()
         notice_cover = page.locator(".lab-card-cover").first.element_handle()
+        notice_brand_mark = page.locator(".workspace-brand-mark").element_handle()
         notice_detail_trigger = page.locator(".lab-card-media").first
         notice_detail_trigger.click()
         expect(page.locator(".lab-detail-dialog")).to_be_visible()
@@ -367,6 +379,8 @@ def main() -> None:
         assert page.locator(".lab-canvas").evaluate("(element, previous) => element === previous", notice_canvas)
         assert page.locator(".lab-card").first.evaluate("(element, previous) => element === previous", notice_card)
         assert page.locator(".lab-card-cover").first.evaluate("(element, previous) => element === previous", notice_cover)
+        assert page.locator(".workspace-brand-mark").evaluate("(element, previous) => element === previous", notice_brand_mark)
+        assert page.locator(".workspace-brand-mark").evaluate("(element, previous) => element === previous", brand_mark)
         assert page.locator(".lab-detail-dialog").evaluate("(element, previous) => element === previous", notice_dialog)
         assert notice_focus_target.evaluate("element => element.isConnected && document.activeElement === element")
         assert page.evaluate("window.__vulnlabDialogAnimationStarts") == notice_animation_count
@@ -387,7 +401,8 @@ def main() -> None:
         expect(page.locator(".admin-loading")).to_have_count(0)
         expect(page.locator(".admin-inline-error")).to_have_count(0)
         expect(page.locator(".invitation-empty-state")).to_be_visible()
-        expect(page.get_by_role("heading", name="靶场", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
+        expect(page.get_by_text("攻防控制台", exact=True)).to_be_visible()
         admin_entry_animation = page.locator(".admin-record-button").first.evaluate(
             "element => getComputedStyle(element).animationName"
         )
@@ -791,11 +806,11 @@ def main() -> None:
         expect(page.get_by_role("button", name="审计", exact=True)).to_have_count(0)
         desktop_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(desktop_columns.split()) == 3, desktop_columns
-        workspace_display = page.locator(".labs-screen").evaluate("element => getComputedStyle(element).display")
-        assert workspace_display == "flex", workspace_display
+        workspace_display = page.locator(".lab-workspace").evaluate("element => getComputedStyle(element).display")
+        assert workspace_display == "grid", workspace_display
         screen_box = page.locator(".labs-screen").bounding_box()
-        assert screen_box and abs(screen_box["x"] - 160) <= 1 and abs(screen_box["y"] - 30) <= 1, screen_box
-        assert screen_box and abs(screen_box["width"] - 1120) <= 1 and abs(screen_box["height"] - 840) <= 1, screen_box
+        assert screen_box and abs(screen_box["x"] - 24) <= 1 and abs(screen_box["y"] - 30) <= 1, screen_box
+        assert screen_box and abs(screen_box["width"] - 1392) <= 1 and abs(screen_box["height"] - 840) <= 1, screen_box
         screen_edge_style = page.locator(".labs-screen").evaluate(
             "element => ({ borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth, boxShadow: getComputedStyle(element).boxShadow })"
         )
@@ -846,7 +861,8 @@ def main() -> None:
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
         page.set_viewport_size({"width": 1002, "height": 978})
-        expect(page.get_by_role("heading", name="靶场", exact=True)).to_be_visible()
+        expect(page.locator(".workspace-brand")).to_have_count(1)
+        expect(page.locator(".workspace-brand")).not_to_be_visible()
         medium_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(medium_columns.split()) == 3, medium_columns
         medium_card_ratio = page.locator('.lab-card').first.evaluate(
@@ -1243,7 +1259,8 @@ def main() -> None:
         )
         assert float(reduced_motion["transitionDuration"].replace("s", "")) <= 0.001, reduced_motion
         assert reduced_motion["animationName"] == "none" and reduced_motion["hoverTransform"] == "none", reduced_motion
-        reduced_context = browser.new_context(viewport={"width": 739, "height": 953}, device_scale_factor=1)
+        expect(page.locator(".workspace-brand")).not_to_be_visible()
+        reduced_context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         reduced_page = reduced_context.new_page()
         reduced_page.emulate_media(reduced_motion="reduce")
         reduced_page.add_init_script(
@@ -1269,8 +1286,45 @@ def main() -> None:
             "element => ({ animationName: getComputedStyle(element).animationName, animationDuration: getComputedStyle(element).animationDuration })"
         )
         assert reduced_field_error_animation["animationName"] == "none", reduced_field_error_animation
+        reduced_page.get_by_label("账号", exact=True).fill("vulnlab")
+        reduced_page.get_by_label("密码", exact=True).fill("vulnlab")
+        reduced_page.get_by_role("button", name="登录系统", exact=True).click()
+        expect(reduced_page.locator(".workspace-brand-mark")).to_be_visible()
+        assert reduced_page.locator(".workspace-brand-mark").evaluate("element => element.complete && element.naturalWidth > 0")
         reduced_page.close()
         reduced_context.close()
+        page.emulate_media(reduced_motion="no-preference")
+        page.set_viewport_size({"width": 1440, "height": 900})
+        expanded_labs_payload = [
+            *initial_labs_payload,
+            *[
+                {**lab, "id": f"{lab['id']}-expanded-{index}", "title": f"扩展靶场 {index + 10}"}
+                for index, lab in enumerate(initial_labs_payload[:3])
+            ],
+        ]
+
+        def labs_with_expanded_catalog(route, request):
+            if request.method == "GET":
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(expanded_labs_payload, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        page.route("**/api/labs", labs_with_expanded_catalog)
+        page.reload(wait_until="networkidle")
+        page.wait_for_timeout(950)
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(12)
+        expanded_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        assert len(expanded_columns.split()) == 3, expanded_columns
+        expanded_row_tops = page.locator(".lab-grid .lab-card").evaluate_all(
+            "elements => elements.map(element => Math.round(element.getBoundingClientRect().top))"
+        )
+        assert len(set(expanded_row_tops)) == 4, expanded_row_tops
+        expanded_canvas = page.locator(".lab-canvas").evaluate(
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
+        )
+        assert expanded_canvas["scrollHeight"] > expanded_canvas["clientHeight"], expanded_canvas
+        page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-desktop.png"), full_page=True)
+        page.unroute("**/api/labs", labs_with_expanded_catalog)
         assert not console_errors, console_errors
         browser.close()
     print("VulnLab browser check passed.")

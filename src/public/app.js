@@ -238,8 +238,13 @@ function recordArrowIcon() {
 
 function labsShell() {
   return `<div class="labs-screen">
-    <div class="workspace-toolbar"><h1 class="workspace-title">靶场</h1><button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="管理中心">${adminKeyIcon()}</button></div>
+    <button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="管理中心">${adminKeyIcon()}</button>
     <section class="lab-workspace">
+      <div class="workspace-brand">
+        <img class="workspace-brand-mark" src="/favicon.png" alt="" />
+        <h1 class="workspace-brand-name">VulnLab</h1>
+        <p class="workspace-brand-subtitle">攻防控制台</p>
+      </div>
       <main class="lab-canvas" tabindex="-1"></main>
     </section>
     <div data-overlay-slot="success"></div>
@@ -567,7 +572,7 @@ async function waitForStartedInstance(labId) {
 
 function patchLabs() {
   const canvas = app.querySelector('.lab-canvas')
-  const visibleLabs = state.labs.slice(0, 9)
+  const visibleLabs = state.labs
   if (state.error && !visibleLabs.length) {
     const content = `<div class="empty-state lab-empty-state"><p>${esc(state.error)}</p><button class="button button-primary" type="button" data-action="refresh-labs">重新连接</button></div>`
     if (canvas.innerHTML !== content) canvas.innerHTML = content
