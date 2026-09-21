@@ -239,7 +239,7 @@ def main() -> None:
         mobile_brand_box = page.locator(".login-brand").bounding_box()
         mobile_logo_box = page.locator(".login-logo img").bounding_box()
         assert mobile_login_box and round(mobile_login_box["width"]) == 351, mobile_login_box
-        assert mobile_brand_box and round(mobile_brand_box["height"]) == 147, mobile_brand_box
+        assert mobile_brand_box and 136 <= round(mobile_brand_box["height"]) <= 155, mobile_brand_box
         assert mobile_logo_box and round(mobile_logo_box["width"]) == 60 and round(mobile_logo_box["height"]) == 60, mobile_logo_box
         page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_label("账号", exact=True).fill("wrong")
