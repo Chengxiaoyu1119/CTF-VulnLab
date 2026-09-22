@@ -415,7 +415,18 @@ def main() -> None:
         )
         assert admin_entry_animation == "admin-content-in", admin_entry_animation
         compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
-        assert compact_admin_box and compact_admin_box["width"] <= 700 and compact_admin_box["height"] <= 430, compact_admin_box
+        assert compact_admin_box and compact_admin_box["width"] <= 640 and compact_admin_box["height"] <= 400, compact_admin_box
+        expect(page.locator('.profile-avatar')).to_have_attribute('src', '/favicon.png')
+        expect(page.locator('.profile-identity')).to_have_count(0)
+        expect(page.locator('.profile-facts')).to_have_count(0)
+        expect(page.locator('.profile-name')).to_contain_text('vulnlab')
+        avatar_frame_style = page.locator('.profile-avatar-frame').evaluate(
+            "element => { const style = getComputedStyle(element); return { borderWidth: style.borderWidth, backgroundColor: style.backgroundColor, boxShadow: style.boxShadow } }"
+        )
+        assert avatar_frame_style == {"borderWidth": "0px", "backgroundColor": "rgba(0, 0, 0, 0)", "boxShadow": "none"}, avatar_frame_style
+        avatar_box = page.locator('.profile-avatar').bounding_box()
+        name_box = page.locator('.profile-name').bounding_box()
+        assert avatar_box and name_box and name_box["y"] > avatar_box["y"] + avatar_box["height"], (avatar_box, name_box)
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
         profile_button = page.locator('[data-action="open-admin-section"][data-section="profile"]')
         invitation_button = page.locator('[data-action="open-admin-section"][data-section="invitations"]')
@@ -1178,6 +1189,8 @@ def main() -> None:
         expect(page.locator(".lab-grid")).to_be_visible()
         expect(page.locator('.lab-card[data-state="error"] .lab-card-status')).to_have_count(0)
         page.locator('.lab-card-media[data-id]').first.click()
+        expect(page.locator(".lab-detail-state")).to_have_count(0)
+        expect(page.get_by_text("靶场准备失败，请重试。", exact=True)).to_have_count(0)
         expect(page.locator(".lab-detail-error")).to_contain_text("内置靶场本地资源路径已失效")
         expect(page.locator(".lab-detail-runtime")).to_have_count(0)
         expect(page.locator(".lab-detail-error")).not_to_contain_text("C:\\Users\\")

@@ -329,7 +329,7 @@ function labDetailModal() {
     .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0] ?? null
   const failedJob = lab.status === 'error' ? latestFailedJob(lab) : null
   const failed = lab.status === 'error'
-  const failureMessage = readableError(failedJob?.error ?? (lab.status === 'error' ? '靶场准备失败，请重试。' : ''))
+  const failureMessage = readableError(failedJob?.error)
   const instance = state.instances.find(item => item.labId === lab.id && item.status === 'running')
   const starting = busyFor('start-instance', lab.id)
   const preparing = importing || queued
@@ -346,7 +346,7 @@ function labDetailModal() {
     primaryAction = '<span class="button button-quiet lab-detail-action">等待准备</span>'
   }
   const detailState = instance ? 'running' : starting ? 'starting' : preparing ? 'preparing' : failed ? 'error' : cataloged ? 'cataloged' : 'ready'
-  const stateLabel = preparing ? '准备中' : failed ? '准备失败' : ''
+  const stateLabel = preparing ? '准备中' : ''
   const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
   const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
@@ -574,7 +574,7 @@ async function waitForStartedInstance(labId) {
     if (completedWithError?.error) throw new ApiError(completedWithError.error, 409)
     if (lab?.status === 'error' || (!job && state.jobs.some(item => item.labId === labId && item.status === 'error'))) {
       const failedJob = state.jobs.find(item => item.labId === labId && item.status === 'error')
-      throw new ApiError(failedJob?.error ?? '靶场准备失败，请重试。', 409)
+      throw new ApiError(failedJob?.error ?? '靶场启动未完成，请稍后查看状态。', 409)
     }
   }
   throw new ApiError('靶场准备超时，请稍后重新查看。', 504)
@@ -680,9 +680,7 @@ function adminPanel() {
   const isAdmin = state.session?.role === 'admin'
   const view = state.adminView
   const profile = state.session ? (() => {
-    const roleLabel = isAdmin ? '管理员' : '用户'
-    const initial = state.session.userName.slice(0, 1).toUpperCase()
-    return `<section class="profile-view" aria-labelledby="profile-title"><div class="profile-identity"><div class="profile-identity-main"><span class="profile-avatar" aria-hidden="true">${esc(initial)}</span><div class="profile-identity-copy"><h3 id="profile-title">${esc(state.session.userName)}</h3><span class="profile-role">${roleLabel}</span></div></div><span class="profile-status"><span aria-hidden="true"></span>正常</span></div><dl class="profile-facts"><div><dt>账号</dt><dd><code>${esc(state.session.userName)}</code></dd></div><div><dt>身份</dt><dd>${roleLabel}</dd></div><div><dt>会话状态</dt><dd><span class="profile-status"><span aria-hidden="true"></span>在线</span></dd></div></dl></section>`
+    return `<section class="profile-view" aria-labelledby="profile-title"><div class="profile-avatar-frame"><img class="profile-avatar" src="/favicon.png" alt="VulnLab项目图标" /></div><h3 id="profile-title" class="profile-name">${esc(state.session.userName)}</h3></section>`
   })() : ''
   const content = ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
   const navItems = isAdmin ? [['profile', '个人中心'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]

@@ -146,7 +146,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .lab-detail-open { color: #fff; text-decoration: none; }
 .lab-detail-stop { color: #ef9b95; border-color: #623c39; background-color: #261c1b; }
 .lab-detail-stop:hover { color: #ffd2ce; border-color: #9b4c46; background-color: #35201e; }
-.admin-dialog { width: min(700px, calc(100vw - 32px)); height: min(430px, calc(100dvh - 32px)); max-height: min(430px, calc(100dvh - 32px)); overflow: hidden; padding: 0; scrollbar-width: thin; scrollbar-color: #565656 transparent; }
+.admin-dialog { width: min(640px, calc(100vw - 32px)); height: min(400px, calc(100dvh - 32px)); max-height: min(400px, calc(100dvh - 32px)); overflow: hidden; padding: 0; scrollbar-width: thin; scrollbar-color: #565656 transparent; }
 .admin-dialog::-webkit-scrollbar { width: 8px; }
 .admin-dialog::-webkit-scrollbar-track { background: transparent; }
 .admin-dialog::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: #565656; background-clip: padding-box; }
@@ -222,14 +222,14 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-dialog .dialog-actions { flex: 0 0 auto; justify-content: space-between; gap: 12px; margin: 12px 0 0; border-top: 0; padding: 0; }
 .admin-dialog-primary { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; }
 
-.admin-layout { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-columns: 136px minmax(0, 1fr); }
+.admin-layout { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-columns: 124px minmax(0, 1fr); }
 .admin-sidebar { min-width: 0; padding: 16px 10px; border-right: 1px solid var(--workspace-line); background-color: #181818; }
 .admin-nav { display: grid; gap: 5px; margin-top: 0; }
 .admin-nav-button { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 7px; padding: 0 10px; color: #9c9c9c; background: transparent; font: inherit; font-size: 11px; text-align: left; transition: border-color 160ms ease, color 160ms ease, background-color 160ms ease; }
 .admin-nav-button:hover { border-color: #353535; color: #eee; background-color: #222; }
 .admin-nav-button.is-active { border-color: rgba(255, 127, 42, .34); color: #fff; background-color: rgba(255, 127, 42, .1); }
 .admin-nav-button:focus-visible { outline: 1px solid var(--workspace-accent); outline-offset: 2px; }
-.admin-dialog-main { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 16px 18px; }
+.admin-dialog-main { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 14px 16px; }
 .admin-dialog-tools { display: flex; flex: 0 0 auto; justify-content: flex-end; height: 31px; margin-bottom: 9px; }
 .admin-dialog-content { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: auto; margin-right: 10px; padding-right: 8px; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #565656 transparent; animation: admin-content-in 300ms cubic-bezier(.22, .61, .36, 1) both; }
 .admin-dialog-content::-webkit-scrollbar { width: 8px; }
@@ -239,22 +239,10 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-view-heading h3 { margin: 0; color: #eee; font-size: 14px; font-weight: 700; }
 .admin-record-view .admin-empty-state { margin-top: 12px; }
 .admin-record-view .admin-record-pagination { margin-bottom: 2px; }
-.profile-view { display: grid; width: 100%; gap: 14px; max-width: none; padding: 4px 0 2px; animation: admin-content-in 300ms cubic-bezier(.22, .61, .36, 1) both; }
-.profile-identity { position: relative; display: flex; min-height: 98px; align-items: center; justify-content: space-between; gap: 18px; overflow: hidden; border: 1px solid #493221; border-radius: 12px; padding: 16px 18px; background-color: #211c18; box-shadow: inset 0 1px rgba(255, 255, 255, .035), 0 10px 24px rgba(0, 0, 0, .16); }
-.profile-identity::before { position: absolute; inset: 0 auto 0 0; width: 3px; background-color: var(--workspace-accent); content: ''; }
-.profile-identity-main { display: flex; min-width: 0; align-items: center; gap: 14px; }
-.profile-avatar { display: grid; width: 50px; height: 50px; flex: 0 0 50px; place-items: center; border: 1px solid rgba(255, 127, 42, .55); border-radius: 14px; color: #ffbd7a; background-color: #2a2019; box-shadow: 0 0 0 4px rgba(255, 127, 42, .08); font-family: var(--font-mono); font-size: 19px; font-weight: 700; }
-.profile-identity-copy { display: grid; min-width: 0; gap: 5px; }
-.profile-identity h3 { margin: 0; overflow: hidden; color: #f5f5f5; font-size: 18px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-.profile-role { color: #a79a8e; font-size: 11px; }
-.profile-identity > .profile-status { flex: 0 0 auto; margin-left: auto; border: 1px solid rgba(98, 184, 137, .28); border-radius: 999px; padding: 6px 9px; background-color: rgba(98, 184, 137, .08); font-size: 11px; font-weight: 650; }
-.profile-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; }
-.profile-facts > div { display: grid; min-width: 0; min-height: 76px; align-content: space-between; gap: 10px; border: 1px solid #343434; border-radius: 9px; padding: 12px; background-color: #191919; box-shadow: inset 0 1px rgba(255, 255, 255, .02); }
-.profile-facts dt { color: #777; font-size: 10px; }
-.profile-facts dd { min-width: 0; margin: 0; overflow: hidden; color: #e0e0e0; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.profile-facts code { color: #ffb15f; font-family: var(--font-mono); font-size: 11px; }
-.profile-status { display: inline-flex; align-items: center; gap: 6px; color: var(--workspace-success); }
-.profile-status > span { width: 6px; height: 6px; border-radius: 50%; background-color: currentColor; box-shadow: 0 0 0 3px rgba(98, 184, 137, .1); }
+.profile-view { display: flex; width: 100%; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0 16px; text-align: center; animation: admin-content-in 300ms cubic-bezier(.22, .61, .36, 1) both; }
+.profile-avatar-frame { display: grid; width: 116px; height: 116px; place-items: center; background-color: transparent; }
+.profile-avatar { display: block; width: 104px; height: 104px; padding: 2px; border-radius: 16px; object-fit: contain; }
+.profile-name { max-width: 100%; margin: 0; overflow: hidden; color: #f4f4f4; font-size: 20px; font-weight: 700; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
@@ -458,7 +446,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 }
 
 @media (max-width: 600px) {
-  .admin-dialog { width: min(700px, calc(100vw - 24px)); height: min(580px, calc(100dvh - 24px)); max-height: min(580px, calc(100dvh - 24px)); }
+  .admin-dialog { width: min(640px, calc(100vw - 24px)); height: min(540px, calc(100dvh - 24px)); max-height: min(540px, calc(100dvh - 24px)); }
   .admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .admin-sidebar { padding: 10px 12px 8px; border-right: 0; border-bottom: 1px solid var(--workspace-line); }
   .admin-nav { display: flex; overflow-x: auto; gap: 6px; margin-top: 10px; scrollbar-width: none; }
@@ -467,7 +455,6 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .admin-dialog-main { padding: 12px 14px; }
   .admin-dialog-tools { margin-bottom: 7px; }
   .admin-record-actions { grid-template-columns: minmax(0, 1fr); }
-  .profile-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 480px) {
@@ -477,7 +464,6 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .login-brand h1 { font-size: 22px; }
   .lab-detail-runtime-meta { align-items: flex-start; }
   .lab-detail-endpoint { max-width: 100%; margin-left: 0; }
-  .profile-facts { grid-template-columns: minmax(0, 1fr); }
   .audit-entry-content { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
   .admin-user-content { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
   .admin-user-time { white-space: normal; }
