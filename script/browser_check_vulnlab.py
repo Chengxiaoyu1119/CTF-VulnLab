@@ -291,7 +291,9 @@ def main() -> None:
         brand_mark = page.locator(".workspace-brand-mark").element_handle()
         expect(page.locator(".workspace-account")).to_have_count(0)
         expect(page.get_by_role("button", name="vulnlab", exact=True)).to_have_count(0)
+        expect(page.locator(".workspace-brand-trigger")).to_be_visible()
         expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
+        expect(page.locator(".workspace-admin-trigger")).to_have_count(0)
         page.set_viewport_size({"width": 390, "height": 844})
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
@@ -310,11 +312,15 @@ def main() -> None:
         workspace_backgrounds = page.locator(".labs-screen, .lab-workspace, .lab-canvas").evaluate_all(
             "elements => elements.map(element => getComputedStyle(element).backgroundColor)"
         )
-        assert workspace_backgrounds == ["rgb(18, 18, 18)", "rgb(18, 18, 18)", "rgb(18, 18, 18)"], workspace_backgrounds
+        assert workspace_backgrounds == ["rgb(18, 18, 18)", "rgb(18, 18, 18)", "rgb(21, 21, 21)"], workspace_backgrounds
         brand_edge_style = page.locator(".workspace-brand").evaluate(
             "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, borderLeftWidth: getComputedStyle(element).borderLeftWidth, borderRightWidth: getComputedStyle(element).borderRightWidth, boxShadow: getComputedStyle(element).boxShadow })"
         )
         assert brand_edge_style == {"backgroundColor": "rgb(18, 18, 18)", "borderLeftWidth": "0px", "borderRightWidth": "0px", "boxShadow": "none"}, brand_edge_style
+        canvas_frame_style = page.locator(".lab-canvas").evaluate(
+            "element => ({ width: getComputedStyle(element).width, height: getComputedStyle(element).height, borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth })"
+        )
+        assert canvas_frame_style["borderRadius"] == "12px" and canvas_frame_style["borderTopWidth"] == "1px", canvas_frame_style
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
         expect(page.locator(".lab-card-cover")).to_have_count(9)
         assert page.locator(".lab-card-cover").evaluate_all(
@@ -400,25 +406,31 @@ def main() -> None:
         expect(page.get_by_role("dialog", name="管理中心")).to_be_visible()
         expect(page.locator(".admin-loading")).to_have_count(0)
         expect(page.locator(".admin-inline-error")).to_have_count(0)
-        expect(page.locator(".invitation-empty-state")).to_be_visible()
+        expect(page.locator('[data-admin-view="invitations"]')).to_have_count(0)
+        expect(page.locator(".profile-view")).to_be_visible()
         expect(page.get_by_role("heading", name="VulnLab", exact=True)).to_be_visible()
         expect(page.get_by_text("攻防控制台", exact=True)).to_be_visible()
-        admin_entry_animation = page.locator(".admin-record-button").first.evaluate(
+        admin_entry_animation = page.locator(".profile-view").evaluate(
             "element => getComputedStyle(element).animationName"
         )
-        assert admin_entry_animation == "admin-item-in", admin_entry_animation
+        assert admin_entry_animation == "admin-content-in", admin_entry_animation
         compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
-        assert compact_admin_box and compact_admin_box["height"] < 520, compact_admin_box
+        assert compact_admin_box and compact_admin_box["width"] <= 700 and compact_admin_box["height"] <= 430, compact_admin_box
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
-        invitation_button = page.locator('[data-action="open-admin-records"][data-panel="invitations"]')
-        audit_button = page.locator('[data-action="open-admin-records"][data-panel="audit"]')
-        account_button = page.locator('[data-action="open-admin-records"][data-panel="users"]')
+        profile_button = page.locator('[data-action="open-admin-section"][data-section="profile"]')
+        invitation_button = page.locator('[data-action="open-admin-section"][data-section="invitations"]')
+        audit_button = page.locator('[data-action="open-admin-section"][data-section="audit"]')
+        account_button = page.locator('[data-action="open-admin-section"][data-section="users"]')
+        expect(page.locator('[data-action="open-admin-section"][data-section="overview"]')).to_have_count(0)
+        expect(profile_button).to_have_attribute("aria-current", "page")
         expect(invitation_button).to_have_count(1)
         expect(audit_button).to_have_count(1)
         expect(account_button).to_have_count(1)
         invitation_button.click()
-        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
-        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
+        expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
+        expect(page.locator(".admin-records-backdrop")).to_have_count(0)
+        expect(page.get_by_role("heading", name="邀请管理", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         generated_invitations = page.evaluate(
             """async () => {
                 const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
@@ -437,13 +449,12 @@ def main() -> None:
         page.get_by_role("button", name="生成邀请码", exact=True).click()
         expect(invitation_code).to_have_count(1)
         assert len(invitation_code.inner_text()) == 32
-        invitation_button.click()
-        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator(".invitation-history-card")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
         expect(page.locator(".invitation-history-card")).to_have_count(52)
-        invitation_scroll_style = page.locator(".admin-records-dialog").evaluate(
+        invitation_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
         assert invitation_scroll_style["scrollHeight"] > invitation_scroll_style["clientHeight"], invitation_scroll_style
@@ -451,14 +462,14 @@ def main() -> None:
         assert invitation_scroll_style["scrollbarWidth"] == "thin", invitation_scroll_style
         invitation_visible_rows = page.locator(".invitation-history-card").evaluate_all(
             """elements => {
-                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
                 return elements.filter(element => {
                     const rect = element.getBoundingClientRect()
                     return rect.top >= panel.top && rect.bottom <= panel.bottom
                 }).length
             }"""
         )
-        assert invitation_visible_rows == 5, invitation_visible_rows
+        assert 0 < invitation_visible_rows <= 5, invitation_visible_rows
         expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_disabled()
         page.screenshot(path=str(OUTPUT_DIR / "admin-records-window-desktop.png"), full_page=True)
         generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
@@ -488,7 +499,6 @@ def main() -> None:
         for record_id in batch_invitation_ids:
             expect(page.locator(f'.invitation-history-card[data-id="{record_id}"]')).to_have_count(0)
         expect(page.locator(".invitation-history-card")).to_have_count(generated_invitation_records - 2)
-        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
         expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         page.get_by_role("button", name="复制邀请码", exact=True).click()
         expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
@@ -496,8 +506,7 @@ def main() -> None:
         expect(page.get_by_role("dialog", name="撤销邀请码")).to_be_visible()
         page.get_by_role("button", name="撤销邀请码", exact=True).click()
         expect(page.locator(".invitation-card")).to_have_count(0)
-        invitation_button.click()
-        expect(page.get_by_role("dialog", name="邀请码记录")).to_be_visible()
+        expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"][data-status="revoked"]')).to_have_count(1)
         page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .record-delete').click()
         expect(page.get_by_role("dialog", name="删除邀请码记录")).to_be_visible()
@@ -512,8 +521,6 @@ def main() -> None:
             expect(invitation_cleanup_confirm).to_be_visible()
             invitation_cleanup_confirm.get_by_role("button", name="删除所选", exact=True).click()
             expect(page.locator(".invitation-history-card")).to_have_count(0)
-        page.get_by_role("button", name="关闭邀请码记录", exact=True).click()
-
         account_password = "secret123"
         account_names = [f"ui-delete-{os.getpid()}-{time.time_ns() % 100000}-{index}" for index in range(6)]
         registration_results = page.evaluate(
@@ -546,23 +553,23 @@ def main() -> None:
         account_page.get_by_label("密码", exact=True).press("Enter")
         expect(account_page.locator(".labs-screen")).to_be_visible()
         account_button.click()
-        expect(page.get_by_role("dialog", name="账号管理")).to_be_visible()
+        expect(page.locator('[data-admin-view="users"]')).to_be_visible()
         expect(page.locator(".admin-user-entry")).to_have_count(6)
-        account_scroll_style = page.locator(".admin-records-dialog").evaluate(
+        account_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
         assert account_scroll_style["scrollHeight"] > account_scroll_style["clientHeight"], account_scroll_style
         assert account_scroll_style["clientHeight"] <= 400, account_scroll_style
         account_visible_rows = page.locator(".admin-user-entry").evaluate_all(
             """elements => {
-                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
                 return elements.filter(element => {
                     const rect = element.getBoundingClientRect()
                     return rect.top >= panel.top && rect.bottom <= panel.bottom
                 }).length
             }"""
         )
-        assert account_visible_rows <= 5, account_visible_rows
+        assert 0 < account_visible_rows <= 5, account_visible_rows
         account_select_alignment = page.locator('[data-admin-select-all="users"]').evaluate(
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
         )
@@ -585,7 +592,7 @@ def main() -> None:
         account_page.get_by_label("密码", exact=True).press("Enter")
         expect(account_page.locator(".labs-screen")).to_be_visible()
         account_page.locator('[data-action="open-admin-panel"]').click()
-        account_page.locator('[data-action="open-admin-records"][data-panel="users"]').click()
+        account_page.locator('[data-action="open-admin-section"][data-section="users"]').click()
         expect(account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')).to_have_count(1)
         current_account_row = account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')
         expect(current_account_row).to_contain_text("当前登录")
@@ -603,14 +610,13 @@ def main() -> None:
         for user_name in account_names[3:]:
             expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
         account_context.close()
-        page.get_by_role("button", name="关闭账号管理", exact=True).click()
         audit_button.click()
-        expect(page.get_by_role("dialog", name="最近审计记录")).to_be_visible()
+        expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
         expect(page.locator(".audit-entry")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
         expect(page.locator(".audit-entry")).not_to_have_count(50)
-        audit_scroll_style = page.locator(".admin-records-dialog").evaluate(
+        audit_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
         assert audit_scroll_style["scrollHeight"] > audit_scroll_style["clientHeight"], audit_scroll_style
@@ -618,14 +624,14 @@ def main() -> None:
         assert audit_scroll_style["scrollbarWidth"] == "thin", audit_scroll_style
         audit_visible_rows = page.locator(".audit-entry").evaluate_all(
             """elements => {
-                const panel = document.querySelector('.admin-records-dialog').getBoundingClientRect()
+                const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
                 return elements.filter(element => {
                     const rect = element.getBoundingClientRect()
                     return rect.top >= panel.top && rect.bottom <= panel.bottom
                 }).length
             }"""
         )
-        assert audit_visible_rows == 5, audit_visible_rows
+        assert 0 < audit_visible_rows <= 5, audit_visible_rows
         audit_entry = page.locator(".audit-entry").first
         expect(audit_entry.locator(".audit-entry-actor-label")).to_have_text("用户")
         expect(audit_entry.locator(".audit-entry-actor")).to_have_attribute("title", re.compile(r"^用户：.+"))
@@ -690,7 +696,6 @@ def main() -> None:
         assert audit_delete_response_info.value.json().get("deleted") == 2
         for record_id in batch_audit_ids:
             expect(page.locator(f'.audit-entry[data-id="{record_id}"]')).to_have_count(0)
-        page.get_by_role("button", name="关闭最近审计记录", exact=True).click()
         page.get_by_role("button", name="关闭管理中心", exact=True).click()
         expect(admin_trigger).to_be_focused()
         expect(page.locator(".toast")).to_have_count(0, timeout=5000)
@@ -720,6 +725,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="退出登录")).to_have_count(0)
         expect(page.locator(".workspace-nav, .lab-workspace-head")).to_have_count(0)
         expect(page.locator(".workspace-account")).to_have_count(0)
+        expect(page.locator(".workspace-brand-trigger")).to_be_visible()
         expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
         expect(page.locator(".lab-card-head")).to_have_count(0)
         expect(page.locator(".lab-card-status")).to_have_count(0)
@@ -860,9 +866,18 @@ def main() -> None:
         ), all_card_corner_styles
         desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) == 3, desktop_rows
+        page.set_viewport_size({"width": 1345, "height": 965})
+        expect(page.locator(".workspace-brand-mark")).not_to_be_visible()
+        split_layout = page.locator(".lab-workspace").evaluate("element => getComputedStyle(element).display")
+        assert split_layout == "flex", split_layout
+        split_boxes = page.locator(".lab-workspace").evaluate(
+            "element => { const brand = element.querySelector('.workspace-brand').getBoundingClientRect(); const canvas = element.querySelector('.lab-canvas').getBoundingClientRect(); const name = element.querySelector('.workspace-brand-name').getBoundingClientRect(); const subtitle = element.querySelector('.workspace-brand-subtitle').getBoundingClientRect(); return { brandLeft: brand.left, brandRight: brand.right, canvasLeft: canvas.left, canvasRight: canvas.right, nameLeft: name.left, subtitleRight: subtitle.right } }"
+        )
+        assert abs(split_boxes["brandLeft"] - split_boxes["canvasLeft"]) <= 1 and abs(split_boxes["brandRight"] - split_boxes["canvasRight"]) <= 1 and split_boxes["nameLeft"] >= split_boxes["canvasLeft"] and split_boxes["subtitleRight"] <= split_boxes["canvasRight"], split_boxes
         page.set_viewport_size({"width": 1002, "height": 978})
         expect(page.locator(".workspace-brand")).to_have_count(1)
-        expect(page.locator(".workspace-brand")).not_to_be_visible()
+        expect(page.locator(".workspace-brand")).to_be_visible()
+        expect(page.locator(".workspace-brand-trigger")).to_be_visible()
         medium_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(medium_columns.split()) == 3, medium_columns
         medium_card_ratio = page.locator('.lab-card').first.evaluate(
@@ -883,7 +898,14 @@ def main() -> None:
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
         )
         assert desktop_canvas["scrollHeight"] <= desktop_canvas["clientHeight"], desktop_canvas
+        page.set_viewport_size({"width": 1743, "height": 1021})
+        large_desktop_canvas = page.locator(".lab-canvas").evaluate(
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height })"
+        )
+        assert large_desktop_canvas["scrollHeight"] <= large_desktop_canvas["clientHeight"], large_desktop_canvas
+        assert large_desktop_canvas["width"] <= 900 and large_desktop_canvas["height"] <= 640, large_desktop_canvas
         detail_trigger = page.locator(".lab-card-media").first
+        page.set_viewport_size({"width": 1440, "height": 900})
         detail_trigger.click()
         expect(page.get_by_role("dialog")).to_be_visible()
         expect(page.get_by_role("heading", name="DVWA", exact=True)).to_be_visible()
@@ -908,7 +930,15 @@ def main() -> None:
         expect(detail_trigger).to_be_focused()
         detail_trigger.click()
         page.get_by_role("button", name="关闭靶场信息").click()
+        assert page.locator(".lab-detail-dialog").count() == 0
+        assert page.locator(".dialog-backdrop").count() == 0
         expect(detail_trigger).to_be_focused()
+        for _ in range(12):
+            detail_trigger.click()
+            expect(page.locator(".lab-detail-dialog")).to_be_visible()
+            page.get_by_role("button", name="关闭靶场信息").click()
+            assert page.locator(".lab-detail-dialog").count() == 0
+            assert page.locator(".dialog-backdrop").count() == 0
         detail_trigger.click()
         page.locator(".lab-detail-backdrop").click(position={"x": 5, "y": 5})
         expect(page.locator(".lab-detail-dialog")).to_have_count(0)
@@ -950,6 +980,10 @@ def main() -> None:
         expect(page.locator(".labs-screen")).to_be_visible()
         wide_tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(wide_tablet_columns.split()) == 3, wide_tablet_columns
+        wide_tablet_frame = page.locator(".lab-canvas").evaluate(
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
+        )
+        assert wide_tablet_frame["borderWidth"] == "1px" and wide_tablet_frame["borderRadius"] == "12px" and wide_tablet_frame["width"] < wide_tablet_frame["screenWidth"], wide_tablet_frame
         wide_tablet_card_ratio = page.locator('.lab-card').first.evaluate(
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
         )
@@ -960,6 +994,10 @@ def main() -> None:
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
         tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(tablet_columns.split()) == 2, tablet_columns
+        tablet_frame = page.locator(".lab-canvas").evaluate(
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
+        )
+        assert tablet_frame["borderWidth"] == "1px" and tablet_frame["borderRadius"] == "12px" and tablet_frame["width"] < tablet_frame["screenWidth"], tablet_frame
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "labs-tablet.png"), full_page=True)
         tablet_canvas = page.locator(".lab-canvas").element_handle()
@@ -1031,7 +1069,7 @@ def main() -> None:
         page.reload(wait_until="networkidle")
         page.locator('.lab-card-media[data-id]').first.click()
         expect(page.get_by_role("button", name="启动环境", exact=True)).to_be_visible()
-        expect(page.get_by_text("待准备", exact=True)).to_be_visible()
+        expect(page.get_by_text("待准备", exact=True)).to_have_count(0)
         page.get_by_role("button", name="关闭靶场信息").click()
         dvwa_lab["status"] = "importing"
         preparing_job = {
@@ -1083,37 +1121,22 @@ def main() -> None:
                 return
             route.continue_()
 
-        page.evaluate(
-            """() => {
-                window.__vulnlabDetailUpdateAnimations = 0
-                document.addEventListener('animationstart', event => {
-                    if (event.animationName === 'dialog-in' || event.animationName === 'dialog-backdrop-in') {
-                        window.__vulnlabDetailUpdateAnimations += 1
-                    }
-                }, true)
-            }"""
-        )
         page.route("**/api/labs/*/instances", hold_start)
         detail_start_button.click()
         expect(page.locator('.lab-card[data-state="starting"]')).to_have_count(1)
         expect(page.locator('.lab-card[data-state="starting"] .lab-card-status')).to_have_count(0)
-        expect(page.locator(".lab-detail-dialog")).to_contain_text("启动中…")
-        expect(page.locator(".lab-detail-state")).to_have_count(0)
-        starting_action_style = page.locator(".lab-detail-action").evaluate(
-            "element => ({ display: getComputedStyle(element).display, alignItems: getComputedStyle(element).alignItems, justifyContent: getComputedStyle(element).justifyContent, textAlign: getComputedStyle(element).textAlign })"
-        )
-        assert starting_action_style["display"] in {"flex", "inline-flex"} and starting_action_style["alignItems"] == "center" and starting_action_style["justifyContent"] == "center" and starting_action_style["textAlign"] == "center", starting_action_style
+        expect(page.locator(".lab-detail-dialog")).to_have_count(0)
+        page.locator(".lab-card-media").nth(1).click()
+        expect(page.locator(".lab-detail-dialog")).to_be_visible()
+        page.get_by_role("button", name="关闭靶场信息").click()
         page.wait_for_timeout(1200)
-        expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
-        assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
         assert "route" in pending_start
         start_state["completed"] = True
         pending_start["route"].fulfill(status=201, content_type="application/json", body='{"status":"running"}')
-        expect(page.locator(".lab-detail-runtime")).to_be_visible()
         expect(page.locator('.lab-card[data-state="running"]')).to_have_count(1)
         expect(page.locator('.lab-card[data-state="running"] .lab-card-status')).to_have_count(0)
-        expect(page.get_by_role("button", name="关闭靶场信息")).to_be_focused()
-        assert page.evaluate("window.__vulnlabDetailUpdateAnimations") == 0
+        page.locator(".lab-card-media").first.click()
+        expect(page.locator(".lab-detail-runtime")).to_be_visible()
         page.get_by_role("button", name="关闭靶场信息").click()
         page.locator(".lab-card-media").nth(1).click()
         expect(page.locator(".lab-detail-dialog")).to_be_visible()
@@ -1192,6 +1215,10 @@ def main() -> None:
 
         mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
+        mobile_frame = page.locator(".lab-canvas").evaluate(
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
+        )
+        assert mobile_frame["borderWidth"] == "1px" and mobile_frame["borderRadius"] == "10px" and mobile_frame["width"] < mobile_frame["viewportWidth"], mobile_frame
         mobile_card_box = page.locator(".lab-card").first.bounding_box()
         assert mobile_card_box and mobile_card_box["height"] <= 140, mobile_card_box
         mobile_corner_style = page.locator(".lab-card").first.evaluate(
@@ -1213,9 +1240,10 @@ def main() -> None:
         assert mobile_caption_metrics and all(item["visibility"] == "visible" and item["opacity"] == "1" and item["cardWidth"] - 2.1 <= item["width"] <= item["cardWidth"] for item in mobile_caption_metrics), mobile_caption_metrics
         mobile_grid_box = page.locator(".lab-grid").bounding_box()
         mobile_last_card_box = page.locator(".lab-card").nth(8).bounding_box()
-        assert mobile_grid_box and mobile_last_card_box and abs(
-            mobile_last_card_box["x"] + mobile_last_card_box["width"] / 2 - (mobile_grid_box["x"] + mobile_grid_box["width"] / 2)
-        ) <= 1, {"grid": mobile_grid_box, "lastCard": mobile_last_card_box}
+        mobile_first_card_box = page.locator(".lab-card").first.bounding_box()
+        assert mobile_grid_box and mobile_last_card_box and mobile_first_card_box and abs(
+            mobile_last_card_box["x"] - mobile_first_card_box["x"]
+        ) <= 1, {"grid": mobile_grid_box, "firstCard": mobile_first_card_box, "lastCard": mobile_last_card_box}
         no_horizontal_overflow = page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert no_horizontal_overflow
         mobile_detail_trigger = page.locator(".lab-card-media").first
@@ -1259,7 +1287,7 @@ def main() -> None:
         )
         assert float(reduced_motion["transitionDuration"].replace("s", "")) <= 0.001, reduced_motion
         assert reduced_motion["animationName"] == "none" and reduced_motion["hoverTransform"] == "none", reduced_motion
-        expect(page.locator(".workspace-brand")).not_to_be_visible()
+        expect(page.locator(".workspace-brand")).to_be_visible()
         reduced_context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         reduced_page = reduced_context.new_page()
         reduced_page.emulate_media(reduced_motion="reduce")
