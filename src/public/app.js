@@ -224,8 +224,8 @@ function loginNoticeCard({ id, title, message, action, kind = 'error' }) {
   return `<div class="login-notice${isSuccess ? ' login-notice-success' : ''}" id="${esc(id)}" role="${isSuccess ? 'status' : 'alert'}" aria-live="polite"><span class="login-notice-copy"><strong>${esc(title)}</strong><span>${esc(message)}</span></span><button class="login-notice-close" type="button" data-action="${esc(action)}" aria-label="关闭提示">×</button></div>`
 }
 
-function adminKeyIcon() {
-  return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="15.5" r="3.5"></circle><path d="m11 13 8-8m-2 2 2 2m-5-1 2 2"></path></svg>'
+function adminMenuIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>'
 }
 
 function deleteRecordIcon() {
@@ -238,7 +238,7 @@ function recordArrowIcon() {
 
 function labsShell() {
   return `<div class="labs-screen">
-    <button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="管理中心">${adminKeyIcon()}</button>
+    <button class="workspace-admin-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="管理中心">${adminMenuIcon()}</button>
     <section class="lab-workspace">
       <div class="workspace-brand">
         <img class="workspace-brand-mark" src="/favicon.png" alt="" />
@@ -570,6 +570,17 @@ async function waitForStartedInstance(labId) {
   throw new ApiError('靶场准备超时，请稍后重新查看。', 504)
 }
 
+function updateLabCanvasScrollState() {
+  const canvas = app.querySelector('.lab-canvas')
+  if (!canvas) return
+  const hasScroll = canvas.scrollHeight > canvas.clientHeight + 1
+  const atTop = canvas.scrollTop <= 1
+  const atBottom = canvas.scrollTop + canvas.clientHeight >= canvas.scrollHeight - 1
+  canvas.classList.toggle('has-scroll', hasScroll)
+  canvas.classList.toggle('can-scroll-up', hasScroll && !atTop)
+  canvas.classList.toggle('can-scroll-down', hasScroll && !atBottom)
+}
+
 function patchLabs() {
   const canvas = app.querySelector('.lab-canvas')
   const visibleLabs = state.labs
@@ -781,6 +792,7 @@ function render() {
   scheduleLoginSuccessNoticeDismiss()
   if (!app.querySelector('.labs-screen')) app.innerHTML = labsShell()
   patchLabs()
+  updateLabCanvasScrollState()
   patchOverlays()
   scheduleImportPolling()
   scheduleDetailPolling()
@@ -1105,6 +1117,12 @@ app.addEventListener('click', event => {
   if (element.dataset.action !== 'open-instance-page') event.preventDefault()
   runAction(element.dataset.action, element)
 })
+
+app.addEventListener('scroll', event => {
+  if (event.target?.matches?.('.lab-canvas')) updateLabCanvasScrollState()
+}, { capture: true, passive: true })
+
+window.addEventListener('resize', updateLabCanvasScrollState)
 
 app.addEventListener('change', event => {
   const input = event.target

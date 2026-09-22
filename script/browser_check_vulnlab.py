@@ -1313,17 +1313,20 @@ def main() -> None:
         page.reload(wait_until="networkidle")
         page.wait_for_timeout(950)
         expect(page.locator(".lab-grid .lab-card")).to_have_count(12)
+        expect(page.locator(".lab-pagination")).to_have_count(0)
         expanded_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(expanded_columns.split()) == 3, expanded_columns
-        expanded_row_tops = page.locator(".lab-grid .lab-card").evaluate_all(
-            "elements => elements.map(element => Math.round(element.getBoundingClientRect().top))"
-        )
-        assert len(set(expanded_row_tops)) == 4, expanded_row_tops
         expanded_canvas = page.locator(".lab-canvas").evaluate(
-            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
+            "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
-        assert expanded_canvas["scrollHeight"] > expanded_canvas["clientHeight"], expanded_canvas
-        page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-desktop.png"), full_page=True)
+        assert expanded_canvas["scrollHeight"] > expanded_canvas["clientHeight"] and expanded_canvas["overflowY"] == "auto" and expanded_canvas["scrollbarWidth"] == "none", expanded_canvas
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-down"))
+        page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-scroll-top.png"), full_page=True)
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
+        page.wait_for_timeout(250)
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-up"))
+        expect(page.locator(".lab-canvas")).not_to_have_class(re.compile(r"can-scroll-down"))
+        page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-scroll-bottom.png"), full_page=True)
         page.unroute("**/api/labs", labs_with_expanded_catalog)
         assert not console_errors, console_errors
         browser.close()
