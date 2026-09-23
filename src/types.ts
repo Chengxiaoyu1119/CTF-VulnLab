@@ -96,3 +96,18 @@ export interface Overview {
   maxInstances: number
   auditCount: number
 }
+
+export interface SystemOverview extends Overview {
+  activity: OverviewActivity
+}
+
+export interface OverviewActivity {
+  rangeStart: string
+  rangeEnd: string
+  launchCount: number
+  activeDays: number
+  currentStreak: number
+  longestStreak: number
+  daily: Array<{ date: string; count: number }>
+  ranking: Array<{ labId: string; title: string; count: number; running: boolean }>
+}

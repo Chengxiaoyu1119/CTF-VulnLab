@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
 import { dataPaths } from './paths.js'
-import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, SessionView, UserRole } from './types.js'
+import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, OverviewActivity, SessionView, UserRole } from './types.js'
 
 type Row = Record<string, unknown>
 
@@ -309,6 +309,7 @@ export class VulnLabDatabase {
       CREATE INDEX IF NOT EXISTS idx_instances_created_at ON instances(created_at);
       CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit(created_at);
       CREATE INDEX IF NOT EXISTS idx_audit_created_id ON audit(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_action_created_at ON audit(action, created_at);
     `)
     this.ensureColumn('import_jobs', 'requested_by', "TEXT NOT NULL DEFAULT 'system'")
     this.ensureColumn('import_jobs', 'manifest_json', 'TEXT')
@@ -880,6 +881,66 @@ export class VulnLabDatabase {
     const statement = this.db.prepare('DELETE FROM audit WHERE id = ?')
     const transaction = this.db.transaction((values: readonly string[]) => values.reduce((count, id) => count + statement.run(id).changes, 0))
     return transaction(ids)
+  }
+
+  overviewActivity(referenceTime = new Date()): OverviewActivity {
+    const today = new Date(referenceTime)
+    today.setHours(0, 0, 0, 0)
+    const rangeStartDate = new Date(today)
+    rangeStartDate.setDate(rangeStartDate.getDate() - 364)
+    const localDate = (value: Date) => {
+      const pad = (part: number) => String(part).padStart(2, '0')
+      return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
+    }
+    const rangeStart = localDate(rangeStartDate)
+    const rangeEnd = localDate(today)
+    const activityRows = this.db.prepare(`
+      SELECT audit.created_at AS createdAt, audit.target AS title, instances.lab_id AS labId
+      FROM audit LEFT JOIN instances ON instances.id = audit.detail
+      WHERE audit.action = 'instance.start' AND audit.created_at >= ? AND audit.created_at <= ?
+    `).all(rangeStartDate.toISOString(), referenceTime.toISOString()) as Array<{ createdAt: string; title: string; labId: string | null }>
+    const labs = this.listLabs()
+    const labsById = new Map(labs.map(lab => [lab.id, lab]))
+    const labsByTitle = new Map(labs.map(lab => [lab.title, lab]))
+    const activityCounts = new Map<string, number>()
+    const labCounts = new Map<string, number>()
+    for (const item of activityRows) {
+      const key = localDate(new Date(item.createdAt))
+      activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1)
+      const lab = item.labId ? labsById.get(item.labId) : labsByTitle.get(item.title)
+      if (lab) labCounts.set(lab.id, (labCounts.get(lab.id) ?? 0) + 1)
+    }
+    const daily: OverviewActivity['daily'] = []
+    for (let index = 0; index < 365; index += 1) {
+      const date = new Date(rangeStartDate)
+      date.setDate(rangeStartDate.getDate() + index)
+      const key = localDate(date)
+      daily.push({ date: key, count: activityCounts.get(key) ?? 0 })
+    }
+    const activeDays = daily.filter(item => item.count > 0).length
+    const launchCount = daily.reduce((total, item) => total + item.count, 0)
+    let currentStreak = 0
+    for (let index = daily.length - 1; index >= 0 && daily[index].count > 0; index -= 1) currentStreak += 1
+    let longestStreak = 0
+    let streak = 0
+    for (const item of daily) {
+      streak = item.count > 0 ? streak + 1 : 0
+      longestStreak = Math.max(longestStreak, streak)
+    }
+    const runningLabIds = new Set((this.db.prepare("SELECT DISTINCT lab_id AS labId FROM instances WHERE status = 'running'").all() as Array<{ labId: string }>).map(item => item.labId))
+    return {
+      rangeStart,
+      rangeEnd,
+      launchCount,
+      activeDays,
+      currentStreak,
+      longestStreak,
+      daily,
+      ranking: labs.filter(lab => labCounts.has(lab.id))
+        .map(lab => ({ labId: lab.id, title: lab.title, count: labCounts.get(lab.id)!, running: runningLabIds.has(lab.id) }))
+        .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+        .slice(0, 5),
+    }
   }
 
   overview(): Overview {

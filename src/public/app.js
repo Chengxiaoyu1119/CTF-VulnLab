@@ -18,6 +18,8 @@ console.info(
 const app = document.querySelector('#app')
 let importPollTimer = null
 let detailPollTimer = null
+let systemPollTimer = null
+let systemRequestVersion = 0
 let modalReturnFocus = null
 let confirmReturnFocus = null
 let loginSuccessNoticeTimer = null
@@ -68,6 +70,12 @@ const state = {
   users: [],
   adminLoading: false,
   adminError: '',
+  adminOverview: null,
+  adminSystemLoading: false,
+  adminSystemError: '',
+  adminActivityDate: '',
+  adminSystemReturnLabId: null,
+  adminSystemScrollTop: 0,
 }
 
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -140,12 +148,20 @@ const adminRecordPath = panel => panel === 'invitations' ? '/api/auth/invitation
 const adminRecordId = (panel, item) => panel === 'users' ? item.userName : item.id
 
 function resetAdminRecords() {
+  systemRequestVersion += 1
+  clearSystemPolling()
   state.adminSelectedRecordIds = { invitations: [], audit: [], users: [] }
   state.adminNextCursors = { invitations: null, audit: null, users: null }
   state.adminTotals = { invitations: 0, audit: 0, users: 0 }
   state.invitations = []
   state.audit = []
   state.users = []
+  state.adminOverview = null
+  state.adminSystemLoading = false
+  state.adminSystemError = ''
+  state.adminActivityDate = ''
+  state.adminSystemReturnLabId = null
+  state.adminSystemScrollTop = 0
 }
 
 async function loadAdminRecords(panel, append = false) {
@@ -159,6 +175,26 @@ async function loadAdminRecords(panel, append = false) {
   state.adminSelectedRecordIds[panel] = state.adminSelectedRecordIds[panel].filter(id => state[panel].some(item => adminRecordId(panel, item) === id))
 }
 
+async function refreshAdminOverview() {
+  if (state.adminSystemLoading || !state.session || !state.adminPanelOpen || state.adminView !== 'system') return
+  const version = systemRequestVersion
+  state.adminSystemLoading = true
+  state.adminSystemError = ''
+  render()
+  try {
+    const overview = await request('/api/overview', { cache: 'no-store' })
+    if (!overview?.activity || overview.activity.daily?.length !== 365) throw new ApiError('系统数据暂时不可用，请重试。', 502)
+    if (version === systemRequestVersion) state.adminOverview = overview
+  } catch (error) {
+    if (version === systemRequestVersion) state.adminSystemError = error.message
+  } finally {
+    if (version === systemRequestVersion) {
+      state.adminSystemLoading = false
+      render()
+    }
+  }
+}
+
 async function refresh() {
   const [labs, jobs, instances] = await Promise.all([
     request('/api/labs'), request('/api/import-jobs'), request('/api/instances'),
@@ -167,6 +203,7 @@ async function refresh() {
   state.jobs = jobs
   state.instances = instances
   state.error = ''
+  if (state.adminPanelOpen && state.adminView === 'system') await refreshAdminOverview()
 }
 
 async function bootstrap() {
@@ -204,6 +241,27 @@ function clearLoginSuccessNoticeTimer() {
 
 function clearDetailPolling() {
   if (detailPollTimer) { window.clearTimeout(detailPollTimer); detailPollTimer = null }
+}
+
+function clearSystemPolling() {
+  if (systemPollTimer) window.clearTimeout(systemPollTimer)
+  systemPollTimer = null
+}
+
+function scheduleSystemPolling() {
+  if (!state.session || !state.adminPanelOpen || state.adminView !== 'system' || document.hidden) { clearSystemPolling(); return }
+  if (systemPollTimer || state.adminSystemLoading) return
+  systemPollTimer = window.setTimeout(() => {
+    systemPollTimer = null
+    void refreshAdminOverview()
+  }, 15000)
+}
+
+function selectActivityDate(value, restoreFocus = false) {
+  if (!state.adminOverview?.activity?.daily.some(item => item.date === value)) return
+  state.adminActivityDate = value
+  render()
+  if (restoreFocus) window.queueMicrotask(() => document.querySelector(`[data-activity-date="${value}"]`)?.focus())
 }
 
 function beginBusy(action, id = '') {
@@ -683,14 +741,58 @@ function adminPanel() {
   const profile = state.session ? (() => {
     return `<section class="profile-view" aria-labelledby="profile-title"><div class="profile-avatar-frame"><img class="profile-avatar" src="/favicon.png" alt="VulnLab项目图标" /></div><h3 id="profile-title" class="profile-name">${esc(state.session.userName)}</h3></section>`
   })() : ''
-  const content = ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
-  const navItems = isAdmin ? [['profile', '个人中心'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]
+  const content = view === 'system' ? adminSystemPanel() : ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
+  const navItems = isAdmin ? [['profile', '个人中心'], ['system', '系统数据'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]
   const nav = navItems.map(([section, label]) => `<button class="admin-nav-button${view === section ? ' is-active' : ''}" type="button" data-action="open-admin-section" data-section="${section}" aria-label="${label}" aria-current="${view === section ? 'page' : 'false'}"><span>${label}</span></button>`).join('')
   const title = isAdmin ? '管理中心' : '个人中心'
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
   const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
   return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div><button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+}
+
+function adminSystemPanel() {
+  const overview = state.adminOverview
+  const activity = overview?.activity
+  const refreshButton = `<button class="admin-system-refresh" type="button" data-action="refresh-system-data" aria-label="刷新系统数据" ${state.adminSystemLoading ? 'disabled' : ''}>${state.adminSystemLoading ? '更新中…' : '刷新'}</button>`
+  if (!activity) {
+    const status = state.adminSystemLoading
+      ? '<div class="admin-loading" role="status">正在读取系统数据…</div>'
+      : `<div class="admin-inline-error" role="alert">${esc(state.adminSystemError || '系统数据暂时不可用。')}</div>${refreshButton}`
+    return `<section class="admin-system-view" data-admin-view="system" aria-label="系统数据" aria-busy="${state.adminSystemLoading}">${status}</section>`
+  }
+  const number = value => Number(value ?? 0).toLocaleString('zh-CN')
+  const stat = (key, label, value) => `<div class="admin-system-stat"><strong data-system-stat="${key}">${value}</strong><span>${label}</span></div>`
+  const daily = activity.daily
+  const selected = daily.find(item => item.date === state.adminActivityDate) ?? daily.at(-1)
+  const startOffset = (new Date(`${daily[0].date}T12:00:00Z`).getUTCDay() + 6) % 7
+  const weeks = Math.ceil((startOffset + daily.length) / 7)
+  const cells = Array.from({ length: weeks * 7 }, (_, index) => {
+    const item = daily[index - startOffset]
+    if (!item) return '<span class="admin-activity-cell is-blank" aria-hidden="true"></span>'
+    const level = item.count >= 8 ? 4 : item.count >= 4 ? 3 : item.count >= 2 ? 2 : item.count > 0 ? 1 : 0
+    const label = `${item.date}：${item.count} 次靶场启动`
+    return `<button class="admin-activity-cell is-level-${level}" type="button" data-activity-date="${esc(item.date)}" tabindex="${item.date === selected.date ? 0 : -1}" aria-label="${esc(label)}" title="${esc(label)}"></button>`
+  }).join('')
+  const months = daily.flatMap((item, index) => {
+    if (index !== 0 && item.date.slice(0, 7) === daily[index - 1].date.slice(0, 7)) return []
+    const column = Math.floor((startOffset + index) / 7) + 1
+    if (column > weeks - 2 || (index === 0 && Number(item.date.slice(-2)) > 20)) return []
+    const month = Number(item.date.slice(5, 7))
+    return `<span class="${month % 2 ? 'is-secondary-month' : ''}" style="grid-column:${column} / span 3">${month}月</span>`
+  }).join('')
+  const rankingMax = Math.max(1, ...activity.ranking.map(item => item.count))
+  const ranking = activity.ranking.map((item, index) => `<button class="admin-lab-ranking" type="button" data-action="open-system-lab" data-id="${esc(item.labId)}" aria-label="查看 ${esc(item.title)}，${item.count} 次启动${item.running ? '，运行中' : ''}"><span class="admin-lab-ranking-order">${String(index + 1).padStart(2, '0')}</span><span class="admin-lab-ranking-main"><strong>${esc(item.title)}</strong><span class="admin-lab-ranking-track" aria-hidden="true"><span style="width:${item.count / rankingMax * 100}%"></span></span></span><span class="admin-lab-ranking-meta">${item.running ? '<i>运行中</i>' : ''}<span>${number(item.count)} <small>次</small></span></span></button>`).join('')
+  return `<section class="admin-system-view" data-admin-view="system" aria-label="系统数据" aria-busy="${state.adminSystemLoading}">
+    ${state.adminSystemError ? `<div class="admin-inline-error" role="alert">更新失败，当前显示上次数据：${esc(state.adminSystemError)}</div>` : ''}
+    <div class="admin-system-stats">${stat('labs', '靶场总数', number(overview.labCount))}${stat('ready', '已就绪', number(overview.readyCount))}${stat('running', '运行中 / 上限', `${number(overview.runningInstanceCount)} <small>/ ${number(overview.maxInstances)}</small>`)}${stat('launches', '365天启动', number(activity.launchCount))}</div>
+    <section class="admin-activity-card" aria-labelledby="admin-activity-title" style="--activity-weeks:${weeks}"><div class="admin-activity-heading"><h3 id="admin-activity-title">靶场活动</h3><span>${esc(activity.rangeStart)} — ${esc(activity.rangeEnd)}</span>${refreshButton}</div>
+      <span class="sr-only" id="admin-activity-help">上下方向键逐日查看，左右方向键逐周查看，Home 和 End 跳到首日与末日。</span>
+      <div class="admin-activity-grid" role="group" aria-label="最近365天靶场启动活动" aria-describedby="admin-activity-help">${cells}</div><div class="admin-activity-months" aria-hidden="true">${months}</div>
+      <div class="admin-activity-footer"><span>${number(activity.activeDays)} 天活跃</span><span class="admin-activity-legend" aria-label="颜色代表每日启动次数：0次、1次、2至3次、4至7次、8次及以上"><i>少</i><b></b><b class="is-level-1"></b><b class="is-level-2"></b><b class="is-level-3"></b><b class="is-level-4"></b><i>多</i></span></div>
+    </section>
+    <section class="admin-system-card" aria-labelledby="admin-ranking-title"><div class="admin-system-card-heading"><h3 id="admin-ranking-title">靶场使用排行</h3><span>最近365天</span></div><div class="admin-lab-ranking-list">${ranking || '<div class="admin-system-empty">最近365天暂无靶场启动记录。</div>'}</div></section>
+  </section>`
 }
 
 function adminRecordsPanel() {
@@ -798,12 +900,14 @@ function patchOverlays() {
   patchSlot('success', successNotice, { key: state.successNotice ?? '' })
   patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status" aria-live="polite" aria-atomic="true">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
   const adminRecordsKey = ['invitations', 'audit', 'users'].map(panel => `${state[panel].length}:${state.adminTotals[panel]}:${state.adminNextCursors[panel] ?? ''}`).join(':')
-  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.adminView}:${state.invitation?.id ?? 'open'}:${state.adminLoading}:${adminRecordsKey}:${state.adminError}` : '' })
+  const adminOverviewKey = state.adminOverview?.activity ? `${state.adminOverview.activity.rangeEnd}:${state.adminOverview.activity.launchCount}:${state.adminOverview.activity.activeDays}:${state.adminOverview.runningInstanceCount}` : ''
+  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.adminView}:${state.invitation?.id ?? 'open'}:${state.adminLoading}:${state.adminSystemLoading}:${adminRecordsKey}:${adminOverviewKey}:${state.adminError}:${state.adminSystemError}` : '' })
   patchSlot('detail', labDetailModal(), { focus: true })
   patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-message"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p id="dialog-message">${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
 }
 
 function render() {
+  scheduleSystemPolling()
   if (!state.session || !state.labDetailId) clearDetailPolling()
   document.body.classList.toggle('has-workspace', Boolean(state.session))
   document.body.classList.toggle('has-login-success-notice', Boolean(state.successNotice && state.session))
@@ -828,6 +932,21 @@ function render() {
 }
 
 function restoreModalFocus() {
+  if (state.adminSystemReturnLabId && state.session) {
+    const labId = state.adminSystemReturnLabId
+    state.adminSystemReturnLabId = null
+    state.adminPanelOpen = true
+    state.adminView = 'system'
+    render()
+    const content = document.querySelector('.admin-dialog-content')
+    if (content) content.scrollTop = state.adminSystemScrollTop
+    window.queueMicrotask(() => {
+      const row = [...document.querySelectorAll('.admin-lab-ranking')].find(item => item.dataset.id === labId)
+      ;(row || document.querySelector('[data-section="system"]'))?.focus({ preventScroll: true })
+    })
+    void refreshAdminOverview()
+    return
+  }
   const target = modalReturnFocus
   modalReturnFocus = null
   const element = target?.element?.isConnected
@@ -910,7 +1029,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'close-lab-details', 'open-admin-panel', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'refresh-system-data', 'close-lab-details', 'open-admin-panel', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -919,6 +1038,17 @@ async function runAction(action, element) {
     return
   }
   if (action === 'nav') { navigate(); return }
+  if (action === 'refresh-system-data') { await refreshAdminOverview(); return }
+  if (action === 'open-system-lab') {
+    if (!state.labs.some(item => item.id === element.dataset.id)) return
+    state.adminSystemReturnLabId = element.dataset.id
+    state.adminSystemScrollTop = document.querySelector('.admin-dialog-content')?.scrollTop ?? 0
+    state.adminPanelOpen = false
+    state.adminRecordsPanel = null
+    state.labDetailId = element.dataset.id
+    render()
+    return
+  }
   if (action === 'open-lab-details') {
     if (!state.labs.some(item => item.id === element.dataset.id)) return
     rememberModalFocus(element)
@@ -946,12 +1076,13 @@ async function runAction(action, element) {
   }
   if (action === 'open-admin-section') {
     const section = element.dataset.section
-    if (!['invitations', 'audit', 'users', 'profile'].includes(section)) return
+    if (!['invitations', 'audit', 'users', 'profile', 'system'].includes(section)) return
     if (!state.session || section !== 'profile' && state.session.role !== 'admin') return
     state.adminView = section
-    if (section === 'profile') {
+    if (section === 'profile' || section === 'system') {
       state.adminRecordsPanel = null
-      render()
+      if (section === 'system') await refreshAdminOverview()
+      else render()
       return
     }
     state.adminRecordsPanel = section
@@ -1186,6 +1317,12 @@ async function runAction(action, element) {
 }
 
 app.addEventListener('click', event => {
+  const activityCell = event.target.closest?.('[data-activity-date]')
+  if (activityCell) {
+    event.preventDefault()
+    selectActivityDate(activityCell.dataset.activityDate, true)
+    return
+  }
   const element = event.target.closest?.('[data-action]')
   if (!element) return
   if (['close-lab-details', 'close-admin-panel', 'close-admin-records'].includes(element.dataset.action) && element !== event.target) return
@@ -1202,6 +1339,10 @@ window.addEventListener('resize', updateLabCanvasScrollState)
 app.addEventListener('change', event => {
   const input = event.target
   if (!(input instanceof HTMLInputElement)) return
+  if (input.classList.contains('admin-activity-date')) {
+    selectActivityDate(input.value)
+    return
+  }
   const panel = input.dataset.adminRecordSelect ?? input.dataset.adminSelectAll
   if (!panel || state.adminRecordsPanel !== panel) return
   const selected = new Set(state.adminSelectedRecordIds[panel])
@@ -1316,6 +1457,18 @@ app.addEventListener('input', event => {
 })
 
 document.addEventListener('keydown', event => {
+  const activityCell = event.target.closest?.('[data-activity-date]')
+  if (activityCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    const cells = [...document.querySelectorAll('[data-activity-date]')]
+    const index = cells.indexOf(activityCell)
+    const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' ? -7 : event.key === 'ArrowRight' ? 7 : 0
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? cells.length - 1 : index + delta
+    if (index >= 0 && nextIndex >= 0 && nextIndex < cells.length) {
+      event.preventDefault()
+      selectActivityDate(cells[nextIndex].dataset.activityDate, true)
+    }
+    return
+  }
   const dialogs = [...document.querySelectorAll('[role="dialog"]')]
   const dialog = dialogs[dialogs.length - 1]
   if (!dialog) return

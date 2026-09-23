@@ -18,7 +18,7 @@ import { prepareInstalledLab } from './runtime-prep.js'
 import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
 import { dataPaths } from './paths.js'
-import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView } from './types.js'
+import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView, SystemOverview } from './types.js'
 import type { RuntimeToolchainId } from './runtime-toolchains.js'
 
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('VulnLab 当前仅支持 Windows x64。')
@@ -799,9 +799,11 @@ app.post('/api/auth/logout', async (request, reply) => {
 })
 
 app.get('/api/overview', async (request, reply) => {
-  if (!requireUser(request, reply)) return
+  if (!requireAdmin(request, reply)) return
   await reapExpiredInstances()
-  return database.overview()
+  reply.header('Cache-Control', 'no-store')
+  const overview: SystemOverview = { ...database.overview(), activity: database.overviewActivity() }
+  return overview
 })
 
 app.get('/api/labs', async (request, reply) => {

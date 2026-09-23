@@ -180,6 +180,27 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.expireInstances().length, 0)
   assert.equal(database.overview().runningInstanceCount, 0)
 
+  const localTimestamp = offset => {
+    const value = new Date()
+    value.setHours(12, 0, 0, 0)
+    value.setDate(value.getDate() + offset)
+    return value.toISOString()
+  }
+  const activityInsert = database.db.prepare('INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+  activityInsert.run('activity-today-a', 'vulnlab', 'instance.start', 'DVWA', 'activity-a', localTimestamp(0))
+  activityInsert.run('activity-today-b', 'vulnlab', 'instance.start', 'DVWA', 'activity-b', localTimestamp(0))
+  activityInsert.run('activity-yesterday', 'vulnlab', 'instance.start', 'Upload-Labs', 'activity-c', localTimestamp(-1))
+  activityInsert.run('activity-old', 'vulnlab', 'instance.start', 'DVWA', 'activity-old', localTimestamp(-400))
+  const activityOverview = database.overviewActivity()
+  assert.equal(activityOverview.daily.length, 365)
+  assert.equal(activityOverview.launchCount, 3)
+  assert.equal(activityOverview.activeDays, 2)
+  assert.equal(activityOverview.currentStreak, 2)
+  assert.equal(activityOverview.longestStreak, 2)
+  assert.equal(activityOverview.daily.at(-1)?.count, 2)
+  assert.equal(activityOverview.daily.at(-2)?.count, 1)
+  assert.deepEqual(activityOverview.ranking.slice(0, 2).map(item => [item.title, item.count]), [['DVWA', 2], ['Upload-Labs', 1]])
+
   const retryInstance = database.createInstance({
     id: 'retry-expired-instance-fixture',
     lab,

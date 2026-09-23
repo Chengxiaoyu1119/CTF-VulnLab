@@ -295,6 +295,9 @@ def main() -> None:
         expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
         expect(page.locator(".workspace-admin-trigger")).to_have_count(0)
         page.set_viewport_size({"width": 390, "height": 844})
+        page.locator("#login-success-notice").evaluate(
+            "element => Promise.all(element.getAnimations().map(animation => animation.finished))"
+        )
         success_box = page.locator("#login-success-notice").bounding_box()
         first_card_box = page.locator(".lab-card").first.bounding_box()
         assert success_box and success_box["x"] >= 390 - success_box["width"] - 17 and success_box["y"] >= 15, success_box
@@ -430,14 +433,37 @@ def main() -> None:
         assert avatar_box and name_box and name_box["y"] > avatar_box["y"] + avatar_box["height"], (avatar_box, name_box)
         page.screenshot(path=str(OUTPUT_DIR / "admin-panel-compact-desktop.png"), full_page=True)
         profile_button = page.locator('[data-action="open-admin-section"][data-section="profile"]')
+        system_button = page.locator('[data-action="open-admin-section"][data-section="system"]')
         invitation_button = page.locator('[data-action="open-admin-section"][data-section="invitations"]')
         audit_button = page.locator('[data-action="open-admin-section"][data-section="audit"]')
         account_button = page.locator('[data-action="open-admin-section"][data-section="users"]')
         expect(page.locator('[data-action="open-admin-section"][data-section="overview"]')).to_have_count(0)
         expect(profile_button).to_have_attribute("aria-current", "page")
+        expect(system_button).to_have_count(1)
+        expect(system_button).to_have_attribute("aria-label", "系统数据")
         expect(invitation_button).to_have_count(1)
         expect(audit_button).to_have_count(1)
         expect(account_button).to_have_count(1)
+        with page.expect_response(lambda response: response.url.endswith("/api/overview") and response.request.method == "GET") as overview_response_info:
+            system_button.click()
+        assert overview_response_info.value.headers.get("cache-control") == "no-store"
+        expect(page.locator('[data-admin-view="system"]')).to_be_visible()
+        expect(page.locator(".admin-system-stat")).to_have_count(4)
+        expect(page.locator("[data-activity-date]")).to_have_count(365)
+        expect(page.locator(".admin-system-empty")).to_have_count(1)
+        first_activity_cell = page.locator("[data-activity-date]").first
+        first_activity_date = first_activity_cell.get_attribute("data-activity-date")
+        assert first_activity_date
+        first_activity_cell.click()
+        expect(first_activity_cell).to_have_attribute("tabindex", "0")
+        first_activity_cell.press("End")
+        last_activity_date = page.locator("[data-activity-date]").last.get_attribute("data-activity-date")
+        assert last_activity_date
+        expect(page.locator(f'[data-activity-date="{last_activity_date}"]')).to_have_attribute("tabindex", "0")
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        expect(page.locator("[data-activity-date]")).to_have_count(365)
+        page.set_viewport_size({"width": 1440, "height": 900})
         invitation_button.click()
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator('[data-admin-dialog-view="invitations"]')).to_be_visible()
