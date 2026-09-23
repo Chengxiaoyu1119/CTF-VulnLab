@@ -19,6 +19,7 @@ const app = document.querySelector('#app')
 let importPollTimer = null
 let detailPollTimer = null
 let modalReturnFocus = null
+let confirmReturnFocus = null
 let loginSuccessNoticeTimer = null
 let toastTimer = null
 let loginModeTransitionTimer = null
@@ -244,6 +245,10 @@ function deleteRecordIcon() {
 
 function recordArrowIcon() {
   return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg>'
+}
+
+function adminEmptyIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12M8.5 12h7M10.5 16.5h3"></path></svg>'
 }
 
 function labsShell() {
@@ -729,8 +734,9 @@ function adminRecordsPanel() {
   const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
   const total = state.adminTotals[state.adminRecordsPanel]
   const nextCursor = state.adminNextCursors[state.adminRecordsPanel]
-  const selectionToolbar = records.length ? `<div class="admin-record-toolbar"><label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label><span class="admin-selection-count">已选 ${selectedIds.length} 条 / 共 ${total} 条</span><button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button></div>` : ''
-  const pagination = nextCursor ? `<div class="admin-record-pagination"><span>已加载 ${records.length} / 共 ${total} 条</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
+  const selectionCount = selectedIds.length ? `<span class="admin-selection-count" aria-live="polite">已选 ${selectedIds.length} 条</span>` : ''
+  const selectionToolbar = records.length ? `<div class="admin-record-toolbar"><label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label>${selectionCount}<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button></div>` : ''
+  const pagination = nextCursor ? `<div class="admin-record-pagination"><span class="sr-only">还有更多${recordLabel}记录</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
   const userRows = isUserPanel ? records.map(item => {
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
@@ -746,8 +752,8 @@ function adminRecordsPanel() {
           : isAuditPanel
             ? `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div></div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
             : `${selectionToolbar}<div class="admin-record-list user-history">${userRows}</div>${pagination}`
-        : `<div class="admin-empty-state">暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</div>`
-  return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-labelledby="admin-records-title"><div class="admin-view-heading"><h3 id="admin-records-title">${title}</h3></div>${isInvitationPanel ? invitation : ''}${content}</section>`
+        : `<div class="admin-empty-state" role="status"><span class="admin-empty-mark">${adminEmptyIcon()}</span><p>暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</p></div>`
+  return `<section class="admin-record-view${!records.length ? ' is-empty' : ''}" data-admin-view="${state.adminRecordsPanel}" aria-labelledby="admin-records-title" aria-busy="${state.adminLoading ? 'true' : 'false'}"><div class="admin-view-heading"><h3 id="admin-records-title">${title}</h3></div>${isInvitationPanel ? invitation : ''}${content}</section>`
 }
 
 async function refreshAdminPanel() {
@@ -793,11 +799,11 @@ async function copyText(value) {
 function patchOverlays() {
   const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
   patchSlot('success', successNotice, { key: state.successNotice ?? '' })
-  patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
+  patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status" aria-live="polite" aria-atomic="true">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
   const adminRecordsKey = ['invitations', 'audit', 'users'].map(panel => `${state[panel].length}:${state.adminTotals[panel]}:${state.adminNextCursors[panel] ?? ''}`).join(':')
   patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.adminView}:${state.invitation?.id ?? 'open'}:${state.adminLoading}:${adminRecordsKey}:${state.adminError}` : '' })
   patchSlot('detail', labDetailModal(), { focus: true })
-  patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p>${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
+  patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-message"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p id="dialog-message">${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
 }
 
 function render() {
@@ -833,6 +839,22 @@ function restoreModalFocus() {
       ? [...document.querySelectorAll('[data-action]')].find(candidate => candidate.dataset.action === target.action && candidate.dataset.id === target.id)
       : null
   if (element) window.queueMicrotask(() => element.focus())
+}
+
+function restoreConfirmFocus() {
+  const target = confirmReturnFocus
+  confirmReturnFocus = null
+  window.queueMicrotask(() => {
+    if (target?.isConnected) {
+      target.focus()
+      return
+    }
+    const fallback = state.adminPanelOpen
+      ? document.querySelector('.admin-record-toolbar input, .admin-nav-button, .admin-dialog .dialog-close')
+      : null
+    if (fallback) fallback.focus()
+    else restoreModalFocus()
+  })
 }
 
 function rememberModalFocus(element) {
@@ -875,6 +897,8 @@ function clearAuthenticatedState() {
 }
 
 function openConfirm(title, message, action, confirmLabel = '继续') {
+  const active = document.activeElement
+  confirmReturnFocus = active instanceof HTMLElement && active !== document.body ? active : null
   state.confirm = { title, message, action, confirmLabel }
   render()
 }
@@ -1025,12 +1049,13 @@ async function runAction(action, element) {
     return
   }
   if (action === 'dismiss-login-success') { clearLoginSuccessNoticeTimer(); state.successNotice = null; render(); return }
-  if (action === 'cancel-confirm') { state.confirm = null; render(); restoreModalFocus(); return }
+  if (action === 'cancel-confirm') { state.confirm = null; render(); restoreConfirmFocus(); return }
   if (action === 'confirm-action') {
     const next = state.confirm?.action
     state.confirm = null
     if (next) await runAction(next.action, { dataset: { ...next, ids: Array.isArray(next.ids) ? next.ids.join(',') : next.ids ?? '' } })
-    else { render(); restoreModalFocus() }
+    else render()
+    restoreConfirmFocus()
     return
   }
   if (action === 'generate-invitation') {
@@ -1294,10 +1319,11 @@ app.addEventListener('input', event => {
 })
 
 document.addEventListener('keydown', event => {
-  const dialog = document.querySelector('[role="dialog"]')
+  const dialogs = [...document.querySelectorAll('[role="dialog"]')]
+  const dialog = dialogs[dialogs.length - 1]
   if (!dialog) return
   if (event.key === 'Escape') {
-    if (state.confirm) state.confirm = null
+    if (state.confirm) { state.confirm = null; render(); restoreConfirmFocus(); return }
     else if (state.adminRecordsPanel) { state.adminRecordsPanel = null; state.adminView = 'profile'; render(); restoreAdminRecordsFocus(); return }
     else if (state.labDetailId) state.labDetailId = null
     else if (state.adminPanelOpen) { state.adminPanelOpen = false; state.adminView = 'profile'; render(); restoreModalFocus(); return }

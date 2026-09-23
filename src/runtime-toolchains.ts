@@ -101,7 +101,7 @@ const defaultPackages: RuntimeToolchainPackage[] = [
     version: '8.3.33',
     platform: 'win32',
     arch: 'x64',
-    url: 'https://windows.php.net/downloads/releases/php-8.3.33-nts-Win32-vs16-x64.zip',
+    url: 'https://windows.php.net/downloads/releases/archives/php-8.3.33-nts-Win32-vs16-x64.zip',
     sha256: '534399107056313246f424adbbb7937337e40fbbf6aa7bc26287ba9cfd2e4a2a',
     filename: 'php-8.3.33-nts-Win32-vs16-x64.zip',
     kind: 'zip',

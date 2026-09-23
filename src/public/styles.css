@@ -154,10 +154,13 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .invitation-card { display: grid; gap: 10px; margin-top: 12px; border: 1px solid #3a3028; border-radius: 9px; padding: 13px; background-color: #211d19; }
 .invitation-card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: #e4e4e4; font-size: 12px; }
 .invitation-card-heading time { color: #989898; font-size: 10px; white-space: nowrap; }
-.invitation-card code { overflow: hidden; color: #ffb15f; font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.invitation-card code { display: block; overflow: hidden; border: 1px solid #3b332d; border-radius: 6px; padding: 10px 11px; color: #ffb15f; background-color: #171717; font-family: var(--font-mono); font-size: 12px; letter-spacing: .04em; text-overflow: ellipsis; white-space: nowrap; }
 .invitation-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .invitation-card-actions .button { min-height: 32px; font-size: 11px; }
-.admin-empty-state { margin-top: 12px; border: 1px dashed #3b3b3b; border-radius: 8px; padding: 18px 14px; color: #898989; background-color: #191919; font-size: 12px; text-align: center; }
+.admin-empty-state { display: flex; min-height: 168px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; padding: 20px 14px; color: #858585; font-size: 12px; text-align: center; }
+.admin-empty-state p { margin: 0; }
+.admin-empty-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #3a3a3a; border-radius: 50%; color: #777; background-color: #191919; }
+.admin-empty-mark svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
 .invitation-empty-state { margin-top: 12px; }
 .admin-loading, .admin-inline-error { margin-top: 20px; border-radius: 8px; padding: 11px 12px; font-size: 11px; line-height: 1.45; }
 .admin-loading { color: #a7a7a7; background-color: #191919; }
@@ -169,18 +172,19 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-record-button > span:last-child { display: inline-flex; align-items: center; gap: 7px; color: #858585; font-size: 10px; white-space: nowrap; }
 .admin-record-button:hover > span:last-child { color: #b3b3b3; }
 .admin-record-button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
-.admin-record-toolbar { display: flex; min-height: 32px; align-items: center; gap: 10px; margin-top: 12px; }
+.admin-record-toolbar { position: sticky; z-index: 2; top: 0; display: flex; min-height: 32px; align-items: center; gap: 10px; margin-top: 12px; border-bottom: 1px solid #2f2f2f; padding: 5px 0 8px; background-color: rgba(30, 30, 30, .96); box-shadow: 0 6px 10px rgba(0, 0, 0, .12); }
 .admin-select-all, .admin-record-select { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; color: #a6a6a6; font-size: 11px; cursor: pointer; }
 .admin-select-all { flex: 0 0 auto; margin-left: 10px; white-space: nowrap; }
 .admin-select-all input, .admin-record-select input { width: 14px; height: 14px; min-height: 14px; margin: 0; border: 0; padding: 0; accent-color: var(--workspace-accent); background: transparent; box-shadow: none; cursor: pointer; }
 .admin-selection-count { margin-left: auto; color: #777; font-size: 10px; white-space: nowrap; }
-.admin-bulk-delete { min-height: 30px; padding: 0 10px; font-size: 11px; }
+.admin-bulk-delete { min-height: 30px; margin-left: auto; padding: 0 10px; font-size: 11px; }
 .admin-bulk-delete:disabled { border-color: #333; color: #666; background-color: #252525; cursor: default; opacity: 1; }
 .admin-record-list { display: grid; gap: 7px; margin-top: 12px; }
-.admin-record-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: #777; font-size: 10px; }
+.admin-record-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; color: #777; font-size: 10px; }
 .admin-load-more { min-height: 30px; padding: 0 10px; font-size: 11px; }
 .invitation-history, .audit-history { display: grid; gap: 7px; }
 .invitation-history-card, .audit-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #353535; border-radius: 7px; padding: 9px 10px; background-color: #1b1b1b; font-size: 10px; }
+.invitation-history-card:not(.is-selected):hover, .audit-entry:not(.is-selected):hover, .admin-user-entry:not(.is-selected):hover { border-color: #4a4a4a; background-color: #202020; }
 .invitation-history-card.is-selected, .audit-entry.is-selected { border-color: #72502f; background-color: #211d19; }
 .invitation-history-card > .admin-record-select, .audit-entry > .admin-record-select { flex: 0 0 auto; }
 .invitation-history-card > div, .audit-entry > div { min-width: 0; }
@@ -235,9 +239,11 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-dialog-content::-webkit-scrollbar { width: 8px; }
 .admin-dialog-content::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: #565656; background-clip: padding-box; }
 .admin-record-view { min-height: 100%; }
+.admin-record-view.is-empty { display: flex; flex-direction: column; }
 .admin-view-heading { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 20px; }
 .admin-view-heading h3 { margin: 0; color: #eee; font-size: 14px; font-weight: 700; }
 .admin-record-view .admin-empty-state { margin-top: 12px; }
+.admin-record-view.is-empty .admin-empty-state { flex: 1 1 auto; }
 .admin-record-view .admin-record-pagination { margin-bottom: 2px; }
 .profile-view { display: flex; width: 100%; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0 16px; text-align: center; animation: admin-content-in 300ms cubic-bezier(.22, .61, .36, 1) both; }
 .profile-avatar-frame { display: grid; width: 116px; height: 116px; place-items: center; background-color: transparent; }

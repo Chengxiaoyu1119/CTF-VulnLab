@@ -442,6 +442,11 @@ def main() -> None:
         expect(page.locator(".admin-records-backdrop")).to_have_count(0)
         expect(page.get_by_role("heading", name="邀请管理", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
+        expect(page.locator(".admin-empty-state")).to_be_visible()
+        empty_state_style = page.locator(".admin-empty-state").evaluate(
+            "element => ({ borderStyle: getComputedStyle(element).borderStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
+        )
+        assert empty_state_style == {"borderStyle": "none", "backgroundColor": "rgba(0, 0, 0, 0)"}, empty_state_style
         generated_invitations = page.evaluate(
             """async () => {
                 const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
@@ -471,6 +476,9 @@ def main() -> None:
         assert invitation_scroll_style["scrollHeight"] > invitation_scroll_style["clientHeight"], invitation_scroll_style
         assert invitation_scroll_style["clientHeight"] <= 400, invitation_scroll_style
         assert invitation_scroll_style["scrollbarWidth"] == "thin", invitation_scroll_style
+        if page.locator(".admin-record-pagination").count():
+            expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
+        assert page.locator(".admin-record-toolbar").evaluate("element => getComputedStyle(element).position") == "sticky"
         invitation_visible_rows = page.locator(".invitation-history-card").evaluate_all(
             """elements => {
                 const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
@@ -506,6 +514,10 @@ def main() -> None:
         page.get_by_role("button", name="删除所选", exact=True).click()
         invitation_bulk_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
         expect(invitation_bulk_confirm).to_be_visible()
+        invitation_bulk_confirm.get_by_role("button", name="取消", exact=True).click()
+        expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_focused()
+        page.get_by_role("button", name="删除所选", exact=True).click()
+        invitation_bulk_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
         invitation_bulk_confirm.get_by_role("button", name="删除所选", exact=True).click()
         for record_id in batch_invitation_ids:
             expect(page.locator(f'.invitation-history-card[data-id="{record_id}"]')).to_have_count(0)
