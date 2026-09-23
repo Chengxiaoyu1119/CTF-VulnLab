@@ -414,8 +414,9 @@ def main() -> None:
             "element => getComputedStyle(element).animationName"
         )
         assert admin_entry_animation == "admin-content-in", admin_entry_animation
-        compact_admin_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
-        assert compact_admin_box and compact_admin_box["width"] <= 640 and compact_admin_box["height"] <= 400, compact_admin_box
+        admin_dialog_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
+        expect(page.locator('[data-admin-dialog-view="profile"]')).to_be_visible()
+        assert admin_dialog_box and round(admin_dialog_box["width"]) == 720 and round(admin_dialog_box["height"]) == 520, admin_dialog_box
         expect(page.locator('.profile-avatar')).to_have_attribute('src', '/favicon.png')
         expect(page.locator('.profile-identity')).to_have_count(0)
         expect(page.locator('.profile-facts')).to_have_count(0)
@@ -439,14 +440,23 @@ def main() -> None:
         expect(account_button).to_have_count(1)
         invitation_button.click()
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
+        expect(page.locator('[data-admin-dialog-view="invitations"]')).to_be_visible()
         expect(page.locator(".admin-records-backdrop")).to_have_count(0)
-        expect(page.get_by_role("heading", name="邀请管理", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="邀请管理", exact=True)).to_have_count(0)
+        expect(page.locator('[data-admin-view="invitations"]')).to_have_attribute("aria-label", "邀请管理")
         expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         expect(page.locator(".admin-empty-state")).to_be_visible()
         empty_state_style = page.locator(".admin-empty-state").evaluate(
             "element => ({ borderStyle: getComputedStyle(element).borderStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
-        assert empty_state_style == {"borderStyle": "none", "backgroundColor": "rgba(0, 0, 0, 0)"}, empty_state_style
+        assert empty_state_style == {"borderStyle": "dashed", "backgroundColor": "rgb(25, 25, 25)"}, empty_state_style
+        empty_scroll_style = page.locator(".admin-dialog-content").evaluate(
+            "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, overflowY: getComputedStyle(element).overflowY })"
+        )
+        assert empty_scroll_style["scrollHeight"] == empty_scroll_style["clientHeight"] and empty_scroll_style["overflowY"] == "auto", empty_scroll_style
+        records_dialog_box = page.locator(".admin-dialog").bounding_box()
+        assert records_dialog_box and round(records_dialog_box["width"]) == 720 and round(records_dialog_box["height"]) == 520, records_dialog_box
+        page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-empty-desktop.png"), full_page=True)
         generated_invitations = page.evaluate(
             """async () => {
                 const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
@@ -474,7 +484,7 @@ def main() -> None:
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
         assert invitation_scroll_style["scrollHeight"] > invitation_scroll_style["clientHeight"], invitation_scroll_style
-        assert invitation_scroll_style["clientHeight"] <= 400, invitation_scroll_style
+        assert invitation_scroll_style["clientHeight"] <= 520, invitation_scroll_style
         assert invitation_scroll_style["scrollbarWidth"] == "thin", invitation_scroll_style
         if page.locator(".admin-record-pagination").count():
             expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
@@ -488,7 +498,7 @@ def main() -> None:
                 }).length
             }"""
         )
-        assert 0 < invitation_visible_rows <= 5, invitation_visible_rows
+        assert 0 < invitation_visible_rows <= 8, invitation_visible_rows
         expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_disabled()
         page.screenshot(path=str(OUTPUT_DIR / "admin-records-window-desktop.png"), full_page=True)
         generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
@@ -581,8 +591,8 @@ def main() -> None:
         account_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
-        assert account_scroll_style["scrollHeight"] > account_scroll_style["clientHeight"], account_scroll_style
-        assert account_scroll_style["clientHeight"] <= 400, account_scroll_style
+        assert account_scroll_style["scrollHeight"] <= account_scroll_style["clientHeight"], account_scroll_style
+        assert account_scroll_style["clientHeight"] <= 520, account_scroll_style
         account_visible_rows = page.locator(".admin-user-entry").evaluate_all(
             """elements => {
                 const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
@@ -592,7 +602,12 @@ def main() -> None:
                 }).length
             }"""
         )
-        assert 0 < account_visible_rows <= 5, account_visible_rows
+        assert account_visible_rows == 6, account_visible_rows
+        page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 360})
+        assert page.locator(".admin-dialog-content").evaluate("element => element.scrollHeight > element.clientHeight")
+        expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
+        page.set_viewport_size({"width": 1440, "height": 900})
         account_select_alignment = page.locator('[data-admin-select-all="users"]').evaluate(
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
         )
@@ -635,6 +650,8 @@ def main() -> None:
         account_context.close()
         audit_button.click()
         expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+        audit_dialog_box = page.locator('.admin-dialog').bounding_box()
+        assert audit_dialog_box and round(audit_dialog_box["width"]) == 720 and round(audit_dialog_box["height"]) == 520, audit_dialog_box
         expect(page.locator(".audit-entry")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
@@ -643,7 +660,7 @@ def main() -> None:
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
         assert audit_scroll_style["scrollHeight"] > audit_scroll_style["clientHeight"], audit_scroll_style
-        assert audit_scroll_style["clientHeight"] <= 400, audit_scroll_style
+        assert audit_scroll_style["clientHeight"] <= 520, audit_scroll_style
         assert audit_scroll_style["scrollbarWidth"] == "thin", audit_scroll_style
         audit_visible_rows = page.locator(".audit-entry").evaluate_all(
             """elements => {
@@ -654,7 +671,7 @@ def main() -> None:
                 }).length
             }"""
         )
-        assert 0 < audit_visible_rows <= 5, audit_visible_rows
+        assert 0 < audit_visible_rows <= 8, audit_visible_rows
         audit_entry = page.locator(".audit-entry").first
         expect(audit_entry.locator(".audit-entry-actor-label")).to_have_text("用户")
         expect(audit_entry.locator(".audit-entry-actor")).to_have_attribute("title", re.compile(r"^用户：.+"))
@@ -663,7 +680,8 @@ def main() -> None:
         audit_layout = audit_entry.locator(".audit-entry-content").evaluate(
             "element => ({ display: getComputedStyle(element).display, columns: getComputedStyle(element).gridTemplateColumns, gap: getComputedStyle(element).columnGap })"
         )
-        assert audit_layout["display"] == "grid" and audit_layout["gap"] == "12px" and audit_layout["columns"].startswith("72px "), audit_layout
+        audit_action_column = float(audit_layout["columns"].split()[0].removesuffix("px"))
+        assert audit_layout["display"] == "grid" and audit_layout["gap"] == "16px" and audit_action_column >= 118, audit_layout
         audit_select_alignment = page.locator('[data-admin-select-all="audit"]').evaluate(
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"audit\"]').getBoundingClientRect().left })"
         )
@@ -678,7 +696,8 @@ def main() -> None:
         audit_time_layout = audit_entry.locator(".audit-entry-time").evaluate(
             "element => ({ width: getComputedStyle(element).width, minWidth: getComputedStyle(element).minWidth, justifyContent: getComputedStyle(element).justifyContent })"
         )
-        assert audit_time_layout == {"width": "120px", "minWidth": "120px", "justifyContent": "flex-start"}, audit_time_layout
+        assert audit_time_layout == {"width": "142px", "minWidth": "142px", "justifyContent": "flex-end"}, audit_time_layout
+        assert page.locator(".audit-entry").evaluate_all("rows => rows.slice(0, 5).every(row => { const height = row.getBoundingClientRect().height; return height >= 44 && height <= 48 })")
         long_actor_layout = audit_entry.locator(".audit-entry-actor-name").evaluate(
             """element => {
                 const original = element.textContent

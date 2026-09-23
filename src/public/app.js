@@ -247,10 +247,6 @@ function recordArrowIcon() {
   return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg>'
 }
 
-function adminEmptyIcon() {
-  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12M8.5 12h7M10.5 16.5h3"></path></svg>'
-}
-
 function labsShell() {
   return `<div class="labs-screen">
     <section class="lab-workspace">
@@ -693,7 +689,8 @@ function adminPanel() {
   const title = isAdmin ? '管理中心' : '个人中心'
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div><button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+  const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
+  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div><button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
 }
 
 function adminRecordsPanel() {
@@ -752,8 +749,8 @@ function adminRecordsPanel() {
           : isAuditPanel
             ? `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div></div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
             : `${selectionToolbar}<div class="admin-record-list user-history">${userRows}</div>${pagination}`
-        : `<div class="admin-empty-state" role="status"><span class="admin-empty-mark">${adminEmptyIcon()}</span><p>暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</p></div>`
-  return `<section class="admin-record-view${!records.length ? ' is-empty' : ''}" data-admin-view="${state.adminRecordsPanel}" aria-labelledby="admin-records-title" aria-busy="${state.adminLoading ? 'true' : 'false'}"><div class="admin-view-heading"><h3 id="admin-records-title">${title}</h3></div>${isInvitationPanel ? invitation : ''}${content}</section>`
+        : `<div class="admin-empty-state" role="status">暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</div>`
+  return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${isInvitationPanel ? invitation : ''}${content}</section>`
 }
 
 async function refreshAdminPanel() {
