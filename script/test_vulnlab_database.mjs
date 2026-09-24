@@ -182,7 +182,7 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
 
   const localTimestamp = offset => {
     const value = new Date()
-    value.setHours(12, 0, 0, 0)
+    value.setHours(offset === 0 ? 0 : 12, 0, 0, 0)
     value.setDate(value.getDate() + offset)
     return value.toISOString()
   }

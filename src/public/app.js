@@ -258,10 +258,14 @@ function scheduleSystemPolling() {
 }
 
 function selectActivityDate(value, restoreFocus = false) {
-  if (!state.adminOverview?.activity?.daily.some(item => item.date === value)) return
+  const item = state.adminOverview?.activity?.daily.find(item => item.date === value)
+  if (!item) return
   state.adminActivityDate = value
-  render()
-  if (restoreFocus) window.queueMicrotask(() => document.querySelector(`[data-activity-date="${value}"]`)?.focus())
+  const cells = [...document.querySelectorAll('[data-activity-date]')]
+  cells.forEach(cell => { cell.tabIndex = cell.dataset.activityDate === value ? 0 : -1 })
+  const output = document.querySelector('.admin-activity-selection')
+  if (output) output.textContent = `${item.date} · ${item.count} 次启动`
+  if (restoreFocus) cells.find(cell => cell.dataset.activityDate === value)?.focus({ preventScroll: true })
 }
 
 function beginBusy(action, id = '') {
@@ -697,7 +701,7 @@ function patchSlot(name, content, { focus = false, key = content } = {}) {
   const slot = app.querySelector(`[data-overlay-slot="${name}"]`)
   if (slot.__vulnlabKey === key && slot.__vulnlabContent === content) return
   const previousContent = slot.__vulnlabContent ?? slot.innerHTML
-  if (name === 'admin' && !content && previousContent && slot.querySelector('.dialog-backdrop')) {
+  if (name === 'admin' && !content && previousContent && !state.labDetailId && slot.querySelector('.dialog-backdrop')) {
     const backdrop = slot.querySelector('.dialog-backdrop')
     const dialog = slot.querySelector('[role="dialog"]')
     backdrop?.style.removeProperty('animation')
@@ -711,26 +715,32 @@ function patchSlot(name, content, { focus = false, key = content } = {}) {
     return
   }
   const hadDialog = focus && Boolean(slot.querySelector('[role="dialog"]'))
-  const scrollTop = slot.querySelector('.admin-record-view')?.scrollTop
+  const previousView = slot.querySelector('[data-admin-dialog-view]')?.dataset.adminDialogView
+  const scrollTop = slot.querySelector('.admin-dialog-content')?.scrollTop
   const active = focus && slot.contains(document.activeElement)
-    ? { action: document.activeElement.dataset.action ?? '', id: document.activeElement.dataset.id ?? '', recordSelect: document.activeElement.dataset.adminRecordSelect ?? '', selectAll: document.activeElement.dataset.adminSelectAll ?? '' }
+    ? { action: document.activeElement.dataset.action ?? '', id: document.activeElement.dataset.id ?? '', section: document.activeElement.dataset.section ?? '', activityDate: document.activeElement.dataset.activityDate ?? '', recordSelect: document.activeElement.dataset.adminRecordSelect ?? '', selectAll: document.activeElement.dataset.adminSelectAll ?? '' }
     : null
   slot.innerHTML = content
   slot.__vulnlabKey = key
   slot.__vulnlabContent = content
-  if (scrollTop !== undefined) {
-    const recordsDialog = slot.querySelector('.admin-record-view')
+  if (scrollTop !== undefined && previousView === state.adminView) {
+    const recordsDialog = slot.querySelector('.admin-dialog-content')
     if (recordsDialog) recordsDialog.scrollTop = scrollTop
   }
   if (!focus || !content) return
   if (hadDialog) {
     slot.querySelector('.dialog-backdrop')?.style.setProperty('animation', 'none')
     slot.querySelector('[role="dialog"]')?.style.setProperty('animation', 'none')
+    if (previousView === state.adminView) {
+      slot.querySelector('.admin-dialog-content')?.style.setProperty('animation', 'none')
+      slot.querySelector('.admin-system-view')?.style.setProperty('animation', 'none')
+    }
   }
+  if (hadDialog && !active) return
   window.queueMicrotask(() => {
-    const focusable = [...slot.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.offsetParent !== null)
-    const target = active && focusable.find(item => item.dataset.action === active.action && (item.dataset.id ?? '') === active.id && (item.dataset.adminRecordSelect ?? '') === active.recordSelect && (item.dataset.adminSelectAll ?? '') === active.selectAll)
-    ;(target || focusable[0])?.focus()
+    const focusable = [...slot.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
+    const target = active && focusable.find(item => (item.dataset.action ?? '') === active.action && (item.dataset.id ?? '') === active.id && (item.dataset.section ?? '') === active.section && (item.dataset.activityDate ?? '') === active.activityDate && (item.dataset.adminRecordSelect ?? '') === active.recordSelect && (item.dataset.adminSelectAll ?? '') === active.selectAll)
+    ;(target || focusable[0])?.focus({ preventScroll: true })
   })
 }
 
@@ -789,7 +799,8 @@ function adminSystemPanel() {
     <section class="admin-activity-card" aria-labelledby="admin-activity-title" style="--activity-weeks:${weeks}"><div class="admin-activity-heading"><h3 id="admin-activity-title">靶场活动</h3><span>${esc(activity.rangeStart)} — ${esc(activity.rangeEnd)}</span>${refreshButton}</div>
       <span class="sr-only" id="admin-activity-help">上下方向键逐日查看，左右方向键逐周查看，Home 和 End 跳到首日与末日。</span>
       <div class="admin-activity-grid" role="group" aria-label="最近365天靶场启动活动" aria-describedby="admin-activity-help">${cells}</div><div class="admin-activity-months" aria-hidden="true">${months}</div>
-      <div class="admin-activity-footer"><span>${number(activity.activeDays)} 天活跃</span><span class="admin-activity-legend" aria-label="颜色代表每日启动次数：0次、1次、2至3次、4至7次、8次及以上"><i>少</i><b></b><b class="is-level-1"></b><b class="is-level-2"></b><b class="is-level-3"></b><b class="is-level-4"></b><i>多</i></span></div>
+      <div class="admin-activity-footer"><output class="admin-activity-selection" aria-live="polite">${esc(selected.date)} · ${number(selected.count)} 次启动</output><span>${number(activity.activeDays)} 天活跃</span><span class="admin-activity-legend" aria-label="颜色代表每日启动次数：0次、1次、2至3次、4至7次、8次及以上"><i>少</i><b></b><b class="is-level-1"></b><b class="is-level-2"></b><b class="is-level-3"></b><b class="is-level-4"></b><i>多</i></span></div>
+      <span class="sr-only">统计保留的成功启动审计记录，清理这些记录会同步改变统计，日期以服务器本地时间为准。</span>
     </section>
     <section class="admin-system-card" aria-labelledby="admin-ranking-title"><div class="admin-system-card-heading"><h3 id="admin-ranking-title">靶场使用排行</h3><span>最近365天</span></div><div class="admin-lab-ranking-list">${ranking || '<div class="admin-system-empty">最近365天暂无靶场启动记录。</div>'}</div></section>
   </section>`
@@ -940,11 +951,13 @@ function restoreModalFocus() {
     render()
     const content = document.querySelector('.admin-dialog-content')
     if (content) content.scrollTop = state.adminSystemScrollTop
-    window.queueMicrotask(() => {
+    void refreshAdminOverview().then(() => {
+      if (!state.adminPanelOpen || state.adminView !== 'system' || state.labDetailId) return
+      const content = document.querySelector('.admin-dialog-content')
+      if (content) content.scrollTop = state.adminSystemScrollTop
       const row = [...document.querySelectorAll('.admin-lab-ranking')].find(item => item.dataset.id === labId)
       ;(row || document.querySelector('[data-section="system"]'))?.focus({ preventScroll: true })
     })
-    void refreshAdminOverview()
     return
   }
   const target = modalReturnFocus
@@ -1040,6 +1053,9 @@ async function runAction(action, element) {
   if (action === 'nav') { navigate(); return }
   if (action === 'refresh-system-data') { await refreshAdminOverview(); return }
   if (action === 'open-system-lab') {
+    const version = systemRequestVersion
+    try { await refresh() } catch (error) { setToast(error.message, 'error'); return }
+    if (version !== systemRequestVersion || !state.adminPanelOpen || state.adminView !== 'system') return
     if (!state.labs.some(item => item.id === element.dataset.id)) return
     state.adminSystemReturnLabId = element.dataset.id
     state.adminSystemScrollTop = document.querySelector('.admin-dialog-content')?.scrollTop ?? 0
@@ -1081,8 +1097,8 @@ async function runAction(action, element) {
     state.adminView = section
     if (section === 'profile' || section === 'system') {
       state.adminRecordsPanel = null
+      render()
       if (section === 'system') await refreshAdminOverview()
-      else render()
       return
     }
     state.adminRecordsPanel = section
@@ -1334,6 +1350,18 @@ app.addEventListener('scroll', event => {
   if (event.target?.matches?.('.lab-canvas')) updateLabCanvasScrollState()
 }, { capture: true, passive: true })
 
+for (const type of ['mouseover', 'focusin']) {
+  app.addEventListener(type, event => {
+    const cell = event.target.closest?.('[data-activity-date]')
+    if (cell) selectActivityDate(cell.dataset.activityDate)
+  })
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearSystemPolling()
+  else void refreshAdminOverview()
+})
+
 window.addEventListener('resize', updateLabCanvasScrollState)
 
 app.addEventListener('change', event => {
@@ -1463,8 +1491,8 @@ document.addEventListener('keydown', event => {
     const index = cells.indexOf(activityCell)
     const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' ? -7 : event.key === 'ArrowRight' ? 7 : 0
     const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? cells.length - 1 : index + delta
+    event.preventDefault()
     if (index >= 0 && nextIndex >= 0 && nextIndex < cells.length) {
-      event.preventDefault()
       selectActivityDate(cells[nextIndex].dataset.activityDate, true)
     }
     return
@@ -1483,7 +1511,7 @@ document.addEventListener('keydown', event => {
     return
   }
   if (event.key !== 'Tab') return
-  const focusable = [...dialog.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.offsetParent !== null)
+  const focusable = [...dialog.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
   if (!focusable.length) return
   const first = focusable[0]
   const last = focusable[focusable.length - 1]

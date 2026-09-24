@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import json
 import re
+import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -464,6 +466,69 @@ def main() -> None:
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         expect(page.locator("[data-activity-date]")).to_have_count(365)
         page.set_viewport_size({"width": 1440, "height": 900})
+        # 仅向浏览器回归的隔离数据库写入统计样本，验证真实数据库到页面的数据链路。
+        with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as stats_db:
+            stats_stamp = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            stats_expiry = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            stats_db.execute("INSERT INTO instances (id, lab_id, lab_title, provider, endpoint, status, created_at, expires_at, logs_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", ("system-fixture-instance", initial_labs_payload[0]["id"], initial_labs_payload[0]["title"], "native-php", "http://127.0.0.1:6998/", "running", stats_stamp, stats_expiry, "[]"))
+            for index, count in enumerate([8, 5, 3, 2, 1]):
+                for launch in range(count):
+                    stats_db.execute("INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)", (f"system-fixture-{index}-{launch}", "vulnlab", "instance.start", initial_labs_payload[index]["title"], "system-fixture-instance" if index == 0 else "", stats_stamp))
+        try:
+            page.get_by_role("button", name="刷新系统数据", exact=True).click()
+            expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
+            expect(page.locator('[data-system-stat="running"]')).to_have_text("1 / 8")
+            expect(page.locator(".admin-lab-ranking")).to_have_count(5)
+            expect(page.locator(".admin-lab-ranking").first).to_contain_text("运行中")
+            populated_day = page.locator(f'[data-activity-date="{last_activity_date}"]')
+            populated_day.hover()
+            expect(page.locator(".admin-activity-selection")).to_contain_text("19 次启动")
+            populated_day.focus()
+            expect(populated_day).to_have_class(re.compile("is-level-4"))
+            populated_day.press("ArrowUp")
+            expect(page.locator(".admin-activity-selection")).to_contain_text("0 次启动")
+            for width, height in [(1440, 900), (768, 1024), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
+                page.set_viewport_size({"width": width, "height": height})
+                expect(page.locator("[data-activity-date]")).to_have_count(365)
+                assert page.locator(".admin-dialog-content").evaluate("e => e.scrollWidth <= e.clientWidth"), width
+                expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
+                page.screenshot(path=str(OUTPUT_DIR / f"system-populated-{width}.png"), full_page=True)
+            page.set_viewport_size({"width": 1440, "height": 900})
+            ranking_row = page.locator(".admin-lab-ranking").first
+            ranking_row.click()
+            expect(page.locator(".lab-detail-dialog")).to_be_visible()
+            expect(page.locator('[role="dialog"]')).to_have_count(1)
+            expect(page.get_by_role("heading", name=initial_labs_payload[0]["title"], exact=True)).to_be_visible()
+            expect(page.get_by_role("link", name="打开页面", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(page.locator('[data-admin-dialog-view="system"]')).to_be_visible()
+            expect(ranking_row).to_be_focused()
+            expect(page.locator('[role="dialog"]')).to_have_count(1)
+
+            def fail_system_overview(route):
+                route.fulfill(status=503, content_type="application/json", body=json.dumps({"message": "测试服务暂不可用"}))
+
+            page.route("**/api/overview", fail_system_overview)
+            page.get_by_role("button", name="刷新系统数据", exact=True).click()
+            expect(page.locator(".admin-inline-error")).to_contain_text("上次数据")
+            expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
+            page.get_by_role("button", name="关闭管理中心", exact=True).click()
+            admin_trigger.click()
+            system_button.click()
+            expect(page.locator(".admin-inline-error")).to_be_visible()
+            expect(page.locator(".admin-system-stat")).to_have_count(0)
+            page.unroute("**/api/overview", fail_system_overview)
+            page.get_by_role("button", name="刷新系统数据", exact=True).click()
+            expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
+        finally:
+            page.unroute("**/api/overview")
+            with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as stats_db:
+                stats_db.execute("DELETE FROM audit WHERE id LIKE 'system-fixture-%'")
+                stats_db.execute("DELETE FROM instances WHERE id = 'system-fixture-instance'")
+        page.get_by_role("button", name="刷新系统数据", exact=True).click()
+        expect(page.locator('[data-system-stat="launches"]')).to_have_text("0")
+        expect(page.locator('[data-system-stat="running"]')).to_have_text("0 / 8")
+        expect(page.locator(".admin-system-empty")).to_have_count(1)
         invitation_button.click()
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator('[data-admin-dialog-view="invitations"]')).to_be_visible()

@@ -269,11 +269,9 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-activity-cell.is-level-4 { background: #ff8a3d; }
 .admin-activity-months { display: grid; grid-template-columns: repeat(var(--activity-weeks), minmax(0, 1fr)); min-height: 12px; margin-top: 7px; color: #686868; font-size: 9px; }
 .admin-activity-months span { white-space: nowrap; }
-.admin-activity-footer, .admin-activity-inspect { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #777; font-size: 10px; }
+.admin-activity-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #777; font-size: 10px; }
 .admin-activity-footer { margin-top: 9px; }
-.admin-activity-inspect { margin-top: 8px; padding-top: 8px; border-top: 1px solid #282828; }
 .admin-activity-selection { color: #b2b2b2; font-variant-numeric: tabular-nums; }
-.admin-activity-date { width: 112px; min-height: 25px; border: 1px solid #373737; border-radius: 5px; padding: 0 6px; color: #bdbdbd; background: #202020; font-size: 10px; }
 .admin-activity-legend { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .admin-activity-legend b { width: 9px; height: 9px; border-radius: 2px; background: #282828; }
 .admin-activity-legend b.is-level-1 { background: #4a3325; }
@@ -281,8 +279,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-activity-legend b.is-level-3 { background: #b2602b; }
 .admin-activity-legend b.is-level-4 { background: #ff8a3d; }
 .admin-activity-legend i { color: #686868; font-style: normal; }
-.admin-system-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 12px; }
-.admin-lab-ranking-list, .admin-running-list { display: grid; gap: 8px; margin-top: 11px; }
+.admin-lab-ranking-list { display: grid; gap: 8px; margin-top: 11px; }
 .admin-lab-ranking { display: grid; min-width: 0; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 0; padding: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .admin-lab-ranking-order { color: #676767; font-family: var(--font-mono); font-size: 10px; }
 .admin-lab-ranking-main { display: grid; min-width: 0; gap: 5px; }
@@ -294,12 +291,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-lab-ranking-meta i { color: #72c394; font-size: 9px; font-style: normal; }
 .admin-lab-ranking:hover .admin-lab-ranking-main strong, .admin-lab-ranking:focus-visible .admin-lab-ranking-main strong { color: #fff; }
 .admin-lab-ranking:focus-visible { outline: 1px solid #b86a35; outline-offset: 4px; }
-.admin-running-lab { display: flex; min-width: 0; align-items: center; gap: 7px; color: #c2c2c2; font-size: 11px; }
-.admin-running-lab > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-running-lab time { margin-left: auto; color: #858585; font-size: 10px; white-space: nowrap; }
-.admin-running-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--workspace-success); box-shadow: 0 0 0 3px rgba(98, 184, 137, .12); }
 .admin-system-empty { border: 1px dashed #373737; border-radius: 7px; padding: 12px 10px; color: #777; font-size: 10px; text-align: center; }
-.admin-system-source { margin: -4px 0 0; color: #626262; font-size: 9px; text-align: right; }
 
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
@@ -523,7 +515,6 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .admin-system-stat:nth-child(4) { border-top: 1px solid #292929; }
   .admin-activity-grid { grid-template-rows: repeat(7, 7px); gap: 2px; }
   .admin-activity-footer { align-items: flex-start; flex-direction: column; }
-  .admin-system-columns { grid-template-columns: minmax(0, 1fr); }
   .invitation-card code { overflow-wrap: anywhere; white-space: normal; }
   .invitation-history-card { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 6px 12px; }
   .invitation-history-card > .admin-record-select { grid-row: span 2; }
