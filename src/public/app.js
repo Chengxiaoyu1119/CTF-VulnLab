@@ -64,6 +64,11 @@ const state = {
   adminSelectedRecordIds: { invitations: [], audit: [], users: [] },
   adminNextCursors: { invitations: null, audit: null, users: null },
   adminTotals: { invitations: 0, audit: 0, users: 0 },
+  adminRecordRequestVersions: { invitations: 0, audit: 0, users: 0 },
+  adminAuditDate: '',
+  adminAuditAction: '',
+  adminAuditExpandedId: null,
+  adminAuditReturnToSystem: null,
   invitation: null,
   invitations: [],
   audit: [],
@@ -153,6 +158,11 @@ function resetAdminRecords() {
   state.adminSelectedRecordIds = { invitations: [], audit: [], users: [] }
   state.adminNextCursors = { invitations: null, audit: null, users: null }
   state.adminTotals = { invitations: 0, audit: 0, users: 0 }
+  state.adminRecordRequestVersions = { invitations: 0, audit: 0, users: 0 }
+  state.adminAuditDate = ''
+  state.adminAuditAction = ''
+  state.adminAuditExpandedId = null
+  state.adminAuditReturnToSystem = null
   state.invitations = []
   state.audit = []
   state.users = []
@@ -166,13 +176,52 @@ function resetAdminRecords() {
 
 async function loadAdminRecords(panel, append = false) {
   const cursor = append ? state.adminNextCursors[panel] : null
-  const page = await request(`${adminRecordPath(panel)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { cache: 'no-store', recordPage: true })
+  const requestVersion = ++state.adminRecordRequestVersions[panel]
+  const params = new URLSearchParams()
+  if (cursor) params.set('cursor', cursor)
+  if (panel === 'audit') {
+    if (state.adminAuditDate) params.set('date', state.adminAuditDate)
+    if (state.adminAuditAction) params.set('action', state.adminAuditAction)
+  }
+  const query = params.toString()
+  const page = await request(`${adminRecordPath(panel)}${query ? `?${query}` : ''}`, { cache: 'no-store', recordPage: true })
+  if (requestVersion !== state.adminRecordRequestVersions[panel]) return false
   const items = Array.isArray(page?.items) ? page.items : []
   state[panel] = append ? [...state[panel], ...items] : items
   state.adminNextCursors[panel] = typeof page?.nextCursor === 'string' ? page.nextCursor : null
   const total = Number(page?.total)
   state.adminTotals[panel] = Number.isSafeInteger(total) && total >= state[panel].length ? total : state[panel].length
   state.adminSelectedRecordIds[panel] = state.adminSelectedRecordIds[panel].filter(id => state[panel].some(item => adminRecordId(panel, item) === id))
+  return true
+}
+
+async function refreshAdminAudit() {
+  const requestVersion = state.adminRecordRequestVersions.audit + 1
+  try {
+    await loadAdminRecords('audit')
+    if (requestVersion === state.adminRecordRequestVersions.audit) state.adminError = ''
+  } catch (error) {
+    if (requestVersion === state.adminRecordRequestVersions.audit) state.adminError = error.message
+  } finally {
+    if (requestVersion === state.adminRecordRequestVersions.audit) {
+      state.adminLoading = false
+      render()
+    }
+  }
+}
+
+async function setAuditFilters(dateValue, actionValue) {
+  state.adminAuditDate = dateValue
+  state.adminAuditAction = actionValue
+  state.adminAuditExpandedId = null
+  state.adminSelectedRecordIds.audit = []
+  state.adminNextCursors.audit = null
+  state.adminTotals.audit = 0
+  state.audit = []
+  state.adminError = ''
+  state.adminLoading = true
+  render()
+  await refreshAdminAudit()
 }
 
 async function refreshAdminOverview() {
@@ -266,6 +315,24 @@ function selectActivityDate(value, restoreFocus = false) {
   const output = document.querySelector('.admin-activity-selection')
   if (output) output.textContent = `${item.date} · ${item.count} 次启动`
   if (restoreFocus) cells.find(cell => cell.dataset.activityDate === value)?.focus({ preventScroll: true })
+}
+
+function returnToSystemData() {
+  const saved = state.adminAuditReturnToSystem
+  state.adminAuditReturnToSystem = null
+  state.adminRecordsPanel = null
+  state.adminView = 'system'
+  state.adminLoading = false
+  state.adminError = ''
+  render()
+  window.queueMicrotask(() => {
+    const content = document.querySelector('.admin-dialog-content')
+    if (content) content.scrollTop = saved?.scrollTop ?? 0
+    if (!saved?.date) return
+    selectActivityDate(saved.date)
+    const cell = [...document.querySelectorAll('[data-activity-date]')].find(item => item.dataset.activityDate === saved.date)
+    cell?.focus({ preventScroll: true })
+  })
 }
 
 function beginBusy(action, id = '') {
@@ -718,7 +785,7 @@ function patchSlot(name, content, { focus = false, key = content } = {}) {
   const previousView = slot.querySelector('[data-admin-dialog-view]')?.dataset.adminDialogView
   const scrollTop = slot.querySelector('.admin-dialog-content')?.scrollTop
   const active = focus && slot.contains(document.activeElement)
-    ? { action: document.activeElement.dataset.action ?? '', id: document.activeElement.dataset.id ?? '', section: document.activeElement.dataset.section ?? '', activityDate: document.activeElement.dataset.activityDate ?? '', recordSelect: document.activeElement.dataset.adminRecordSelect ?? '', selectAll: document.activeElement.dataset.adminSelectAll ?? '' }
+    ? { action: document.activeElement.dataset.action ?? '', id: document.activeElement.dataset.id ?? '', section: document.activeElement.dataset.section ?? '', activityDate: document.activeElement.dataset.activityDate ?? '', recordSelect: document.activeElement.dataset.adminRecordSelect ?? '', selectAll: document.activeElement.dataset.adminSelectAll ?? '', auditExpand: document.activeElement.dataset.auditExpand ?? '' }
     : null
   slot.innerHTML = content
   slot.__vulnlabKey = key
@@ -738,8 +805,8 @@ function patchSlot(name, content, { focus = false, key = content } = {}) {
   }
   if (hadDialog && !active) return
   window.queueMicrotask(() => {
-    const focusable = [...slot.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
-    const target = active && focusable.find(item => (item.dataset.action ?? '') === active.action && (item.dataset.id ?? '') === active.id && (item.dataset.section ?? '') === active.section && (item.dataset.activityDate ?? '') === active.activityDate && (item.dataset.adminRecordSelect ?? '') === active.recordSelect && (item.dataset.adminSelectAll ?? '') === active.selectAll)
+    const focusable = [...slot.querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
+    const target = active && focusable.find(item => (item.dataset.action ?? '') === active.action && (item.dataset.id ?? '') === active.id && (item.dataset.section ?? '') === active.section && (item.dataset.activityDate ?? '') === active.activityDate && (item.dataset.adminRecordSelect ?? '') === active.recordSelect && (item.dataset.adminSelectAll ?? '') === active.selectAll && (item.dataset.auditExpand ?? '') === active.auditExpand)
     ;(target || focusable[0])?.focus({ preventScroll: true })
   })
 }
@@ -782,7 +849,7 @@ function adminSystemPanel() {
     if (!item) return '<span class="admin-activity-cell is-blank" aria-hidden="true"></span>'
     const level = item.count >= 8 ? 4 : item.count >= 4 ? 3 : item.count >= 2 ? 2 : item.count > 0 ? 1 : 0
     const label = `${item.date}：${item.count} 次靶场启动`
-    return `<button class="admin-activity-cell is-level-${level}" type="button" data-activity-date="${esc(item.date)}" tabindex="${item.date === selected.date ? 0 : -1}" aria-label="${esc(label)}" title="${esc(label)}"></button>`
+    return `<button class="admin-activity-cell is-level-${level}" type="button" data-action="open-audit-for-date" data-activity-date="${esc(item.date)}" tabindex="${item.date === selected.date ? 0 : -1}" aria-label="${esc(label)}" title="${esc(label)}"></button>`
   }).join('')
   const months = daily.flatMap((item, index) => {
     if (index !== 0 && item.date.slice(0, 7) === daily[index - 1].date.slice(0, 7)) return []
@@ -842,11 +909,13 @@ function adminRecordsPanel() {
   const selected = new Set(selectedIds)
   const allSelected = records.length > 0 && selectedIds.length === records.length
   const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
-  const total = state.adminTotals[state.adminRecordsPanel]
   const nextCursor = state.adminNextCursors[state.adminRecordsPanel]
   const selectionCount = selectedIds.length ? `<span class="admin-selection-count" aria-live="polite">已选 ${selectedIds.length} 条</span>` : ''
   const selectionToolbar = records.length ? `<div class="admin-record-toolbar"><label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label>${selectionCount}<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button></div>` : ''
   const pagination = nextCursor ? `<div class="admin-record-pagination"><span class="sr-only">还有更多${recordLabel}记录</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
+  const auditActions = isAuditPanel ? Object.entries(actionLabels).sort((left, right) => left[0].localeCompare(right[0])).map(([value, label]) => `<option value="${esc(value)}" ${state.adminAuditAction === value ? 'selected' : ''}>${esc(label)}</option>`).join('') : ''
+  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计筛选"><label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label><label class="admin-record-filter"><span>操作类型</span><select data-audit-filter="action" aria-label="按操作类型筛选审计记录"><option value="">全部操作</option>${auditActions}</select></label><button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button></div>` : ''
+  const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const userRows = isUserPanel ? records.map(item => {
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
@@ -855,15 +924,15 @@ function adminRecordsPanel() {
   const content = state.adminLoading
     ? '<div class="admin-loading" role="status">正在更新记录…</div>'
     : state.adminError
-      ? `<div class="admin-inline-error" role="alert">${esc(state.adminError)}</div>`
+      ? `<div class="admin-inline-error" role="alert"><span>${esc(state.adminError)}</span><button class="button button-outline admin-record-retry" type="button" data-action="retry-admin-records" data-panel="${esc(state.adminRecordsPanel)}">重试</button></div>`
       : records.length
         ? isInvitationPanel
           ? `${selectionToolbar}<div class="admin-record-list invitation-history">${records.map(item => `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="invitation-history-main"><strong>${esc(statusLabels[item.status] ?? item.status)}</strong><time datetime="${esc(item.createdAt)}">生成于 ${esc(date(item.createdAt))}</time></div><div class="invitation-history-meta"><span>有效至 ${esc(date(item.expiresAt))}</span><button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button></div></div>`).join('')}</div>${pagination}`
           : isAuditPanel
-            ? `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div></div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
+            ? `${selectionToolbar}<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); const expanded = state.adminAuditExpandedId === item.id; const detailId = `audit-detail-${item.id}`; return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content" role="button" tabindex="0" data-action="toggle-audit-detail" data-audit-expand="${esc(item.id)}" data-id="${esc(item.id)}" aria-expanded="${expanded}" aria-controls="${esc(detailId)}"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div>${expanded ? `<div class="audit-entry-detail" id="${esc(detailId)}"><span class="audit-entry-detail-label">对象</span><span class="audit-entry-detail-value">${esc(item.target || '—')}</span><span class="audit-entry-detail-label">详情</span><span class="audit-entry-detail-value">${esc(item.detail || '—')}</span></div>` : ''}</div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
             : `${selectionToolbar}<div class="admin-record-list user-history">${userRows}</div>${pagination}`
-        : `<div class="admin-empty-state" role="status">暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '相关审计' : '注册账号'}记录。</div>`
-  return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${isInvitationPanel ? invitation : ''}${content}</section>`
+        : `<div class="admin-empty-state" role="status">${isAuditPanel && state.adminAuditDate && state.adminAuditAction === 'instance.start' ? '当天暂无启动记录。' : `暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '符合条件的审计' : '注册账号'}记录。`}</div>`
+  return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${auditReturn}${auditFilters}${isInvitationPanel ? invitation : ''}${content}</section>`
 }
 
 async function refreshAdminPanel() {
@@ -1042,7 +1111,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'refresh-system-data', 'close-lab-details', 'open-admin-panel', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1052,6 +1121,53 @@ async function runAction(action, element) {
   }
   if (action === 'nav') { navigate(); return }
   if (action === 'refresh-system-data') { await refreshAdminOverview(); return }
+  if (action === 'retry-admin-records') {
+    const panel = element.dataset.panel
+    if (!['invitations', 'audit', 'users'].includes(panel)) return
+    state.adminError = ''
+    state.adminLoading = true
+    render()
+    if (panel === 'audit') await refreshAdminAudit()
+    else if (panel === 'users') await refreshAdminUsers()
+    else await refreshAdminPanel()
+    return
+  }
+  if (action === 'open-audit-for-date') {
+    const dateValue = element.dataset.activityDate ?? ''
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return
+    state.adminAuditReturnToSystem = {
+      date: dateValue,
+      scrollTop: document.querySelector('.admin-dialog-content')?.scrollTop ?? 0,
+    }
+    state.adminActivityDate = dateValue
+    state.adminAuditDate = dateValue
+    state.adminAuditAction = 'instance.start'
+    state.adminAuditExpandedId = null
+    state.adminSelectedRecordIds.audit = []
+    state.adminNextCursors.audit = null
+    state.adminTotals.audit = 0
+    state.adminView = 'audit'
+    state.adminRecordsPanel = 'audit'
+    state.adminLoading = true
+    state.adminError = ''
+    render()
+    await refreshAdminAudit()
+    return
+  }
+  if (action === 'return-to-system-data') {
+    returnToSystemData()
+    void refreshAdminOverview()
+    return
+  }
+  if (action === 'clear-audit-filters') {
+    await setAuditFilters('', '')
+    return
+  }
+  if (action === 'toggle-audit-detail') {
+    state.adminAuditExpandedId = state.adminAuditExpandedId === element.dataset.id ? null : element.dataset.id
+    render()
+    return
+  }
   if (action === 'open-system-lab') {
     const version = systemRequestVersion
     try { await refresh() } catch (error) { setToast(error.message, 'error'); return }
@@ -1094,6 +1210,7 @@ async function runAction(action, element) {
     const section = element.dataset.section
     if (!['invitations', 'audit', 'users', 'profile', 'system'].includes(section)) return
     if (!state.session || section !== 'profile' && state.session.role !== 'admin') return
+    if (section !== 'audit') state.adminAuditReturnToSystem = null
     state.adminView = section
     if (section === 'profile' || section === 'system') {
       state.adminRecordsPanel = null
@@ -1104,9 +1221,10 @@ async function runAction(action, element) {
     state.adminRecordsPanel = section
     state.adminSelectedRecordIds[section] = []
     state.adminError = ''
-    state.adminLoading = section === 'users'
+    state.adminLoading = section === 'users' || section === 'audit'
     render()
     if (section === 'users') await refreshAdminUsers()
+    if (section === 'audit') await refreshAdminAudit()
     return
   }
   if (action === 'close-admin-panel') {
@@ -1121,13 +1239,15 @@ async function runAction(action, element) {
   if (action === 'open-admin-records') {
     if (!['invitations', 'audit', 'users'].includes(element.dataset.panel)) return
     rememberAdminRecordsFocus(element)
+    state.adminAuditReturnToSystem = null
     state.adminView = element.dataset.panel
     state.adminRecordsPanel = element.dataset.panel
     state.adminSelectedRecordIds[state.adminRecordsPanel] = []
     state.adminError = ''
-    state.adminLoading = state.adminRecordsPanel === 'users'
+    state.adminLoading = state.adminRecordsPanel === 'users' || state.adminRecordsPanel === 'audit'
     render()
     if (state.adminRecordsPanel === 'users') await refreshAdminUsers()
+    if (state.adminRecordsPanel === 'audit') await refreshAdminAudit()
     return
   }
   if (action === 'close-admin-records') {
@@ -1264,7 +1384,7 @@ async function runAction(action, element) {
   }
   if (action === 'confirm-delete-audit-record') {
     beginBusy(action, element.dataset.id)
-    try { await request(`/api/audit/${element.dataset.id}`, { method: 'DELETE' }); state.adminSelectedRecordIds.audit = state.adminSelectedRecordIds.audit.filter(id => id !== element.dataset.id); state.adminLoading = true; setToast('审计记录已删除。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
+    try { await request(`/api/audit/${element.dataset.id}`, { method: 'DELETE' }); state.adminSelectedRecordIds.audit = state.adminSelectedRecordIds.audit.filter(id => id !== element.dataset.id); state.adminAuditExpandedId = null; state.adminLoading = true; setToast('审计记录已删除。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
     return
   }
   if (action === 'confirm-delete-selected-admin-records') {
@@ -1279,6 +1399,7 @@ async function runAction(action, element) {
       const result = await request(path, { method: 'DELETE', body: JSON.stringify(body) })
       if (result.deleted !== ids.length) throw new ApiError(`仅删除了 ${result.deleted ?? 0} 条记录，请刷新后重试。`, 409, 'RECORD_DELETE_INCOMPLETE')
       state.adminSelectedRecordIds[panel] = []
+      if (panel === 'audit') state.adminAuditExpandedId = null
       if (panel === 'invitations' && state.invitation && ids.includes(state.invitation.id)) state.invitation = null
       if (result.signedOut) {
         clearAuthenticatedState()
@@ -1334,7 +1455,7 @@ async function runAction(action, element) {
 
 app.addEventListener('click', event => {
   const activityCell = event.target.closest?.('[data-activity-date]')
-  if (activityCell) {
+  if (activityCell && !activityCell.dataset.action) {
     event.preventDefault()
     selectActivityDate(activityCell.dataset.activityDate, true)
     return
@@ -1366,7 +1487,13 @@ window.addEventListener('resize', updateLabCanvasScrollState)
 
 app.addEventListener('change', event => {
   const input = event.target
-  if (!(input instanceof HTMLInputElement)) return
+  if (!(input instanceof HTMLInputElement || input instanceof HTMLSelectElement)) return
+  if (input.dataset.auditFilter) {
+    const dateInput = app.querySelector('[data-audit-filter="date"]')
+    const actionInput = app.querySelector('[data-audit-filter="action"]')
+    void setAuditFilters(dateInput?.value ?? '', actionInput?.value ?? '')
+    return
+  }
   if (input.classList.contains('admin-activity-date')) {
     selectActivityDate(input.value)
     return
@@ -1485,6 +1612,12 @@ app.addEventListener('input', event => {
 })
 
 document.addEventListener('keydown', event => {
+  const auditSummary = event.target.closest?.('[data-action="toggle-audit-detail"]')
+  if (auditSummary && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault()
+    void runAction('toggle-audit-detail', auditSummary)
+    return
+  }
   const activityCell = event.target.closest?.('[data-activity-date]')
   if (activityCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
     const cells = [...document.querySelectorAll('[data-activity-date]')]
@@ -1502,6 +1635,7 @@ document.addEventListener('keydown', event => {
   if (!dialog) return
   if (event.key === 'Escape') {
     if (state.confirm) { state.confirm = null; render(); restoreConfirmFocus(); return }
+    else if (state.adminRecordsPanel === 'audit' && state.adminAuditReturnToSystem) { returnToSystemData(); void refreshAdminOverview(); return }
     else if (state.adminRecordsPanel) { state.adminRecordsPanel = null; state.adminView = 'profile'; render(); restoreAdminRecordsFocus(); return }
     else if (state.labDetailId) state.labDetailId = null
     else if (state.adminPanelOpen) { state.adminPanelOpen = false; state.adminView = 'profile'; render(); restoreModalFocus(); return }
@@ -1511,7 +1645,7 @@ document.addEventListener('keydown', event => {
     return
   }
   if (event.key !== 'Tab') return
-  const focusable = [...dialog.querySelectorAll('button, a[href], input, select, textarea')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
+  const focusable = [...dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(item => !item.disabled && item.tabIndex >= 0 && item.offsetParent !== null)
   if (!focusable.length) return
   const first = focusable[0]
   const last = focusable[focusable.length - 1]

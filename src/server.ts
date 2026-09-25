@@ -359,6 +359,32 @@ const requestRecordPage = (request: FastifyRequest, reply: FastifyReply): Record
   }
 }
 
+const requestAuditFilters = (request: FastifyRequest, reply: FastifyReply): { date?: string; action?: string } | null => {
+  const query = (request.query ?? {}) as { date?: unknown; action?: unknown }
+  let date: string | undefined
+  let action: string | undefined
+  if (query.date !== undefined) {
+    if (typeof query.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(query.date)) {
+      reply.code(400).send({ code: 'AUDIT_DATE_INVALID', message: '审计日期参数无效。' })
+      return null
+    }
+    const parsed = new Date(`${query.date}T00:00:00.000Z`)
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== query.date) {
+      reply.code(400).send({ code: 'AUDIT_DATE_INVALID', message: '审计日期参数无效。' })
+      return null
+    }
+    date = query.date
+  }
+  if (query.action !== undefined) {
+    if (typeof query.action !== 'string' || query.action.length > 64 || !/^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$/.test(query.action)) {
+      reply.code(400).send({ code: 'AUDIT_ACTION_INVALID', message: '审计操作类型参数无效。' })
+      return null
+    }
+    action = query.action
+  }
+  return { date, action }
+}
+
 const recordPageResponse = <T>(reply: FastifyReply, page: RecordPage<T>) => {
   reply.header('X-VulnLab-Record-Total', String(page.total))
   if (page.nextCursor) reply.header('X-VulnLab-Next-Cursor', Buffer.from(JSON.stringify(page.nextCursor)).toString('base64url'))
@@ -963,8 +989,10 @@ app.get('/api/audit', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
   const page = requestRecordPage(request, reply)
   if (!page) return
+  const filters = requestAuditFilters(request, reply)
+  if (!filters) return
   reply.header('Cache-Control', 'no-store')
-  return recordPageResponse(reply, database.listAudit(page))
+  return recordPageResponse(reply, database.listAudit(page, filters))
 })
 
 app.delete('/api/audit', async (request, reply) => {

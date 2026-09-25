@@ -191,6 +191,12 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   activityInsert.run('activity-today-b', 'vulnlab', 'instance.start', 'DVWA', 'activity-b', localTimestamp(0))
   activityInsert.run('activity-yesterday', 'vulnlab', 'instance.start', 'Upload-Labs', 'activity-c', localTimestamp(-1))
   activityInsert.run('activity-old', 'vulnlab', 'instance.start', 'DVWA', 'activity-old', localTimestamp(-400))
+  activityInsert.run('activity-failed', 'vulnlab', 'instance.start.failed', 'DVWA', 'activity-failed', localTimestamp(0))
+  const localDate = value => {
+    const parsed = new Date(value)
+    const pad = part => String(part).padStart(2, '0')
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`
+  }
   const activityOverview = database.overviewActivity()
   assert.equal(activityOverview.daily.length, 365)
   assert.equal(activityOverview.launchCount, 3)
@@ -200,6 +206,18 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(activityOverview.daily.at(-1)?.count, 2)
   assert.equal(activityOverview.daily.at(-2)?.count, 1)
   assert.deepEqual(activityOverview.ranking.slice(0, 2).map(item => [item.title, item.count]), [['DVWA', 2], ['Upload-Labs', 1]])
+  const todayAudit = database.listAudit({ limit: 50, cursor: null }, { date: localDate(localTimestamp(0)), action: 'instance.start' })
+  assert.equal(todayAudit.total, 2)
+  assert.equal(todayAudit.items.length, 2)
+  assert.ok(todayAudit.items.every(item => item.action === 'instance.start'))
+  assert.equal(database.listAudit({ limit: 50, cursor: null }, { date: localDate(localTimestamp(-1)), action: 'instance.start' }).total, 1)
+  assert.equal(database.listAudit({ limit: 50, cursor: null }, { date: '2024-02-29', action: 'instance.start' }).total, 0)
+  const leapTimestamp = new Date(2024, 1, 29, 12, 0, 0, 0).toISOString()
+  const marchTimestamp = new Date(2024, 2, 1, 12, 0, 0, 0).toISOString()
+  activityInsert.run('activity-leap-day', 'vulnlab', 'instance.start', 'DVWA', 'activity-leap-day', leapTimestamp)
+  activityInsert.run('activity-after-leap-day', 'vulnlab', 'instance.start', 'DVWA', 'activity-after-leap-day', marchTimestamp)
+  assert.equal(database.listAudit({ limit: 50, cursor: null }, { date: localDate(leapTimestamp), action: 'instance.start' }).total, 1)
+  assert.equal(database.listAudit({ limit: 50, cursor: null }, { date: localDate(marchTimestamp), action: 'instance.start' }).total, 1)
 
   const retryInstance = database.createInstance({
     id: 'retry-expired-instance-fixture',
@@ -256,6 +274,18 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   const auditNextPage = database.listAudit({ limit: 50, cursor: auditPage.nextCursor })
   assertSecondPage(auditPage, auditNextPage, pagedAuditDetails, 'detail')
   assert.ok(auditPage.total >= pagedAuditDetails.length)
+
+  const filteredPageDate = localDate(localTimestamp(-3))
+  for (let index = 0; index < 51; index += 1) {
+    activityInsert.run(`filtered-page-${index}`, 'vulnlab', 'instance.start', 'Filtered Fixture', `filtered page ${index}`, localTimestamp(-3))
+  }
+  const filteredPage = database.listAudit({ limit: 50, cursor: null }, { date: filteredPageDate, action: 'instance.start' })
+  const filteredNextPage = database.listAudit({ limit: 50, cursor: filteredPage.nextCursor }, { date: filteredPageDate, action: 'instance.start' })
+  assert.equal(filteredPage.total, 51)
+  assert.equal(filteredPage.items.length, 50)
+  assert.equal(filteredNextPage.items.length, 1)
+  assert.equal(filteredNextPage.total, 51)
+  assert.equal(new Set([...filteredPage.items, ...filteredNextPage.items].map(item => item.id)).size, 51)
 } finally {
   database.close()
   await rm(dataDir, { recursive: true, force: true })

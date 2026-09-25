@@ -33,6 +33,16 @@ try {
   const cookieHeader = login.headers['set-cookie']
   const cookie = (Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader)?.split(';', 1)[0]
   assert.ok(cookie)
+  const invalidAuditDate = await app.inject({ method: 'GET', url: '/api/audit?date=2024-02-30', headers: { cookie } })
+  assert.equal(invalidAuditDate.statusCode, 400)
+  assert.equal(invalidAuditDate.json().code, 'AUDIT_DATE_INVALID')
+  const invalidAuditAction = await app.inject({ method: 'GET', url: '/api/audit?action=instance.start%20bad', headers: { cookie } })
+  assert.equal(invalidAuditAction.statusCode, 400)
+  assert.equal(invalidAuditAction.json().code, 'AUDIT_ACTION_INVALID')
+  const validAuditFilter = await app.inject({ method: 'GET', url: '/api/audit?action=instance.start', headers: { cookie } })
+  assert.equal(validAuditFilter.statusCode, 200)
+  assert.ok(Array.isArray(validAuditFilter.json()))
+  assert.ok(validAuditFilter.headers['x-vulnlab-record-total'] !== undefined)
   const instanceId = 'expired-native-instance'
   const started = database.createInstance({
     id: instanceId,

@@ -55,6 +55,11 @@ export interface RecordPageOptions {
   cursor: RecordCursor | null
 }
 
+export interface AuditFilters {
+  date?: string
+  action?: string
+}
+
 export interface RecordPage<T> {
   items: T[]
   nextCursor: RecordCursor | null
@@ -859,16 +864,25 @@ export class VulnLabDatabase {
     this.db.prepare('INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), actor, action, target, detail, now())
   }
 
-  listAudit(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<{ id: string, actor: string, action: string, target: string, detail: string, createdAt: string }> {
+  listAudit(options: RecordPageOptions = { limit: 100, cursor: null }, filters: AuditFilters = {}): RecordPage<{ id: string, actor: string, action: string, target: string, detail: string, createdAt: string }> {
     const cursor = options.cursor
+    const dateFilter = filters.date ?? null
+    const actionFilter = filters.action ?? null
     const rows = this.db.prepare(`
       SELECT id, actor, action, target, detail, created_at AS createdAt
       FROM audit
-      WHERE ? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)
+      WHERE (? IS NULL OR date(created_at, 'localtime') = ?)
+        AND (? IS NULL OR action = ?)
+        AND (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?))
       ORDER BY created_at DESC, id DESC
       LIMIT ?
-    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as { id: string, actor: string, action: string, target: string, detail: string, createdAt: string }[]
-    const total = Number((this.db.prepare('SELECT COUNT(*) AS count FROM audit').get() as { count: number }).count)
+    `).all(dateFilter, dateFilter, actionFilter, actionFilter, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as { id: string, actor: string, action: string, target: string, detail: string, createdAt: string }[]
+    const total = Number((this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM audit
+      WHERE (? IS NULL OR date(created_at, 'localtime') = ?)
+        AND (? IS NULL OR action = ?)
+    `).get(dateFilter, dateFilter, actionFilter, actionFilter) as { count: number }).count)
     return pageResult(rows, options, total, item => item.id)
   }
 

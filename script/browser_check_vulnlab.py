@@ -456,7 +456,7 @@ def main() -> None:
         first_activity_cell = page.locator("[data-activity-date]").first
         first_activity_date = first_activity_cell.get_attribute("data-activity-date")
         assert first_activity_date
-        first_activity_cell.click()
+        first_activity_cell.focus()
         expect(first_activity_cell).to_have_attribute("tabindex", "0")
         first_activity_cell.press("End")
         last_activity_date = page.locator("[data-activity-date]").last.get_attribute("data-activity-date")
@@ -487,6 +487,32 @@ def main() -> None:
             expect(populated_day).to_have_class(re.compile("is-level-4"))
             populated_day.press("ArrowUp")
             expect(page.locator(".admin-activity-selection")).to_contain_text("0 次启动")
+            with page.expect_response(lambda response: "/api/audit?" in response.url and f"date={last_activity_date}" in response.url and "action=instance.start" in response.url and response.request.method == "GET") as filtered_audit_response_info:
+                populated_day.click()
+            assert filtered_audit_response_info.value.headers.get("x-vulnlab-record-total") == "19"
+            expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+            expect(page.locator('[data-audit-filter="date"]')).to_have_value(last_activity_date)
+            expect(page.locator('[data-audit-filter="action"]')).to_have_value("instance.start")
+            expect(page.locator(".audit-entry")).to_have_count(19)
+            expect(page.locator('.audit-entry[data-id="system-fixture-0-0"]')).to_have_count(1)
+            audit_summary = page.locator('.audit-entry[data-id="system-fixture-0-0"]').locator('[data-action="toggle-audit-detail"]')
+            audit_summary.press("Enter")
+            expect(page.locator(".audit-entry-detail")).to_have_count(1)
+            expect(page.locator(".audit-entry-detail")).to_contain_text(initial_labs_payload[0]["title"])
+            second_audit_summary = page.locator(".audit-entry").nth(1).locator('[data-action="toggle-audit-detail"]')
+            second_audit_summary.click()
+            expect(page.locator(".audit-entry-detail")).to_have_count(1)
+            expect(page.locator('[data-action="clear-audit-filters"]')).to_be_visible()
+            page.locator('[data-action="clear-audit-filters"]').click()
+            expect(page.locator('[data-audit-filter="date"]')).to_have_value("")
+            expect(page.locator('[data-audit-filter="action"]')).to_have_value("")
+            page.locator('[data-action="return-to-system-data"]').click()
+            expect(page.locator('[data-admin-dialog-view="system"]')).to_be_visible()
+            expect(page.locator(f'[data-activity-date="{last_activity_date}"]')).to_have_attribute("tabindex", "0")
+            page.locator(f'[data-activity-date="{last_activity_date}"]').click()
+            expect(page.locator('[data-admin-dialog-view="audit"]')).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(page.locator('[data-admin-dialog-view="system"]')).to_be_visible()
             for width, height in [(1440, 900), (768, 1024), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
                 page.set_viewport_size({"width": width, "height": height})
                 expect(page.locator("[data-activity-date]")).to_have_count(365)
@@ -739,8 +765,19 @@ def main() -> None:
         for user_name in account_names[3:]:
             expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
         account_context.close()
+        def fail_audit_records(route):
+            route.fulfill(status=503, content_type="application/json", body=json.dumps({"message": "测试审计服务暂不可用"}))
+
+        page.route("**/api/audit*", fail_audit_records)
         audit_button.click()
         expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+        expect(page.locator(".admin-inline-error")).to_contain_text("测试审计服务暂不可用")
+        expect(page.locator('[data-action="retry-admin-records"]')).to_be_visible()
+        page.unroute("**/api/audit*", fail_audit_records)
+        page.locator('[data-action="retry-admin-records"]').click()
+        expect(page.locator(".audit-entry")).to_have_count(50)
+        if page.locator('[data-action="clear-audit-filters"]:not([disabled])').count():
+            page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
         audit_dialog_box = page.locator('.admin-dialog').bounding_box()
         assert audit_dialog_box and round(audit_dialog_box["width"]) == 720 and round(audit_dialog_box["height"]) == 520, audit_dialog_box
         expect(page.locator(".audit-entry")).to_have_count(50)
