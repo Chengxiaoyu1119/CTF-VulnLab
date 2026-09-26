@@ -453,6 +453,14 @@ def main() -> None:
         expect(page.locator(".admin-system-stat")).to_have_count(4)
         expect(page.locator("[data-activity-date]")).to_have_count(365)
         expect(page.locator(".admin-system-empty")).to_have_count(1)
+        system_empty_style = page.locator(".admin-system-empty").evaluate(
+            "element => ({ fontSize: getComputedStyle(element).fontSize, color: getComputedStyle(element).color, paddingBlock: getComputedStyle(element).paddingBlock })"
+        )
+        assert system_empty_style == {"fontSize": "11px", "color": "rgb(153, 153, 153)", "paddingBlock": "8px"}, system_empty_style
+        system_stat_label_style = page.locator(".admin-system-stat span").first.evaluate(
+            "element => ({ fontSize: getComputedStyle(element).fontSize, color: getComputedStyle(element).color })"
+        )
+        assert system_stat_label_style == {"fontSize": "11px", "color": "rgb(153, 153, 153)"}, system_stat_label_style
         first_activity_cell = page.locator("[data-activity-date]").first
         first_activity_date = first_activity_cell.get_attribute("data-activity-date")
         assert first_activity_date
@@ -505,10 +513,15 @@ def main() -> None:
             page.keyboard.press("Escape")
             expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
             expect(page.locator(".admin-action-select[open]")).to_have_count(0)
-            action_picker.locator("summary").click()
+            action_picker.locator("summary").focus()
+            page.keyboard.press("Enter")
+            expect(action_picker.locator(".admin-action-options")).to_be_visible()
+            action_picker.get_by_role("button", name="启动靶场", exact=True).focus()
             with page.expect_response(lambda response: "/api/audit?" in response.url and "action=instance.start" in response.url and response.request.method == "GET"):
-                action_picker.get_by_role("button", name="启动靶场", exact=True).click()
+                page.keyboard.press("Enter")
             expect(page.locator(".admin-action-select")).to_have_attribute("data-audit-action-filter", "instance.start")
+            expect(action_picker.locator("summary")).to_be_focused()
+            expect(page.locator(".admin-action-select[open]")).to_have_count(0)
             expect(page.locator(".audit-entry")).to_have_count(19)
             expect(page.locator('.audit-entry[data-id="system-fixture-0-0"]')).to_have_count(1)
             audit_summary = page.locator('.audit-entry[data-id="system-fixture-0-0"]').locator('[data-action="toggle-audit-detail"]')
@@ -581,9 +594,9 @@ def main() -> None:
         expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         expect(page.locator(".admin-empty-state")).to_be_visible()
         empty_state_style = page.locator(".admin-empty-state").evaluate(
-            "element => ({ borderStyle: getComputedStyle(element).borderStyle, backgroundColor: getComputedStyle(element).backgroundColor })"
+            "element => ({ borderStyle: getComputedStyle(element).borderStyle, backgroundColor: getComputedStyle(element).backgroundColor, paddingBlock: getComputedStyle(element).paddingBlock, color: getComputedStyle(element).color })"
         )
-        assert empty_state_style == {"borderStyle": "dashed", "backgroundColor": "rgb(25, 25, 25)"}, empty_state_style
+        assert empty_state_style == {"borderStyle": "dashed", "backgroundColor": "rgba(0, 0, 0, 0)", "paddingBlock": "9px", "color": "rgb(160, 160, 160)"}, empty_state_style
         empty_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, overflowY: getComputedStyle(element).overflowY })"
         )
@@ -623,6 +636,13 @@ def main() -> None:
         if page.locator(".admin-record-pagination").count():
             expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
         assert page.locator(".admin-record-toolbar").evaluate("element => getComputedStyle(element).position") == "sticky"
+        for width, height in [(1440, 900), (768, 1024), (600, 844), (390, 844), (320, 568)]:
+            page.set_viewport_size({"width": width, "height": height})
+            assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
+            assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth"), width
+            expect(page.locator(".invitation-history-card")).to_have_count(52)
+            expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
+        page.set_viewport_size({"width": 1440, "height": 900})
         invitation_visible_rows = page.locator(".invitation-history-card").evaluate_all(
             """elements => {
                 const panel = document.querySelector('.admin-dialog-content').getBoundingClientRect()
@@ -793,6 +813,10 @@ def main() -> None:
         page.unroute("**/api/audit*", fail_audit_records)
         page.locator('[data-action="retry-admin-records"]').click()
         expect(page.locator(".audit-entry")).to_have_count(50)
+        audit_filter_label_style = page.locator(".admin-record-filter").first.evaluate(
+            "element => ({ fontSize: getComputedStyle(element).fontSize, color: getComputedStyle(element).color })"
+        )
+        assert audit_filter_label_style == {"fontSize": "11px", "color": "rgb(153, 153, 153)"}, audit_filter_label_style
         if page.locator('[data-action="clear-audit-filters"]:not([disabled])').count():
             page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
         audit_dialog_box = page.locator('.admin-dialog').bounding_box()
@@ -855,8 +879,13 @@ def main() -> None:
             }"""
         )
         assert long_actor_layout == {"rowFits": True, "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}, long_actor_layout
-        page.set_viewport_size({"width": 390, "height": 844})
-        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        for width, height in [(1440, 900), (768, 1024), (600, 844), (390, 844), (320, 568)]:
+            page.set_viewport_size({"width": width, "height": height})
+            assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
+            assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth"), width
+            expect(page.locator(".audit-entry").first).to_be_visible()
+            expect(page.locator('[data-audit-filter="date"]')).to_be_visible()
+            expect(page.locator(".admin-action-select > summary")).to_be_visible()
         mobile_audit_layout = page.locator(".audit-entry-content").first.evaluate(
             "element => ({ display: getComputedStyle(element).display, rows: getComputedStyle(element).gridTemplateRows })"
         )
@@ -1517,6 +1546,14 @@ def main() -> None:
         reduced_page.get_by_role("button", name="登录系统", exact=True).click()
         expect(reduced_page.locator(".workspace-brand-mark")).to_be_visible()
         assert reduced_page.locator(".workspace-brand-mark").evaluate("element => element.complete && element.naturalWidth > 0")
+        reduced_page.get_by_role("button", name="管理中心", exact=True).click()
+        expect(reduced_page.get_by_role("dialog", name="管理中心")).to_be_visible()
+        with reduced_page.expect_response(lambda response: response.url.endswith("/api/auth/logout") and response.request.method == "POST") as logout_response_info:
+            reduced_page.get_by_role("button", name="退出系统", exact=True).click()
+        assert logout_response_info.value.status == 200
+        expect(reduced_page.locator(".admin-dialog")).to_have_count(0)
+        expect(reduced_page.locator(".login-form")).to_be_visible()
+        expect(reduced_page.locator(".labs-screen")).to_have_count(0)
         reduced_page.close()
         reduced_context.close()
         page.emulate_media(reduced_motion="no-preference")
