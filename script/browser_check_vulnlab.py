@@ -492,7 +492,23 @@ def main() -> None:
             assert filtered_audit_response_info.value.headers.get("x-vulnlab-record-total") == "19"
             expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
             expect(page.locator('[data-audit-filter="date"]')).to_have_value(last_activity_date)
-            expect(page.locator('[data-audit-filter="action"]')).to_have_value("instance.start")
+            action_picker = page.locator(".admin-action-select")
+            expect(action_picker).to_have_attribute("data-audit-action-filter", "instance.start")
+            expect(action_picker.locator("summary")).to_contain_text("启动靶场")
+            assert page.locator('[data-audit-filter="date"]').evaluate("element => getComputedStyle(element).colorScheme") == "dark"
+            action_picker.locator("summary").click()
+            expect(action_picker.locator(".admin-action-options")).to_be_visible()
+            action_menu_geometry = action_picker.evaluate(
+                "element => { const trigger = element.querySelector('summary').getBoundingClientRect(); const menu = element.querySelector('.admin-action-options').getBoundingClientRect(); return { left: Math.round(menu.left - trigger.left), top: Math.round(menu.top - trigger.bottom), background: getComputedStyle(element.querySelector('.admin-action-options')).backgroundColor }; }"
+            )
+            assert action_menu_geometry == {"left": 0, "top": 4, "background": "rgb(32, 32, 32)"}, action_menu_geometry
+            page.keyboard.press("Escape")
+            expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+            expect(page.locator(".admin-action-select[open]")).to_have_count(0)
+            action_picker.locator("summary").click()
+            with page.expect_response(lambda response: "/api/audit?" in response.url and "action=instance.start" in response.url and response.request.method == "GET"):
+                action_picker.get_by_role("button", name="启动靶场", exact=True).click()
+            expect(page.locator(".admin-action-select")).to_have_attribute("data-audit-action-filter", "instance.start")
             expect(page.locator(".audit-entry")).to_have_count(19)
             expect(page.locator('.audit-entry[data-id="system-fixture-0-0"]')).to_have_count(1)
             audit_summary = page.locator('.audit-entry[data-id="system-fixture-0-0"]').locator('[data-action="toggle-audit-detail"]')
@@ -503,9 +519,10 @@ def main() -> None:
             second_audit_summary.click()
             expect(page.locator(".audit-entry-detail")).to_have_count(1)
             expect(page.locator('[data-action="clear-audit-filters"]')).to_be_visible()
+            page.locator(".admin-action-select > summary").click()
             page.locator('[data-action="clear-audit-filters"]').click()
             expect(page.locator('[data-audit-filter="date"]')).to_have_value("")
-            expect(page.locator('[data-audit-filter="action"]')).to_have_value("")
+            expect(page.locator(".admin-action-select")).to_have_attribute("data-audit-action-filter", "")
             page.locator('[data-action="return-to-system-data"]').click()
             expect(page.locator('[data-admin-dialog-view="system"]')).to_be_visible()
             expect(page.locator(f'[data-activity-date="{last_activity_date}"]')).to_have_attribute("tabindex", "0")
@@ -810,10 +827,6 @@ def main() -> None:
         )
         audit_action_column = float(audit_layout["columns"].split()[0].removesuffix("px"))
         assert audit_layout["display"] == "grid" and audit_layout["gap"] == "16px" and audit_action_column >= 118, audit_layout
-        audit_select_alignment = page.locator('[data-admin-select-all="audit"]').evaluate(
-            "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"audit\"]').getBoundingClientRect().left })"
-        )
-        assert abs(audit_select_alignment["toolbar"] - audit_select_alignment["row"]) <= 1, audit_select_alignment
         audit_alignment = page.locator(".audit-entry").evaluate_all(
             """elements => {
                 const position = selector => elements.slice(0, 5).map(element => Math.round(element.querySelector(selector).getBoundingClientRect().left))
@@ -858,6 +871,19 @@ def main() -> None:
             batch_audit_ids.append(record.get_attribute("data-id"))
             record.locator('[data-admin-record-select="audit"]').check()
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
+        assert page.locator(".admin-record-filters").evaluate(
+            "element => element.firstElementChild === element.querySelector('[data-admin-select-all=\"audit\"]')?.closest('label')"
+        )
+        audit_toolbar_bottoms = page.locator(".admin-record-filters").evaluate(
+            """element => ['[data-admin-select-all="audit"]', '[data-audit-filter="date"]', '.admin-action-select', '[data-action="clear-audit-filters"]', '.admin-selection-count', '.admin-bulk-delete']
+                .map(selector => {
+                    const item = element.querySelector(selector)
+                    return (item?.matches('input[type="checkbox"]') ? item.closest('label') : item)?.getBoundingClientRect().bottom
+                })
+                .filter(value => value !== undefined)
+                .map(Math.round)"""
+        )
+        assert len(audit_toolbar_bottoms) == 6 and max(audit_toolbar_bottoms) - min(audit_toolbar_bottoms) <= 1, audit_toolbar_bottoms
         page.get_by_role("button", name="删除所选", exact=True).click()
         audit_bulk_confirm = page.get_by_role("dialog", name="删除选中的审计记录")
         expect(audit_bulk_confirm).to_be_visible()
