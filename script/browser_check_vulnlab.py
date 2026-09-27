@@ -456,7 +456,12 @@ def main() -> None:
         expect(page.locator(".admin-user-entry")).to_have_count(1)
         expect(page.locator(".admin-user-system .admin-user-avatar")).to_have_count(1)
         assert page.locator(".admin-user-system .admin-user-avatar").evaluate("image => image.complete && image.naturalWidth > 0")
-        expect(page.locator(".admin-user-system")).to_contain_text("内置")
+        expect(page.locator(".admin-user-system")).not_to_contain_text("系统内置账号")
+        expect(page.locator(".admin-user-system-tag, .admin-user-system-note")).to_have_count(0)
+        centered_identity = page.locator(".admin-user-system").evaluate(
+            "element => { const main = element.closest('.admin-dialog-main').getBoundingClientRect(); const profile = element.querySelector('.admin-user-system-profile').getBoundingClientRect(); return Math.abs((main.left + main.width / 2) - (profile.left + profile.width / 2)); }"
+        )
+        assert centered_identity <= 1, centered_identity
         expect(page.locator(".admin-user-system [data-admin-record-select], .admin-user-system .record-delete")).to_have_count(0)
         expect(page.locator(".admin-user-table-head")).to_have_count(0)
         expect(page.locator(".user-history")).to_be_visible()
@@ -523,6 +528,16 @@ def main() -> None:
             expect(action_picker).to_have_attribute("data-audit-action-filter", "instance.start")
             expect(action_picker.locator("summary")).to_contain_text("启动靶场")
             assert page.locator('[data-audit-filter="date"]').evaluate("element => getComputedStyle(element).colorScheme") == "dark"
+            assert page.locator(".admin-record-filters").evaluate("element => getComputedStyle(element).paddingLeft") == "8px"
+            date_focus_style = page.locator('[data-audit-filter="date"]').evaluate(
+                "element => { element.focus(); const style = getComputedStyle(element); return { outlineColor: style.outlineColor, boxShadow: style.boxShadow }; }"
+            )
+            assert date_focus_style == {"outlineColor": "rgb(119, 119, 119)", "boxShadow": "none"}, date_focus_style
+            page.locator('[data-audit-filter="date"]').click()
+            date_mouse_focus_style = page.locator('[data-audit-filter="date"]').evaluate(
+                "element => ({ focused: element.matches(':focus'), boxShadow: getComputedStyle(element).boxShadow })"
+            )
+            assert date_mouse_focus_style == {"focused": True, "boxShadow": "none"}, date_mouse_focus_style
             action_picker.locator("summary").click()
             expect(action_picker.locator(".admin-action-options")).to_be_visible()
             action_menu_geometry = action_picker.evaluate(

@@ -928,7 +928,7 @@ function adminRecordsPanel() {
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const userRows = isUserPanel ? records.map(item => {
     if (item.kind === 'system') {
-      return `<div class="admin-user-entry admin-user-system" data-id="${esc(item.userName)}" data-kind="system"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong><span class="admin-user-role">默认管理员</span></div><span class="admin-user-system-note">系统内置账号</span></div><span class="admin-user-system-tag">内置</span></div>`
+      return `<div class="admin-user-entry admin-user-system" data-id="${esc(item.userName)}" data-kind="system"><div class="admin-user-system-profile"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong><span class="admin-user-role">默认管理员</span></div></div></div></div>`
     }
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
