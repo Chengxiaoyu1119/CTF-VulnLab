@@ -4,31 +4,50 @@
   <img src="src/public/favicon.png" width="88" alt="VulnLab Logo">
   <h1>VulnLab · 攻防控制台</h1>
   <p><strong>把主流开源安全训练环境装进一个真正可启动的单机工作台。</strong></p>
-  <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 单服务器部署</p>
+  <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 管理数据可追踪</p>
 
   [![VulnLab CI](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg)](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml)
+  [![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows&logoColor=white)](#快速开始)
   [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
   [![Fastify](https://img.shields.io/badge/Fastify-5-111111?logo=fastify&logoColor=white)](https://fastify.dev/)
   [![SQLite](https://img.shields.io/badge/SQLite-单文件-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
+  [![License](https://img.shields.io/badge/license-Apache--2.0-2E7D32)](LICENSE)
 </div>
 
 <p align="center">
-  <a href="#项目是什么">项目是什么</a> ·
+  <a href="#工作台能力">工作台能力</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#内置靶场">内置靶场</a> ·
   <a href="#运行原理">运行原理</a> ·
-  <a href="#测试">测试</a> ·
-  <a href="#单服务器部署">部署</a>
+  <a href="#开发与验证">开发与验证</a> ·
+  <a href="#项目文档">项目文档</a>
 </p>
 
-![VulnLab 攻防控制台](.github/assets/vulnlab-workspace.png)
+<p align="center"><img src=".github/assets/vulnlab-workspace.png" alt="VulnLab 靶场工作台：九个安全训练环境" width="100%"></p>
 
 ## 项目是什么
 
-VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面端以三列可滚动目录呈现内置和后续新增的训练环境，用户从详情弹窗点击“启动环境”即可完成准备、启动、访问和停止。
+VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面端以三列目录呈现内置和后续新增的训练环境；从靶场详情启动后，服务会准备固定版本资源与所需运行时，再启动独立运行副本。管理操作也留在同一工作台，不把训练流程拆散成多个后台页面。
 
 当前代码处于开发基线，当前版本为 `0.1.0`。主服务采用 Node.js 原生运行，当前只维护 Windows x64 本地运行链路。
+
+## 工作台能力
+
+<table>
+  <tr>
+    <td align="center" width="25%"><strong>09</strong><br>内置训练环境</td>
+    <td align="center" width="25%"><strong>05</strong><br>按需准备的运行时</td>
+    <td align="center" width="25%"><strong>365 天</strong><br>启动活动与靶场排行</td>
+    <td align="center" width="25%"><strong>01 次</strong><br>邀请码使用并可追踪</td>
+  </tr>
+</table>
+
+| 训练工作台 | 管理中心 |
+| --- | --- |
+| 靶场目录、详情、准备状态、启动、访问、续期与停止 | 个人中心、系统数据、账号管理、审计记录、邀请管理 |
+| 固定版本来源，首次启动时按需准备资源 | 活动热力图可跳转到当天成功启动审计；邀请码记录使用账号与时间 |
+| PHP、Node.js、Java、Python 与 MariaDB 按靶场选择 | 分页、筛选、键盘操作与窄屏布局共用同一弹窗体验 |
 
 大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务先把原始包写入项目内 `src/data/imports/<job>/staging` 或 `src/data/runtime/.staging`，完成体积、路径和 SHA-256 校验后才进入 `src/data`。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
 
@@ -60,7 +79,9 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | --- | --- |
 | `vulnlab` | `vulnlab` |
 
-管理员登录后可点击工作台左侧品牌名称打开管理中心，生成 24 小时有效、一次性的邀请码，也可以复制或撤销尚未使用的邀请码；同一入口提供退出登录。注册账号暂时统一为管理员，不增加独立用户管理页面。生产部署仍需通过 `VULNLAB_ADMIN_PASSWORD` 设置独立管理员密码，并设置 Cookie secret；生产环境不使用本地默认密码。
+管理员登录后点击工作台左上角的 `VulnLab` 可打开管理中心：个人中心展示当前账号；系统数据汇总靶场就绪与运行状态、最近 365 天成功启动热力图和使用排行；账号管理列出默认管理员与注册账号；审计记录支持日期和操作类型筛选；邀请管理可生成、复制、撤销邀请码并查看使用情况。热力图选中日期可直接进入当天的成功启动记录。
+
+邀请码有效 24 小时且只能使用一次，明文只在生成时展示一次。新注册成功后，邀请记录会保存使用者账号与时间；旧版已使用记录若没有使用者快照，会明确显示为历史记录，不会猜测补写。已使用的邀请码保留为追溯记录，不可删除。注册账号目前统一为管理员。生产部署必须设置至少 12 字符的 `VULNLAB_ADMIN_PASSWORD` 和至少 32 字符的 `VULNLAB_COOKIE_SECRET`；生产环境不使用本地默认密码。
 
 ## 内置靶场
 
@@ -94,19 +115,47 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 
 ```mermaid
 flowchart LR
-    UI[原生 JavaScript / CSS 工作台] --> API[Fastify API]
-    API --> DB[(SQLite)]
-    API --> INSTALL[内置安装器 / Source Adapter]
-    API --> RUN[Provider Registry]
-    API --> TOOLCHAIN[运行时下载 / SHA-256]
-    INSTALL --> FIXED[固定版本与完整性清单]
-    FIXED --> DATA[data/labs]
-    TOOLCHAIN --> RUNTIME[data/runtime/toolchains]
-    RUN --> PHP[native-php]
-    RUN --> NODE[native-node]
-    RUN --> JAVA[native-java]
-    RUN --> PY[native-python]
-    PHP --> MYSQL[(每实例 MySQL 资源)]
+    subgraph CLIENT[本地工作台]
+        UI[靶场目录与管理中心]
+    end
+    subgraph CONTROL[VulnLab 控制面]
+        API[Fastify API]
+        DB[(SQLite)]
+        PREP[资源准备与运行时校验]
+        PROVIDERS[Provider Registry]
+    end
+    subgraph LOCAL[项目数据目录]
+        SOURCES[固定版本靶场资源]
+        TOOLCHAINS[Node / PHP / MariaDB / Java / Python]
+        INSTANCES[运行副本与实例状态]
+    end
+    subgraph LABS[本机训练进程]
+        PHP[native-php]
+        NODE[native-node]
+        JAVA[native-java]
+        PY[native-python]
+        MYSQL[(每实例 MySQL 资源)]
+    end
+    UI --> API
+    API <--> DB
+    API --> PREP
+    PREP --> SOURCES
+    PREP --> TOOLCHAINS
+    API --> PROVIDERS
+    PROVIDERS --> INSTANCES
+    INSTANCES --> PHP
+    INSTANCES --> NODE
+    INSTANCES --> JAVA
+    INSTANCES --> PY
+    PHP --> MYSQL
+    classDef ui fill:#20272d,stroke:#668099,color:#f5f5f5
+    classDef control fill:#2b231c,stroke:#ff7f2a,color:#f5f5f5
+    classDef data fill:#202823,stroke:#62b889,color:#f5f5f5
+    classDef process fill:#222329,stroke:#8487a0,color:#f5f5f5
+    class UI ui
+    class API,PREP,PROVIDERS control
+    class DB,SOURCES,TOOLCHAINS,INSTANCES data
+    class PHP,NODE,JAVA,PY,MYSQL process
 ```
 
 - 后端：Node.js 22、TypeScript、Fastify。
@@ -137,7 +186,7 @@ CTF-VulnLab/
 └─ .github/workflows/         持续集成
 ```
 
-## 测试
+## 开发与验证
 
 ```powershell
 cd src
@@ -177,6 +226,15 @@ GitHub CI 当前在 Windows runner 上执行类型检查、构建、fixture 测�
 - XVWA 使用官方固定 commit 导入，启动时在独立 PHP 副本内完成数据库初始化，并通过 `/xvwa/` 入口访问。
 - 原生进程提供练习副本和生命周期回收，但操作系统级隔离弱于虚拟机。
 
+## 项目文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [设计说明](DESIGN.md) | 页面契约、视觉规则、响应式验收与交互状态 |
+| [Node 应用开发与运行手册](src/README.md) | 模块边界、配置、数据与运行时准备、管理接口 |
+| [靶场封面素材来源](src/public/covers/README.md) | 上游图片、标识与来源链接 |
+| [许可证](LICENSE) | 项目自有代码采用 Apache License 2.0 |
+
 ## 许可证
 
-项目自有代码采用 Apache License 2.0。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
+项目自有代码采用 [Apache License 2.0](LICENSE)。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
