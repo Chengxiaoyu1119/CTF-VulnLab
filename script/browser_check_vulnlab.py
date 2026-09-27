@@ -446,6 +446,25 @@ def main() -> None:
         expect(invitation_button).to_have_count(1)
         expect(audit_button).to_have_count(1)
         expect(account_button).to_have_count(1)
+        with page.expect_response(lambda response: response.url.endswith("/api/auth/users") and response.request.method == "GET") as initial_users_response_info:
+            account_button.click()
+        initial_users = initial_users_response_info.value.json()
+        assert initial_users == [{"kind": "system", "userName": "vulnlab", "createdAt": None}], initial_users
+        assert initial_users_response_info.value.headers.get("x-vulnlab-record-total") == "1"
+        assert initial_users_response_info.value.headers.get("x-vulnlab-next-cursor") is None
+        expect(page.locator('.admin-user-entry[data-kind="system"][data-id="vulnlab"]')).to_have_count(1)
+        expect(page.locator(".admin-user-entry")).to_have_count(1)
+        expect(page.locator(".admin-user-system .admin-user-avatar")).to_have_count(1)
+        assert page.locator(".admin-user-system .admin-user-avatar").evaluate("image => image.complete && image.naturalWidth > 0")
+        expect(page.locator(".admin-user-system")).to_contain_text("内置")
+        expect(page.locator(".admin-user-system [data-admin-record-select], .admin-user-system .record-delete")).to_have_count(0)
+        expect(page.locator(".admin-user-table-head")).to_have_count(0)
+        expect(page.locator(".user-history")).to_be_visible()
+        expect(page.locator(".admin-user-empty")).to_have_text("暂无注册账号")
+        system_account_style = page.locator(".admin-user-system").evaluate(
+            "element => ({ borderWidth: getComputedStyle(element).borderWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor })"
+        )
+        assert system_account_style == {"borderWidth": "0px", "borderRadius": "8px", "backgroundColor": "rgb(35, 35, 35)"}, system_account_style
         with page.expect_response(lambda response: response.url.endswith("/api/overview") and response.request.method == "GET") as overview_response_info:
             system_button.click()
         assert overview_response_info.value.headers.get("cache-control") == "no-store"
@@ -585,14 +604,26 @@ def main() -> None:
         expect(page.locator('[data-system-stat="launches"]')).to_have_text("0")
         expect(page.locator('[data-system-stat="running"]')).to_have_text("0 / 8")
         expect(page.locator(".admin-system-empty")).to_have_count(1)
+        page.set_viewport_size({"width": 320, "height": 568})
         invitation_button.click()
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator('[data-admin-dialog-view="invitations"]')).to_be_visible()
+        page.wait_for_function("""() => {
+            const button = document.querySelector('.admin-nav-button.is-active')
+            const nav = button?.closest('.admin-nav')
+            if (!button || !nav) return false
+            const buttonBox = button.getBoundingClientRect()
+            const navBox = nav.getBoundingClientRect()
+            return buttonBox.left >= navBox.left && buttonBox.right <= navBox.right
+        }""")
+        mobile_nav_geometry = invitation_button.evaluate("element => { const nav = element.closest('.admin-nav'); const button = element.getBoundingClientRect(); const box = nav.getBoundingClientRect(); return { navLeft: box.left, navRight: box.right, buttonLeft: button.left, buttonRight: button.right, scrollLeft: nav.scrollLeft } }")
+        assert mobile_nav_geometry["buttonLeft"] >= mobile_nav_geometry["navLeft"] and mobile_nav_geometry["buttonRight"] <= mobile_nav_geometry["navRight"], mobile_nav_geometry
         expect(page.locator(".admin-records-backdrop")).to_have_count(0)
         expect(page.get_by_role("heading", name="邀请管理", exact=True)).to_have_count(0)
         expect(page.locator('[data-admin-view="invitations"]')).to_have_attribute("aria-label", "邀请管理")
         expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         expect(page.locator(".admin-empty-state")).to_be_visible()
+        page.set_viewport_size({"width": 1440, "height": 900})
         empty_state_style = page.locator(".admin-empty-state").evaluate(
             "element => ({ borderStyle: getComputedStyle(element).borderStyle, backgroundColor: getComputedStyle(element).backgroundColor, paddingBlock: getComputedStyle(element).paddingBlock, color: getComputedStyle(element).color })"
         )
@@ -622,8 +653,13 @@ def main() -> None:
         page.get_by_role("button", name="生成邀请码", exact=True).click()
         expect(invitation_code).to_have_count(1)
         assert len(invitation_code.inner_text()) == 32
+        expect(page.locator(".invitation-one-time-note")).to_have_text("邀请码明文仅在生成时展示，请立即复制保存。")
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator(".invitation-history-card")).to_have_count(50)
+        expect(page.locator(".invitation-history-head")).to_contain_text("状态")
+        expect(page.locator(".invitation-history-head")).to_contain_text("创建人 / 时间")
+        expect(page.locator(".invitation-history-head")).to_contain_text("使用账号 / 时间")
+        expect(page.locator(".invitation-history-head")).to_contain_text("有效期")
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
         expect(page.locator(".invitation-history-card")).to_have_count(52)
@@ -640,6 +676,7 @@ def main() -> None:
             page.set_viewport_size({"width": width, "height": height})
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
             assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth"), width
+            assert page.locator(".invitation-history-card").evaluate_all("elements => elements.every(element => element.scrollWidth <= element.clientWidth)"), width
             expect(page.locator(".invitation-history-card")).to_have_count(52)
             expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -731,7 +768,31 @@ def main() -> None:
             }""",
             {"names": account_names, "password": account_password},
         )
-        assert all(item["registerStatus"] == 200 and item["registration"].get("ok") and item["cleanupStatus"] == 200 for item in registration_results), registration_results
+        assert all(item["registerStatus"] == 200 and item["registration"].get("ok") and item["cleanupStatus"] == 409 for item in registration_results), registration_results
+        legacy_invitation_id = f"legacy-used-{os.getpid()}-{time.time_ns()}"
+        with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as invitation_db:
+            legacy_stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            invitation_db.execute(
+                "INSERT INTO invitations (id, code_hash, created_by, expires_at, used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+                (legacy_invitation_id, f"{legacy_invitation_id}-hash", "vulnlab", (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"), legacy_stamp, legacy_stamp),
+            )
+        invitation_button.click()
+        expect(page.locator(".invitation-history-card[data-status='used']")).to_have_count(len(account_names) + 1)
+        expect(page.locator("[data-admin-select-all='invitations'], [data-admin-record-select='invitations'], .invitation-history-card[data-status='used'] .record-delete")).to_have_count(0)
+        for user_name in account_names:
+            used_invitation_row = page.locator('.invitation-history-card[data-status="used"]').filter(has_text=user_name)
+            expect(used_invitation_row).to_have_count(1)
+            expect(used_invitation_row.locator(".invitation-field-used .invitation-used-by")).to_have_text(user_name)
+            expect(used_invitation_row.locator(".invitation-field-used time > span")).to_have_count(2)
+            expect(used_invitation_row.locator(".invitation-retained")).to_have_text("已保留")
+        legacy_invitation_row = page.locator(f'.invitation-history-card[data-id="{legacy_invitation_id}"]')
+        expect(legacy_invitation_row).to_contain_text("历史记录未记录使用者")
+        page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-used-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 320, "height": 568})
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth")
+        page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-used-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
         account_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
         account_page = account_context.new_page()
         account_page.goto(BASE_URL, wait_until="networkidle")
@@ -741,7 +802,26 @@ def main() -> None:
         expect(account_page.locator(".labs-screen")).to_be_visible()
         account_button.click()
         expect(page.locator('[data-admin-view="users"]')).to_be_visible()
-        expect(page.locator(".admin-user-entry")).to_have_count(6)
+        expect(page.locator(".admin-user-entry")).to_have_count(7)
+        system_admin_row = page.locator('.admin-user-entry[data-kind="system"]')
+        expect(system_admin_row).to_have_count(1)
+        expect(system_admin_row).to_contain_text("vulnlab")
+        expect(system_admin_row).to_contain_text("默认管理员")
+        expect(system_admin_row).not_to_contain_text("·")
+        expect(system_admin_row.locator("time")).to_have_count(0)
+        expect(system_admin_row.locator("[data-admin-record-select], .record-delete")).to_have_count(0)
+        expect(page.locator(".admin-user-table-head")).to_contain_text("账号")
+        expect(page.locator(".admin-user-table-head")).to_contain_text("注册时间")
+        expect(page.locator(".admin-user-table-head")).to_contain_text("操作")
+        expect(system_admin_row.locator(".admin-user-name")).to_have_text("vulnlab")
+        account_row_style = page.locator(".admin-user-entry").first.evaluate(
+            "element => ({ borderRadius: getComputedStyle(element).borderRadius, borderWidth: getComputedStyle(element).borderWidth, backgroundColor: getComputedStyle(element).backgroundColor, historyBorder: getComputedStyle(document.querySelector('.user-history')).borderWidth, headerBorder: getComputedStyle(document.querySelector('.admin-user-table-head')).borderWidth, roleBorder: getComputedStyle(document.querySelector('.admin-user-role')).borderLeftWidth })"
+        )
+        assert account_row_style == {"borderRadius": "8px", "borderWidth": "0px", "backgroundColor": "rgb(35, 35, 35)", "historyBorder": "0px", "headerBorder": "0px", "roleBorder": "0px"}, account_row_style
+        account_column_alignment = page.locator(".admin-user-table-head").evaluate(
+            "element => { const boxes = [...element.children].map(item => item.getBoundingClientRect()); const user = document.querySelector('.admin-user-entry:not([data-kind=system])'); const name = user.querySelector('.admin-user-name').getBoundingClientRect(); const time = user.querySelector('.admin-user-time').getBoundingClientRect(); return { accountHeaderLeft: boxes[1].left, userNameLeft: name.left, dateHeaderRight: boxes[2].right, userTimeRight: time.right } }"
+        )
+        assert abs(account_column_alignment["accountHeaderLeft"] - account_column_alignment["userNameLeft"]) <= 1 and abs(account_column_alignment["dateHeaderRight"] - account_column_alignment["userTimeRight"]) <= 1, account_column_alignment
         account_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
@@ -756,8 +836,17 @@ def main() -> None:
                 }).length
             }"""
         )
-        assert account_visible_rows == 6, account_visible_rows
+        assert account_visible_rows == 7, account_visible_rows
         page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-desktop.png"), full_page=True)
+        for width in (390, 320):
+            page.set_viewport_size({"width": width, "height": 568})
+            assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
+            assert page.locator(".admin-user-entry").evaluate_all("elements => elements.every(element => element.scrollWidth <= element.clientWidth)"), width
+            assert page.locator(".admin-user-table-head").evaluate("element => getComputedStyle(element).display") == "none"
+            assert page.locator(".admin-user-system .admin-user-name").evaluate("element => element.scrollWidth <= element.clientWidth")
+            if width == 320:
+                page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
         page.set_viewport_size({"width": 1440, "height": 360})
         assert page.locator(".admin-dialog-content").evaluate("element => element.scrollHeight > element.clientHeight")
         expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()

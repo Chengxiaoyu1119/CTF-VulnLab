@@ -35,6 +35,7 @@ export interface InvitationRecord {
   createdBy: string
   expiresAt: string
   usedAt: string | null
+  usedByUserName: string | null
   revokedAt: string | null
   createdAt: string
 }
@@ -298,6 +299,7 @@ export class VulnLabDatabase {
         created_by TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         used_at TEXT,
+        used_by_user_name TEXT,
         revoked_at TEXT,
         created_at TEXT NOT NULL
       );
@@ -324,6 +326,7 @@ export class VulnLabDatabase {
     this.ensureColumn('vm_downloads', 'actual_md5', 'TEXT')
     this.ensureColumn('vm_downloads', 'actual_sha1', 'TEXT')
     this.ensureColumn('vm_downloads', 'checksum_verified', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('invitations', 'used_by_user_name', 'TEXT')
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -734,7 +737,7 @@ export class VulnLabDatabase {
   createInvitation(id: string, codeHash: string, createdBy: string, expiresAt: string): InvitationRecord {
     const createdAt = now()
     this.db.prepare('INSERT INTO invitations (id, code_hash, created_by, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(id, codeHash, createdBy, expiresAt, createdAt)
-    return { id, createdBy, expiresAt, usedAt: null, revokedAt: null, createdAt }
+    return { id, createdBy, expiresAt, usedAt: null, usedByUserName: null, revokedAt: null, createdAt }
   }
 
   revokeInvitation(id: string): boolean {
@@ -742,21 +745,29 @@ export class VulnLabDatabase {
     return result.changes === 1
   }
 
-  deleteInvitation(id: string): boolean {
-    const result = this.db.prepare('DELETE FROM invitations WHERE id = ?').run(id)
-    return result.changes === 1
+  deleteInvitation(id: string): 'deleted' | 'used' | 'not_found' {
+    const result = this.db.prepare('DELETE FROM invitations WHERE id = ? AND used_at IS NULL').run(id)
+    if (result.changes === 1) return 'deleted'
+    const invitation = this.db.prepare('SELECT 1 AS used FROM invitations WHERE id = ? AND used_at IS NOT NULL').get(id)
+    return invitation ? 'used' : 'not_found'
   }
 
-  deleteInvitations(ids: readonly string[]): number {
-    const statement = this.db.prepare('DELETE FROM invitations WHERE id = ?')
-    const transaction = this.db.transaction((values: readonly string[]) => values.reduce((count, id) => count + statement.run(id).changes, 0))
-    return transaction(ids)
+  deleteInvitations(ids: readonly string[]): { deleted: number; blockedByUsed: boolean } {
+    if (!ids.length) return { deleted: 0, blockedByUsed: false }
+    const findUsedInvitation = this.db.prepare('SELECT 1 FROM invitations WHERE id = ? AND used_at IS NOT NULL')
+    const statement = this.db.prepare('DELETE FROM invitations WHERE id = ? AND used_at IS NULL')
+    const transaction = this.db.transaction((values: readonly string[]) => {
+      const includesUsedInvitation = values.some(id => findUsedInvitation.get(id))
+      if (includesUsedInvitation) return { deleted: 0, blockedByUsed: true }
+      return { deleted: values.reduce((count, id) => count + statement.run(id).changes, 0), blockedByUsed: false }
+    })
+    return transaction.immediate(ids)
   }
 
   listInvitations(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<InvitationView> {
     const cursor = options.cursor
     const rows: InvitationView[] = (this.db.prepare(`
-      SELECT id, created_by AS createdBy, expires_at AS expiresAt, used_at AS usedAt, revoked_at AS revokedAt, created_at AS createdAt
+      SELECT id, created_by AS createdBy, expires_at AS expiresAt, used_at AS usedAt, used_by_user_name AS usedByUserName, revoked_at AS revokedAt, created_at AS createdAt
       FROM invitations
       WHERE ? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)
       ORDER BY created_at DESC, id DESC
@@ -779,7 +790,7 @@ export class VulnLabDatabase {
       if (existing || reserved) return 'user_exists'
       const createdAt = now()
       this.db.prepare('INSERT INTO users (user_name, password_hash, role, created_at) VALUES (?, ?, \'admin\', ?)').run(userName, passwordHash, createdAt)
-      const consumed = this.db.prepare('UPDATE invitations SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(createdAt, invitation.id)
+      const consumed = this.db.prepare('UPDATE invitations SET used_at = ?, used_by_user_name = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(createdAt, userName, invitation.id)
       if (consumed.changes !== 1) throw new Error('邀请码消费失败。')
       return 'created'
     })()

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -6,6 +7,8 @@ import { join, resolve } from 'node:path'
 
 const appDir = resolve(import.meta.dirname, '..', 'src')
 const serverPath = resolve(appDir, 'dist', 'server.js')
+const require = createRequire(new URL('../src/package.json', import.meta.url))
+const SQLiteDatabase = require('better-sqlite3')
 const wait = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds))
 
 const startServer = async ({ port, dataDir, nodeEnv = 'test', host = '127.0.0.1', publicUrl = '', production = false, usePersistedHostPort = false }) => {
@@ -169,6 +172,10 @@ try {
   const sessionDir = join(root, 'session')
   server = await startServer({ port: 6741, dataDir: sessionDir })
   const session = await login(server.baseUrl)
+  const initialUsers = await request(server.baseUrl, '/api/auth/users', { headers: { cookie: session.cookie } })
+  assert.deepEqual(initialUsers.body, [{ kind: 'system', userName: 'vulnlab', createdAt: null }])
+  assert.equal(initialUsers.response.headers.get('x-vulnlab-record-total'), '1')
+  assert.equal(initialUsers.response.headers.get('x-vulnlab-next-cursor'), null)
   const invitation = await request(server.baseUrl, '/api/auth/invitations', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.match(invitation.body.code, /^[A-Za-z0-9_-]{32}$/)
   const invitationRecords = await request(server.baseUrl, '/api/auth/invitations', { headers: { cookie: session.cookie } })
@@ -179,6 +186,35 @@ try {
   const registration = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: registeredUserName, password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: invitation.body.code }) })
   assert.equal(registration.status, 200)
   assert.deepEqual(await registration.json(), { ok: true, message: '注册成功' })
+  const registeredUsers = await request(server.baseUrl, '/api/auth/users', { headers: { cookie: session.cookie } })
+  assert.equal(registeredUsers.body[0].kind, 'system')
+  assert.equal(registeredUsers.body[0].createdAt, null)
+  assert.ok(registeredUsers.body.some(item => item.userName === registeredUserName && !item.kind))
+  assert.equal(registeredUsers.response.headers.get('x-vulnlab-record-total'), '2')
+  const paginationNames = Array.from({ length: 51 }, (_, index) => `page-fixture-${String(index).padStart(2, '0')}-${Date.now()}`)
+  const paginationDb = new SQLiteDatabase(join(sessionDir, 'vulnlab.sqlite'))
+  try {
+    const insertUser = paginationDb.prepare("INSERT INTO users (user_name, password_hash, role, created_at) VALUES (?, 'pagination-fixture-hash', 'admin', ?)")
+    paginationNames.forEach((userName, index) => insertUser.run(userName, new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()))
+    const firstUserPage = await request(server.baseUrl, '/api/auth/users', { headers: { cookie: session.cookie } })
+    const userCursor = firstUserPage.response.headers.get('x-vulnlab-next-cursor')
+    assert.equal(firstUserPage.body.length, 50)
+    assert.equal(firstUserPage.body[0].kind, 'system')
+    assert.equal(firstUserPage.body.filter(item => item.kind !== 'system').length, 49)
+    assert.equal(firstUserPage.response.headers.get('x-vulnlab-record-total'), '53')
+    assert.ok(userCursor)
+    const secondUserPage = await request(server.baseUrl, `/api/auth/users?${new URLSearchParams({ cursor: userCursor })}`, { headers: { cookie: session.cookie } })
+    const pagedUsers = [...firstUserPage.body, ...secondUserPage.body]
+    assert.equal(secondUserPage.body.length, 3)
+    assert.equal(new Set(pagedUsers.map(item => item.userName)).size, 53)
+    assert.equal(pagedUsers.filter(item => item.kind === 'system').length, 1)
+    assert.equal(secondUserPage.response.headers.get('x-vulnlab-record-total'), '53')
+  } finally {
+    paginationDb.prepare("DELETE FROM users WHERE user_name LIKE 'page-fixture-%'").run()
+    paginationDb.close()
+  }
+  const consumedInvitations = await request(server.baseUrl, '/api/auth/invitations', { headers: { cookie: session.cookie } })
+  assert.ok(consumedInvitations.body.some(item => item.id === invitation.body.id && item.status === 'used' && item.usedByUserName === registeredUserName && item.usedAt))
   audits = (await request(server.baseUrl, '/api/audit', { headers: { cookie: session.cookie } })).body
   assert.ok(audits.some(item => item.action === 'register' && item.actor === registeredUserName))
   const registeredLogin = await fetch(server.baseUrl + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: registeredUserName, password: 'Student-2026!' }) })
@@ -192,6 +228,8 @@ try {
   const unavailableBody = { code: 'REGISTRATION_UNAVAILABLE', message: '注册失败，请检查注册信息后重试。' }
   assert.deepEqual(await duplicateRegistration.json(), unavailableBody)
   assert.deepEqual(await reservedRegistration.json(), unavailableBody)
+  const unconsumedRecords = await request(server.baseUrl, '/api/auth/invitations', { headers: { cookie: session.cookie } })
+  assert.ok(unconsumedRecords.body.some(item => item.id === duplicateInvitation.body.id && item.status === 'active' && item.usedByUserName === null && item.usedAt === null))
   const reusedInvitation = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'second-student', password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: invitation.body.code }) })
   assert.equal(reusedInvitation.status, 400)
   const malformedInvitation = await fetch(server.baseUrl + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userName: 'malformed-student', password: 'Student-2026!', passwordConfirm: 'Student-2026!', inviteCode: 'x'.repeat(129) }) })
@@ -205,6 +243,18 @@ try {
   audits = (await request(server.baseUrl, '/api/audit', { headers: { cookie: session.cookie } })).body
   const revokeAudit = audits.find(item => item.action === 'invitation.revoke' && item.detail === revocableInvitation.body.id)
   assert.ok(revokeAudit)
+  const protectedDeleteHeaders = { cookie: session.cookie, 'x-csrf-token': session.csrfToken }
+  const protectedBatchDeleteHeaders = { ...protectedDeleteHeaders, 'content-type': 'application/json' }
+  const usedInvitationDelete = await fetch(server.baseUrl + '/api/auth/invitations/' + invitation.body.id + '/record', { method: 'DELETE', headers: protectedDeleteHeaders })
+  assert.equal(usedInvitationDelete.status, 409)
+  assert.equal((await usedInvitationDelete.json()).code, 'INVITATION_USED')
+  const mixedUnusedInvitation = await request(server.baseUrl, '/api/auth/invitations', { method: 'POST', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
+  const mixedInvitationDelete = await fetch(server.baseUrl + '/api/auth/invitations', { method: 'DELETE', headers: protectedBatchDeleteHeaders, body: JSON.stringify({ ids: [invitation.body.id, mixedUnusedInvitation.body.id] }) })
+  assert.equal(mixedInvitationDelete.status, 409)
+  assert.equal((await mixedInvitationDelete.json()).code, 'INVITATION_USED')
+  const afterMixedDelete = await request(server.baseUrl, '/api/auth/invitations', { headers: { cookie: session.cookie } })
+  assert.ok(afterMixedDelete.body.some(item => item.id === invitation.body.id && item.usedByUserName === registeredUserName))
+  assert.ok(afterMixedDelete.body.some(item => item.id === mixedUnusedInvitation.body.id && item.status === 'active'))
   const deletedInvitationRecord = await fetch(server.baseUrl + '/api/auth/invitations/' + revocableInvitation.body.id + '/record', { method: 'DELETE', headers: { cookie: session.cookie, 'x-csrf-token': session.csrfToken } })
   assert.equal(deletedInvitationRecord.status, 200)
   const afterInvitationDelete = await request(server.baseUrl, '/api/auth/invitations', { headers: { cookie: session.cookie } })

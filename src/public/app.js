@@ -151,6 +151,7 @@ async function request(path, options = {}) {
 
 const adminRecordPath = panel => panel === 'invitations' ? '/api/auth/invitations' : panel === 'users' ? '/api/auth/users' : '/api/audit'
 const adminRecordId = (panel, item) => panel === 'users' ? item.userName : item.id
+const isAdminRecordSelectable = (panel, item) => !(panel === 'users' && item.kind === 'system') && !(panel === 'invitations' && item.status === 'used')
 
 function resetAdminRecords() {
   systemRequestVersion += 1
@@ -191,7 +192,7 @@ async function loadAdminRecords(panel, append = false) {
   state.adminNextCursors[panel] = typeof page?.nextCursor === 'string' ? page.nextCursor : null
   const total = Number(page?.total)
   state.adminTotals[panel] = Number.isSafeInteger(total) && total >= state[panel].length ? total : state[panel].length
-  state.adminSelectedRecordIds[panel] = state.adminSelectedRecordIds[panel].filter(id => state[panel].some(item => adminRecordId(panel, item) === id))
+  state.adminSelectedRecordIds[panel] = state.adminSelectedRecordIds[panel].filter(id => state[panel].some(item => isAdminRecordSelectable(panel, item) && adminRecordId(panel, item) === id))
   return true
 }
 
@@ -902,18 +903,20 @@ function adminRecordsPanel() {
   const isAuditPanel = state.adminRecordsPanel === 'audit'
   const isUserPanel = state.adminRecordsPanel === 'users'
   const title = isInvitationPanel ? '邀请管理' : isAuditPanel ? '审计记录' : '账号管理'
-  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
+  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><p class="invitation-one-time-note">邀请码明文仅在生成时展示，请立即复制保存。</p><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
   const records = isInvitationPanel ? state.invitations : isAuditPanel ? state.audit : state.users
+  const hasRegisteredUsers = isUserPanel && records.some(item => item.kind !== 'system')
   const recordId = item => isUserPanel ? item.userName : item.id
-  const selectedIds = (state.adminSelectedRecordIds[state.adminRecordsPanel] ?? []).filter(id => records.some(item => recordId(item) === id))
+  const selectableRecords = records.filter(item => isAdminRecordSelectable(state.adminRecordsPanel, item))
+  const selectedIds = (state.adminSelectedRecordIds[state.adminRecordsPanel] ?? []).filter(id => selectableRecords.some(item => recordId(item) === id))
   const selected = new Set(selectedIds)
-  const allSelected = records.length > 0 && selectedIds.length === records.length
+  const allSelected = selectableRecords.length > 0 && selectedIds.length === selectableRecords.length
   const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
   const nextCursor = state.adminNextCursors[state.adminRecordsPanel]
   const selectionCount = selectedIds.length ? `<span class="admin-selection-count" aria-live="polite">已选 ${selectedIds.length} 条</span>` : ''
-  const selectAllControl = records.length ? `<label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label>` : ''
-  const bulkDeleteControl = records.length ? `<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button>` : ''
-  const selectionActions = records.length ? `<div class="admin-selection-actions">${selectionCount}${bulkDeleteControl}</div>` : ''
+  const selectAllControl = selectableRecords.length ? `<label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label>` : ''
+  const bulkDeleteControl = selectableRecords.length ? `<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button>` : ''
+  const selectionActions = selectableRecords.length ? `<div class="admin-selection-actions">${selectionCount}${bulkDeleteControl}</div>` : ''
   const selectionToolbarItems = `${selectAllControl}${selectionActions}`
   const selectionToolbar = selectionToolbarItems ? `<div class="admin-record-toolbar">${selectionToolbarItems}</div>` : ''
   const pagination = nextCursor ? `<div class="admin-record-pagination"><span class="sr-only">还有更多${recordLabel}记录</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
@@ -924,9 +927,12 @@ function adminRecordsPanel() {
   const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计筛选与批量操作">${auditSelectionToolbar ? selectAllControl : ''}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button>${auditSelectionToolbar ? selectionActions : ''}</div>` : ''
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const userRows = isUserPanel ? records.map(item => {
+    if (item.kind === 'system') {
+      return `<div class="admin-user-entry admin-user-system" data-id="${esc(item.userName)}" data-kind="system"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong><span class="admin-user-role">默认管理员</span></div><span class="admin-user-system-note">系统内置账号</span></div><span class="admin-user-system-tag">内置</span></div>`
+    }
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
-    return `<div class="admin-user-entry${selected.has(item.userName) ? ' is-selected' : ''}" data-id="${esc(item.userName)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="users" data-id="${esc(item.userName)}" aria-label="选择账号 ${esc(item.userName)}" ${selected.has(item.userName) ? 'checked' : ''}></label><div class="admin-user-content"><div class="admin-user-heading"><strong>账号 <span class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</span></strong>${current ? '<span class="admin-user-current">当前登录</span>' : ''}</div><time class="admin-user-time" datetime="${esc(item.createdAt)}"><span class="admin-user-time-label">注册于</span><span class="admin-user-date">${esc(timestamp.date)}</span><span class="admin-user-clock">${esc(timestamp.time)}</span></time></div><button class="record-delete" type="button" data-action="delete-user-record" data-id="${esc(item.userName)}" aria-label="删除账号 ${esc(item.userName)}" title="删除账号">${deleteRecordIcon()}</button></div>`
+    return `<div class="admin-user-entry${selected.has(item.userName) ? ' is-selected' : ''}" data-id="${esc(item.userName)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="users" data-id="${esc(item.userName)}" aria-label="选择账号 ${esc(item.userName)}" ${selected.has(item.userName) ? 'checked' : ''}></label><div class="admin-user-content"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong>${current ? '<span class="admin-user-current">当前登录</span>' : ''}</div><time class="admin-user-time" datetime="${esc(item.createdAt)}"><span class="admin-user-time-label">注册于</span><span class="admin-user-date">${esc(timestamp.date)}</span><span class="admin-user-clock">${esc(timestamp.time)}</span></time></div><button class="record-delete" type="button" data-action="delete-user-record" data-id="${esc(item.userName)}" aria-label="删除账号 ${esc(item.userName)}" title="删除账号">${deleteRecordIcon()}</button></div>`
   }).join('') : ''
   const content = state.adminLoading
     ? '<div class="admin-loading" role="status">正在更新记录…</div>'
@@ -934,10 +940,10 @@ function adminRecordsPanel() {
       ? `<div class="admin-inline-error" role="alert"><span>${esc(state.adminError)}</span><button class="button button-outline admin-record-retry" type="button" data-action="retry-admin-records" data-panel="${esc(state.adminRecordsPanel)}">重试</button></div>`
       : records.length
         ? isInvitationPanel
-          ? `${selectionToolbar}<div class="admin-record-list invitation-history">${records.map(item => `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="invitation-history-main"><strong>${esc(statusLabels[item.status] ?? item.status)}</strong><time datetime="${esc(item.createdAt)}">生成于 ${esc(date(item.createdAt))}</time></div><div class="invitation-history-meta"><span>有效至 ${esc(date(item.expiresAt))}</span><button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button></div></div>`).join('')}</div>${pagination}`
+          ? `${selectionToolbar}<div class="invitation-history-head" aria-hidden="true"><span></span><span>状态</span><span>创建人 / 时间</span><span>使用账号 / 时间</span><span>有效期</span><span>操作</span></div><div class="admin-record-list invitation-history">${records.map(item => { const used = item.status === 'used'; const usedBy = used ? item.usedByUserName || '历史记录未记录使用者' : '—'; const createdAt = auditTimestamp(item.createdAt); const usedAt = item.usedAt ? auditTimestamp(item.usedAt) : null; const selection = used ? '<span class="invitation-row-spacer" aria-hidden="true"></span>' : `<label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label>`; return `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}">${selection}<div class="invitation-field invitation-field-status"><span class="invitation-field-label">状态</span><strong>${esc(statusLabels[item.status] ?? item.status)}</strong></div><div class="invitation-field invitation-field-created"><span class="invitation-field-label">创建人 / 时间</span><span class="invitation-field-value"><span title="${esc(item.createdBy)}">${esc(item.createdBy)}</span><time datetime="${esc(item.createdAt)}"><span>${esc(createdAt.date)}</span><span>${esc(createdAt.time)}</span></time></span></div><div class="invitation-field invitation-field-used"><span class="invitation-field-label">使用账号 / 时间</span><span class="invitation-field-value"><span class="invitation-used-by" title="${esc(usedBy)}">${esc(usedBy)}</span>${usedAt ? `<time datetime="${esc(item.usedAt)}"><span>${esc(usedAt.date)}</span><span>${esc(usedAt.time)}</span></time>` : '<span>—</span>'}</span></div><div class="invitation-field invitation-field-expiry"><span class="invitation-field-label">有效期</span><span class="invitation-field-value"><time datetime="${esc(item.expiresAt)}">${esc(date(item.expiresAt))}</time></span></div><div class="invitation-operation">${used ? '<span class="invitation-retained">已保留</span>' : `<button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button>`}</div></div>` }).join('')}</div>${pagination}`
           : isAuditPanel
             ? `<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); const expanded = state.adminAuditExpandedId === item.id; const detailId = `audit-detail-${item.id}`; return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content" role="button" tabindex="0" data-action="toggle-audit-detail" data-audit-expand="${esc(item.id)}" data-id="${esc(item.id)}" aria-expanded="${expanded}" aria-controls="${esc(detailId)}"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div>${expanded ? `<div class="audit-entry-detail" id="${esc(detailId)}"><span class="audit-entry-detail-label">对象</span><span class="audit-entry-detail-value">${esc(item.target || '—')}</span><span class="audit-entry-detail-label">详情</span><span class="audit-entry-detail-value">${esc(item.detail || '—')}</span></div>` : ''}</div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
-            : `${selectionToolbar}<div class="admin-record-list user-history">${userRows}</div>${pagination}`
+            : `${selectionToolbar}${hasRegisteredUsers ? '<div class="admin-user-table-head" aria-hidden="true"><span></span><span>账号</span><span>注册时间</span><span>操作</span></div>' : ''}<div class="admin-record-list user-history">${userRows}</div>${hasRegisteredUsers ? '' : '<p class="admin-user-empty" role="status">暂无注册账号</p>'}${pagination}`
         : `<div class="admin-empty-state" role="status">${isAuditPanel && state.adminAuditDate && state.adminAuditAction === 'instance.start' ? '当天暂无启动记录。' : `暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '符合条件的审计' : '注册账号'}记录。`}</div>`
   return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${auditReturn}${auditFilters}${isInvitationPanel ? invitation : ''}${content}</section>`
 }
@@ -1228,15 +1234,31 @@ async function runAction(action, element) {
       state.adminRecordsPanel = null
       render()
       if (section === 'system') await refreshAdminOverview()
+      document.querySelector('.admin-nav-button.is-active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       return
     }
     state.adminRecordsPanel = section
     state.adminSelectedRecordIds[section] = []
     state.adminError = ''
-    state.adminLoading = section === 'users' || section === 'audit'
+    state.adminLoading = section === 'invitations' || section === 'users' || section === 'audit'
     render()
+    if (section === 'invitations') {
+      const requestVersion = state.adminRecordRequestVersions.invitations + 1
+      try {
+        await loadAdminRecords('invitations')
+        if (requestVersion === state.adminRecordRequestVersions.invitations && state.adminRecordsPanel === section) state.adminError = ''
+      } catch (error) {
+        if (requestVersion === state.adminRecordRequestVersions.invitations && state.adminRecordsPanel === section) state.adminError = error.message
+      } finally {
+        if (requestVersion === state.adminRecordRequestVersions.invitations && state.adminRecordsPanel === section) {
+          state.adminLoading = false
+          render()
+        }
+      }
+    }
     if (section === 'users') await refreshAdminUsers()
     if (section === 'audit') await refreshAdminAudit()
+    document.querySelector('.admin-nav-button.is-active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     return
   }
   if (action === 'close-admin-panel') {

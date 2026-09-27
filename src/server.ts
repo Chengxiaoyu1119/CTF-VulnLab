@@ -773,7 +773,9 @@ app.get('/api/auth/users', async (request, reply) => {
   const page = requestRecordPage(request, reply)
   if (!page) return
   reply.header('Cache-Control', 'no-store')
-  return recordPageResponse(reply, database.listRegisteredUsers(page))
+  const users = database.listRegisteredUsers({ ...page, limit: page.cursor ? page.limit : page.limit - 1 })
+  const items = page.cursor ? users.items : [{ kind: 'system' as const, userName: defaultAdminUser, createdAt: null }, ...users.items]
+  return recordPageResponse(reply, { ...users, items, total: users.total + 1 })
 })
 
 app.delete('/api/auth/users', async (request, reply) => {
@@ -793,7 +795,9 @@ app.delete('/api/auth/invitations', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
   const ids = requestIds(request, reply)
   if (!ids) return
-  return { ok: true, deleted: database.deleteInvitations(ids) }
+  const result = database.deleteInvitations(ids)
+  if (result.blockedByUsed) return reply.code(409).send({ code: 'INVITATION_USED', message: '所选记录包含已使用的邀请码，未删除任何记录。' })
+  return { ok: true, deleted: result.deleted }
 })
 
 app.delete('/api/auth/invitations/:id', async (request, reply) => {
@@ -808,7 +812,9 @@ app.delete('/api/auth/invitations/:id', async (request, reply) => {
 app.delete('/api/auth/invitations/:id/record', async (request, reply) => {
   if (!requireAdmin(request, reply)) return
   const { id } = request.params as { id: string }
-  if (!database.deleteInvitation(id)) return reply.code(404).send({ code: 'INVITATION_NOT_FOUND', message: '邀请码记录不存在。' })
+  const result = database.deleteInvitation(id)
+  if (result === 'used') return reply.code(409).send({ code: 'INVITATION_USED', message: '已使用的邀请码记录必须保留，不能删除。' })
+  if (result === 'not_found') return reply.code(404).send({ code: 'INVITATION_NOT_FOUND', message: '邀请码记录不存在。' })
   return { ok: true }
 })
 

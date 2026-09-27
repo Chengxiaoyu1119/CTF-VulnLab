@@ -154,6 +154,7 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .invitation-card { display: grid; gap: 10px; margin-top: 12px; border: 1px solid #3a3028; border-radius: 9px; padding: 13px; background-color: #211d19; }
 .invitation-card-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; color: #e4e4e4; font-size: 12px; }
 .invitation-card-heading time { color: #989898; font-size: 10px; white-space: nowrap; }
+.invitation-one-time-note { margin: -3px 0 0; color: #a7a7a7; font-size: 10px; line-height: 1.45; }
 .invitation-card code { display: block; overflow: hidden; border: 1px solid #3b332d; border-radius: 6px; padding: 10px 11px; color: #ffb15f; background-color: #171717; font-family: var(--font-mono); font-size: 12px; letter-spacing: .04em; text-overflow: ellipsis; white-space: nowrap; }
 .invitation-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .invitation-card-actions .button { min-height: 32px; font-size: 11px; }
@@ -209,16 +210,30 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .admin-record-filters .admin-selection-actions { margin-left: auto; }
 .invitation-history, .audit-history { display: grid; gap: 7px; }
 .invitation-history-card, .audit-entry { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #303030; border-radius: 7px; padding: 8px 10px; background-color: #1b1b1b; font-size: 11px; }
-.invitation-history-card:not(.is-selected):hover, .audit-entry:not(.is-selected):hover, .admin-user-entry:not(.is-selected):hover { border-color: #4a4a4a; background-color: #202020; }
+.invitation-history-card:not(.is-selected):hover, .audit-entry:not(.is-selected):hover { border-color: #4a4a4a; background-color: #202020; }
 .invitation-history-card.is-selected, .audit-entry.is-selected { border-color: #72502f; background-color: #211d19; }
 .invitation-history-card > .admin-record-select, .audit-entry > .admin-record-select { flex: 0 0 auto; }
 .invitation-history-card > div, .audit-entry > div { min-width: 0; }
-.invitation-history-main, .invitation-history-meta { display: flex; align-items: center; gap: 10px; }
-.invitation-history-main { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: 48px minmax(0, 1fr); }
-.invitation-history-main strong { flex: 0 0 auto; white-space: nowrap; }
-.invitation-history-main time { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.invitation-history-meta { min-width: 0; flex: 0 1 auto; }
-.invitation-history-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.invitation-history-head, .invitation-history-card { display: grid; grid-template-columns: 14px 66px minmax(86px, .9fr) minmax(95px, 1.1fr) minmax(72px, .7fr) 30px; align-items: center; gap: 8px; }
+.invitation-history-head { min-height: 30px; margin-top: 8px; border-bottom: 1px solid #2d2d2d; padding: 0 10px 6px; color: #858585; font-size: 10px; }
+.invitation-history { gap: 0; margin-top: 0; }
+.invitation-history-card { min-height: 55px; justify-content: initial; border: 0; border-bottom: 1px solid #2b2b2b; border-radius: 0; padding: 8px 10px; background-color: transparent; }
+.invitation-history-card:not(.is-selected):hover { border-color: #393939; background-color: #202020; }
+.invitation-history-card.is-selected { border-color: #72502f; background-color: #211d19; }
+.invitation-field, .invitation-field-value { display: grid; min-width: 0; gap: 3px; }
+.invitation-field { overflow: hidden; }
+.invitation-field > span, .invitation-field time { min-width: 0; overflow: hidden; color: #c0c0c0; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.invitation-field time { color: #929292; }
+.invitation-field-value > time { display: flex; flex-wrap: wrap; gap: 2px 5px; overflow: visible; text-overflow: clip; white-space: normal; }
+.invitation-field-value > time > span { overflow: visible; color: #929292; text-overflow: clip; white-space: nowrap; }
+.invitation-field-label { display: none; }
+.invitation-field-status strong { width: fit-content; border-radius: 4px; padding: 3px 6px; color: #ffb15f; background: #30251c; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.invitation-history-card[data-status="used"] .invitation-field-status strong { color: #85c7a2; background: #1d2a23; }
+.invitation-history-card[data-status="expired"] .invitation-field-status strong, .invitation-history-card[data-status="revoked"] .invitation-field-status strong { color: #a0a0a0; background: #262626; }
+.invitation-used-by { color: #d5d5d5 !important; }
+.invitation-operation { display: flex; min-width: 0; justify-content: center; }
+.invitation-retained { color: #858585; font-size: 10px; white-space: nowrap; }
+.invitation-row-spacer { width: 14px; height: 14px; }
 .audit-entry-content { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: minmax(118px, 1.15fr) minmax(0, 2fr); align-items: center; column-gap: 16px; overflow: hidden; }
 .audit-entry-content[role="button"] { border-radius: 4px; cursor: pointer; }
 .audit-entry-content[role="button"]:focus-visible { outline: 1px solid #777; outline-offset: 3px; }
@@ -233,15 +248,34 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .audit-entry-detail { display: grid; grid-column: 1 / -1; grid-template-columns: 34px minmax(0, 1fr); gap: 5px 10px; margin-top: 2px; border-top: 1px solid #303030; padding-top: 8px; color: #9d9d9d; font-size: 10px; line-height: 1.45; }
 .audit-entry-detail-label { color: #999; }
 .audit-entry-detail-value { min-width: 0; overflow-wrap: anywhere; color: #c3c3c3; }
-.admin-user-entry { display: flex; min-height: 46px; min-width: 0; align-items: center; gap: 12px; border: 1px solid #303030; border-radius: 7px; padding: 8px 10px; background-color: #1b1b1b; font-size: 11px; }
-.admin-user-entry.is-selected { border-color: #72502f; background-color: #211d19; }
-.admin-user-entry > .admin-record-select { flex: 0 0 auto; }
-.admin-user-content { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) 170px; align-items: center; gap: 12px; }
+.admin-user-table-head, .admin-user-entry { display: grid; grid-template-columns: 14px minmax(0, 1fr) 180px 24px; align-items: center; gap: 12px; }
+.admin-user-table-head { min-height: 28px; margin-top: 7px; padding: 0 10px 4px; color: #858585; font-size: 10px; }
+.admin-user-table-head > :nth-child(3), .admin-user-table-head > :last-child { text-align: right; }
+.user-history { gap: 0; margin-top: 5px; }
+.admin-user-entry { min-height: 40px; border: 0; padding: 5px 10px; background: transparent; font-size: 11px; }
+.admin-user-entry:hover { background: transparent; }
+.admin-user-entry:hover .admin-user-name { color: #fff; }
+.admin-user-entry.is-selected { background-color: transparent; }
+.admin-user-entry.admin-user-system { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; min-height: 54px; margin: 0 4px; border-radius: 8px; padding: 8px 12px; background: #232323; }
+.admin-user-system .admin-user-avatar { width: 36px; height: 36px; object-fit: contain; }
+.admin-user-identity { display: grid; min-width: 0; gap: 4px; }
+.admin-user-system .admin-user-heading { align-items: center; gap: 9px; }
+.admin-user-system .admin-user-name { font-size: 14px; }
+.admin-user-system .admin-user-role { color: #aaa; font-size: 10px; }
+.admin-user-system-note { color: #858585; font-size: 10px; }
+.admin-user-system-tag { border-radius: 5px; padding: 4px 7px; color: #aaa; background: #303030; font-size: 10px; white-space: nowrap; }
+.admin-user-empty { display: grid; min-height: 92px; place-items: center; margin: auto 0; padding: 18px 0; color: #858585; font-size: 11px; text-align: center; }
+.admin-user-entry > .admin-record-select, .admin-user-select-spacer { flex: 0 0 auto; }
+.admin-user-content { display: grid; min-width: 0; grid-column: 2 / 4; grid-row: 1; grid-template-columns: minmax(0, 1fr) 180px; align-items: center; gap: 12px; }
+.admin-user-entry > .admin-record-select, .admin-user-select-spacer { grid-column: 1; grid-row: 1; }
+.admin-user-action-spacer { grid-column: 4; grid-row: 1; }
+.admin-user-entry > .record-delete { grid-column: 4; grid-row: 1; justify-self: end; }
 .admin-user-heading { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
-.admin-user-heading strong { min-width: 0; color: #d9d9d9; font-size: 12px; font-weight: 650; }
-.admin-user-name { overflow-wrap: anywhere; word-break: break-word; }
+.admin-user-name { min-width: 0; overflow: hidden; color: #dedede; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.admin-user-role { padding-left: 0; color: #a3a3a3; font-size: 10px; white-space: nowrap; }
 .admin-user-current { flex: 0 0 auto; color: #ffb15f; font-size: 10px; white-space: nowrap; }
-.admin-user-time { display: flex; min-width: 0; align-items: baseline; justify-content: flex-end; gap: 6px; color: #989898; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-user-time { display: flex; min-width: 0; align-items: baseline; justify-content: flex-end; gap: 6px; color: #989898; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-user-time-label { display: none; }
 .admin-user-time-label, .admin-user-date { color: #999; }
 .admin-user-clock { color: #b5b5b5; font-weight: 600; }
 .invitation-history-card strong, .audit-entry strong { color: #ddd; font-size: 12px; font-weight: 650; }
@@ -555,13 +589,28 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
   .admin-activity-grid { grid-template-rows: repeat(7, 7px); gap: 2px; }
   .admin-activity-footer { align-items: flex-start; flex-direction: column; }
   .invitation-card code { overflow-wrap: anywhere; white-space: normal; }
-  .invitation-history-card { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 6px 12px; }
-  .invitation-history-card > .admin-record-select { grid-row: span 2; }
-  .invitation-history-main { grid-template-columns: auto minmax(0, 1fr); }
-  .invitation-history-meta { grid-column: 2; justify-content: space-between; }
+  .invitation-history-head { display: none; }
+  .invitation-history-card { grid-template-columns: 16px minmax(0, 1fr) 28px; grid-template-areas: "select status action" "select created created" "select used used" "select expiry expiry"; align-items: start; gap: 8px 10px; min-height: 0; padding: 10px; }
+  .invitation-history-card > .admin-record-select, .invitation-row-spacer { grid-area: select; margin-top: 2px; }
+  .invitation-field-status { grid-area: status; display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; gap: 8px; }
+  .invitation-field-created { grid-area: created; }
+  .invitation-field-used { grid-area: used; }
+  .invitation-field-expiry { grid-area: expiry; }
+  .invitation-field:not(.invitation-field-status) { display: grid; grid-template-columns: 94px minmax(0, 1fr); align-items: baseline; gap: 8px; }
+  .invitation-field-label { display: block; overflow: visible !important; color: #858585 !important; font-variant-numeric: normal !important; text-overflow: clip !important; }
+  .invitation-field-value { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .invitation-field .invitation-used-by { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
+  .invitation-operation { grid-area: action; }
+  .invitation-retained { text-align: center; }
   .audit-entry-content { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
-  .admin-user-content { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+  .admin-user-table-head { display: none; }
+  .admin-user-entry:not(.admin-user-system) { grid-template-columns: 16px minmax(0, 1fr) 28px; gap: 8px 10px; min-height: 56px; padding: 8px 10px; }
+  .admin-user-entry.admin-user-system { grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; min-height: 52px; margin: 0; padding: 8px 10px; }
+  .admin-user-entry > .admin-record-select, .admin-user-select-spacer { grid-column: 1; grid-row: 1 / 3; align-self: start; margin-top: 2px; }
+  .admin-user-content { grid-column: 2; grid-row: 1 / 3; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .admin-user-entry > .record-delete, .admin-user-action-spacer { grid-column: 3; grid-row: 1 / 3; align-self: start; }
   .admin-user-time { justify-content: flex-start; flex-wrap: wrap; }
+  .admin-user-time-label { display: inline; }
 }
 
 @media (max-width: 480px) {

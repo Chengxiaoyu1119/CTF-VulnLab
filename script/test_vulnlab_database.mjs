@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
 const { VulnLabDatabase } = await import(new URL('../src/dist/db.js', import.meta.url))
 const { dataPaths } = await import(new URL('../src/dist/paths.js', import.meta.url))
+const require = createRequire(new URL('../src/package.json', import.meta.url))
+const SQLiteDatabase = require('better-sqlite3')
 const dataDir = await mkdtemp(join(tmpdir(), 'vulnlab-database-'))
 const database = new VulnLabDatabase(dataDir)
 const firstRecordPage = { limit: 100, cursor: null }
@@ -26,17 +29,23 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
 
   const invitation = database.createInvitation('invite-fixture', 'code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(invitation.usedAt, null)
+  assert.equal(invitation.usedByUserName, null)
   assert.equal(database.registerUserWithInvitation('student-fixture', 'scrypt-fixture-hash', 'code-hash-fixture'), 'created')
-  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === invitation.id)?.status, 'used')
+  const consumedInvitation = database.listInvitations(firstRecordPage).items.find(item => item.id === invitation.id)
+  assert.equal(consumedInvitation?.status, 'used')
+  assert.equal(consumedInvitation?.usedByUserName, 'student-fixture')
   assert.equal(database.getUser('STUDENT-FIXTURE')?.userName, 'student-fixture')
   assert.equal(database.getUser('student-fixture')?.passwordHash, 'scrypt-fixture-hash')
   assert.equal(database.registerUserWithInvitation('another-student', 'scrypt-fixture-hash', 'code-hash-fixture'), 'invalid_invitation')
   const unavailableInvitation = database.createInvitation('unavailable-invite-fixture', 'unavailable-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(database.registerUserWithInvitation('VULNLAB', 'scrypt-fixture-hash', 'unavailable-code-hash-fixture', ['vulnlab']), 'user_exists')
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === unavailableInvitation.id)?.usedByUserName, null)
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === unavailableInvitation.id)?.status, 'active')
   assert.equal(database.registerUserWithInvitation('VULNLAB', 'scrypt-fixture-hash', 'missing-code-hash-fixture', ['vulnlab']), 'invalid_invitation')
   assert.equal(database.registerUserWithInvitation('student-fixture', 'scrypt-fixture-hash', 'missing-code-hash-fixture', ['vulnlab']), 'invalid_invitation')
   const duplicateInvitation = database.createInvitation('duplicate-invite-fixture', 'duplicate-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
   assert.equal(database.registerUserWithInvitation('STUDENT-FIXTURE', 'scrypt-fixture-hash', 'duplicate-code-hash-fixture', ['vulnlab']), 'user_exists')
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === duplicateInvitation.id)?.usedByUserName, null)
   assert.equal(database.registerUserWithInvitation('available-student', 'scrypt-fixture-hash', 'missing-code-hash-fixture-2', ['vulnlab']), 'invalid_invitation')
   assert.equal(database.registerUserWithInvitation('available-student', 'scrypt-fixture-hash', 'duplicate-code-hash-fixture', ['vulnlab']), 'created')
   const listedUsers = database.listRegisteredUsers(firstRecordPage).items
@@ -50,6 +59,7 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.ok(database.getUser('available-student'))
   assert.equal(database.deleteRegisteredUsers(['STUDENT-FIXTURE']), 1)
   assert.equal(database.getUser('student-fixture'), null)
+  assert.equal(database.listInvitations(firstRecordPage).items.find(item => item.id === invitation.id)?.usedByUserName, 'student-fixture')
   assert.equal(database.getSession('student-session-a'), null)
   assert.equal(database.getSession('student-session-b'), null)
   assert.ok(database.getSession('available-session'))
@@ -64,11 +74,19 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.revokeInvitation(expiredInvitation.id), true)
   assert.equal(database.revokeInvitation(expiredInvitation.id), false)
   const deletableInvitation = database.createInvitation('deletable-invite-fixture', 'deletable-code-hash-fixture', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString())
-  assert.equal(database.deleteInvitation(deletableInvitation.id), true)
-  assert.equal(database.deleteInvitation(deletableInvitation.id), false)
+  assert.equal(database.deleteInvitation(deletableInvitation.id), 'deleted')
+  assert.equal(database.deleteInvitation(deletableInvitation.id), 'not_found')
+  assert.equal(database.deleteInvitation(invitation.id), 'used')
+  const mixedDeleteInvitations = [
+    database.createInvitation('mixed-delete-unused', 'mixed-delete-unused-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString()),
+    invitation,
+  ]
+  assert.deepEqual(database.deleteInvitations(mixedDeleteInvitations.map(item => item.id)), { deleted: 0, blockedByUsed: true })
+  assert.ok(database.listInvitations(firstRecordPage).items.some(item => item.id === mixedDeleteInvitations[0].id))
+  assert.deepEqual(database.deleteInvitations([invitation.id]), { deleted: 0, blockedByUsed: true })
   const batchInvitations = ['batch-invite-a', 'batch-invite-b'].map(id => database.createInvitation(id, `${id}-hash-fixture`, 'vulnlab', new Date(Date.now() + 86_400_000).toISOString()))
-  assert.equal(database.deleteInvitations(batchInvitations.map(item => item.id)), 2)
-  assert.equal(database.deleteInvitations(batchInvitations.map(item => item.id)), 0)
+  assert.deepEqual(database.deleteInvitations(batchInvitations.map(item => item.id)), { deleted: 2, blockedByUsed: false })
+  assert.deepEqual(database.deleteInvitations(batchInvitations.map(item => item.id)), { deleted: 0, blockedByUsed: false })
   database.addAudit('vulnlab', 'test.record', 'fixture', 'deletable audit')
   const deletableAudit = database.listAudit(firstRecordPage).items.find(item => item.detail === 'deletable audit')
   assert.ok(deletableAudit)
@@ -286,6 +304,32 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(filteredNextPage.items.length, 1)
   assert.equal(filteredNextPage.total, 51)
   assert.equal(new Set([...filteredPage.items, ...filteredNextPage.items].map(item => item.id)).size, 51)
+
+  const legacyDataDir = join(dataDir, 'legacy')
+  await mkdir(legacyDataDir, { recursive: true })
+  const legacyDb = new SQLiteDatabase(join(legacyDataDir, 'vulnlab.sqlite'))
+  legacyDb.exec(`CREATE TABLE invitations (
+    id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL
+  )`)
+  legacyDb.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?, ?, ?)').run('legacy-used', 'legacy-used-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString(), new Date().toISOString(), null, new Date().toISOString())
+  legacyDb.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?, ?, ?)').run('legacy-unused', 'legacy-unused-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString(), null, null, new Date().toISOString())
+  legacyDb.close()
+  const migratedDatabase = new VulnLabDatabase(legacyDataDir)
+  try {
+    const migratedInvitations = migratedDatabase.listInvitations(firstRecordPage).items
+    assert.equal(migratedInvitations.find(item => item.id === 'legacy-used')?.status, 'used')
+    assert.equal(migratedInvitations.find(item => item.id === 'legacy-used')?.usedByUserName, null)
+    assert.equal(migratedInvitations.find(item => item.id === 'legacy-unused')?.status, 'active')
+    assert.equal(migratedInvitations.find(item => item.id === 'legacy-unused')?.usedByUserName, null)
+  } finally {
+    migratedDatabase.close()
+  }
 } finally {
   database.close()
   await rm(dataDir, { recursive: true, force: true })
