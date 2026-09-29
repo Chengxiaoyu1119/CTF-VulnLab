@@ -31,6 +31,7 @@ const DETAIL_POLL_INTERVAL = 5000
 const REQUEST_TIMEOUT_MS = 15000
 const START_REQUEST_TIMEOUT_MS = 150000
 const START_WAIT_TIMEOUT_MS = 150000
+const LAB_ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
 const OVERLAY_EXIT_DURATION = 190
 const accountPattern = /^[A-Za-z0-9._-]{3,32}$/
 
@@ -59,6 +60,13 @@ const state = {
   labDetailId: null,
   adminPanelOpen: false,
   adminView: 'profile',
+  adminLabAdvancedOpen: false,
+  adminLabDraft: {
+    title: '', sourceType: 'git', sourceUrl: '', sourceRef: '', archiveFileName: '', runtimeKind: 'native-php', runtimeProfile: 'static-php',
+    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
+    category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
+  },
+  adminLabArchiveFile: null,
   adminRecordsPanel: null,
   adminRecordsReturnFocus: null,
   adminSelectedRecordIds: { invitations: [], audit: [], users: [] },
@@ -149,6 +157,38 @@ async function request(path, options = {}) {
   }
 }
 
+async function uploadLabArchive(file) {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), START_REQUEST_TIMEOUT_MS)
+  const fileName = String(file?.name ?? '').replace(/[^\x20-\x7e]/g, '_')
+  const headers = {
+    'Content-Type': 'application/octet-stream',
+    ...(state.csrfToken ? { 'X-CSRF-Token': state.csrfToken } : {}),
+    ...(fileName ? { 'X-VulnLab-File-Name': fileName } : {}),
+  }
+  try {
+    const response = await fetch('/api/lab-archives', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers,
+      body: file,
+      signal: controller.signal,
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new ApiError(payload.message ?? `请求失败（${response.status}）`, response.status, payload.code ?? '')
+    if (!payload || typeof payload.token !== 'string' || typeof payload.sourceUrl !== 'string') {
+      throw new ApiError('压缩包上传响应无效。', 502, 'LAB_ARCHIVE_RESPONSE_INVALID')
+    }
+    return payload
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (error?.name === 'AbortError') throw new ApiError('压缩包上传超时，请稍后重试。', 504, 'REQUEST_TIMEOUT')
+    throw new ApiError('本地服务连接失败，请确认 VulnLab 服务正在运行。', 0)
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
 const adminRecordPath = panel => panel === 'invitations' ? '/api/auth/invitations' : panel === 'users' ? '/api/auth/users' : '/api/audit'
 const adminRecordId = (panel, item) => panel === 'users' ? item.userName : item.id
 const isAdminRecordSelectable = (panel, item) => !(panel === 'users' && item.kind === 'system') && !(panel === 'invitations' && item.status === 'used')
@@ -173,6 +213,16 @@ function resetAdminRecords() {
   state.adminActivityDate = ''
   state.adminSystemReturnLabId = null
   state.adminSystemScrollTop = 0
+}
+
+function resetAdminLabDraft() {
+  state.adminLabDraft = {
+    title: '', sourceType: 'git', sourceUrl: '', sourceRef: '', archiveFileName: '', runtimeKind: 'native-php', runtimeProfile: 'static-php',
+    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
+    category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
+  }
+  state.adminLabAdvancedOpen = false
+  state.adminLabArchiveFile = null
 }
 
 async function loadAdminRecords(panel, append = false) {
@@ -378,11 +428,12 @@ function recordArrowIcon() {
 }
 
 function labsShell() {
+  const centerLabel = state.session?.role === 'admin' ? '管理中心' : '个人中心'
   return `<div class="labs-screen">
     <section class="lab-workspace">
       <div class="workspace-brand">
         <img class="workspace-brand-mark" src="/favicon.png" alt="" />
-        <h1 class="workspace-brand-name" aria-label="VulnLab"><button class="workspace-brand-trigger" type="button" data-action="open-admin-panel" aria-label="管理中心" title="打开管理中心">VulnLab</button></h1>
+        <h1 class="workspace-brand-name" aria-label="VulnLab"><button class="workspace-brand-trigger" type="button" data-action="open-admin-panel" aria-label="${centerLabel}" title="打开${centerLabel}">VulnLab</button></h1>
         <p class="workspace-brand-subtitle">攻防控制台</p>
       </div>
       <main class="lab-canvas" tabindex="-1"></main>
@@ -410,10 +461,7 @@ const coverAssets = Object.freeze({
 const coverVariant = lab => Object.hasOwn(coverAssets, lab.slug) ? lab.slug : 'default'
 const coverArt = (lab, imageClass = 'lab-card-cover', lazy = false) => coverAssets[lab.slug]
   ? `<img class="${esc(imageClass)}" data-cover-image="true" src="${coverAssets[lab.slug]}" alt="${esc(lab.title)} 封面"${lazy ? ' loading="lazy"' : ''} decoding="async" />`
-  : ''
-const latestFailedJob = lab => state.jobs
-  .filter(job => job.labId === lab.id && job.status === 'error')
-  .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0] ?? null
+  : `<span class="${esc(imageClass)} lab-card-cover-fallback" aria-hidden="true">${esc(Array.from(String(lab.title ?? '靶').trim())[0] ?? '靶')}</span>`
 const jobStageLabel = stage => ({
   queued: '排队等待',
   starting: '准备启动',
@@ -458,9 +506,7 @@ function labDetailModal() {
   const activeJob = state.jobs
     .filter(job => job.labId === lab.id && ['queued', 'importing'].includes(job.status))
     .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0] ?? null
-  const failedJob = lab.status === 'error' ? latestFailedJob(lab) : null
   const failed = lab.status === 'error'
-  const failureMessage = readableError(failedJob?.error)
   const instance = state.instances.find(item => item.labId === lab.id && item.status === 'running')
   const starting = busyFor('start-instance', lab.id)
   const preparing = importing || queued
@@ -481,14 +527,13 @@ function labDetailModal() {
   const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
   const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
-  const errorInfo = failureMessage ? `<p class="lab-detail-error" role="alert">${esc(failureMessage)}</p>` : ''
   const runningInfo = instance
     ? (() => { const lease = leaseDisplay(instance.expiresAt); return `<section class="lab-detail-runtime" aria-label="运行状态"><div class="lab-detail-runtime-head"><div><span class="lab-detail-running-dot" aria-hidden="true"></span><strong>运行中</strong></div><strong class="lab-detail-remaining">${esc(lease.remaining)}</strong></div><div class="lab-detail-runtime-meta"><time datetime="${esc(instance.expiresAt)}">${esc(lease.expires)}</time><div class="lab-detail-endpoint" aria-label="入口 ${esc(instance.endpoint)}"><code>${esc(instance.endpoint)}</code></div></div></section>` })()
     : ''
   const managementActions = instance && admin
     ? `<button class="button button-quiet lab-detail-stop lab-detail-action" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button><button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button>`
     : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${errorInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
 }
 
 function passwordToggleIcon(visible) {
@@ -722,6 +767,45 @@ function updateLabCanvasScrollState() {
   canvas.classList.toggle('can-scroll-down', hasScroll && !atBottom)
 }
 
+function positionAuditActionMenu(details) {
+  if (!(details instanceof HTMLDetailsElement) || !details.matches('.admin-action-select')) return
+  const options = details.querySelector('.admin-action-options')
+  const summary = details.querySelector('summary')
+  const dialog = details.closest('.admin-dialog')
+  if (!options || !summary || !dialog) return
+  if (!details.open) {
+    details.classList.remove('opens-up')
+    options.style.removeProperty('left')
+    options.style.removeProperty('top')
+    options.style.removeProperty('bottom')
+    options.style.maxHeight = ''
+    return
+  }
+  const dialogBox = dialog.getBoundingClientRect()
+  const summaryBox = summary.getBoundingClientRect()
+  const gap = 4
+  const naturalHeight = Math.min(options.scrollHeight, 240)
+  const edge = 8
+  const topEdge = Math.max(edge, dialogBox.top + edge)
+  const bottomEdge = Math.min(window.innerHeight - edge, dialogBox.bottom - edge)
+  const below = Math.max(0, bottomEdge - summaryBox.bottom - gap)
+  const above = Math.max(0, summaryBox.top - topEdge - gap)
+  const opensUp = above > below
+  const available = opensUp ? above : below
+  const menuWidth = 190
+  const left = Math.max(edge, Math.min(summaryBox.left, window.innerWidth - menuWidth - edge))
+  const height = Math.max(44, Math.min(naturalHeight, available || naturalHeight))
+  details.classList.toggle('opens-up', opensUp)
+  options.style.left = `${left}px`
+  options.style.top = `${opensUp ? Math.max(topEdge, summaryBox.top - height - gap) : Math.min(bottomEdge - height, summaryBox.bottom + gap)}px`
+  options.style.bottom = 'auto'
+  options.style.maxHeight = `${height}px`
+}
+
+function positionOpenAuditActionMenus() {
+  app.querySelectorAll('.admin-action-select[open]').forEach(positionAuditActionMenu)
+}
+
 function patchLabs() {
   const canvas = app.querySelector('.lab-canvas')
   const visibleLabs = state.labs
@@ -819,14 +903,73 @@ function adminPanel() {
   const profile = state.session ? (() => {
     return `<section class="profile-view" aria-labelledby="profile-title"><div class="profile-avatar-frame"><img class="profile-avatar" src="/favicon.png" alt="VulnLab项目图标" /></div><h3 id="profile-title" class="profile-name">${esc(state.session.userName)}</h3></section>`
   })() : ''
-  const content = view === 'system' ? adminSystemPanel() : ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
-  const navItems = isAdmin ? [['profile', '个人中心'], ['system', '系统数据'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]
+  const content = view === 'system' ? adminSystemPanel() : view === 'labs' ? adminLabsPanel() : ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
+  const navItems = isAdmin ? [['profile', '个人中心'], ['system', '系统数据'], ['labs', '靶场管理'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]
   const nav = navItems.map(([section, label]) => `<button class="admin-nav-button${view === section ? ' is-active' : ''}" type="button" data-action="open-admin-section" data-section="${section}" aria-label="${label}" aria-current="${view === section ? 'page' : 'false'}"><span>${label}</span></button>`).join('')
   const title = isAdmin ? '管理中心' : '个人中心'
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
   const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
   return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div><button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+}
+
+function adminLabsPanel() {
+  const draft = state.adminLabDraft
+  const customLabs = state.labs.filter(lab => !lab.builtin)
+  const statusLabels = { cataloged: '未就绪', queued: '排队中', importing: '准备中', ready: '已就绪', error: '准备失败', disabled: '已停用' }
+  const runtimeLabels = { 'native-php': 'PHP', 'native-node': 'Node.js', 'native-java': 'Java', 'native-python': 'Python' }
+  const option = (value, label, current) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`
+  const profiles = {
+    'native-php': [['static-php', '静态 PHP'], ['mysql-php', 'PHP + MySQL']],
+    'native-node': [['prebuilt-node', 'Node.js 项目']],
+    'native-java': [['webgoat', 'WebGoat'], ['java-jar', '通用 Java JAR']],
+    'native-python': [['pygoat', 'PyGoat'], ['python-script', '通用 Python 文件']],
+  }
+  const runtimeProfile = draft.runtimeProfile || profiles[draft.runtimeKind]?.[0]?.[0] || 'static-php'
+  const profileOptions = (profiles[draft.runtimeKind] ?? profiles['native-php']).map(([value, label]) => option(value, label, runtimeProfile)).join('')
+  const runtimeField = (name, label, value, placeholder, type = 'text') => `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`
+  let runtimeFields = ''
+  if (runtimeProfile === 'static-php' || runtimeProfile === 'mysql-php') {
+    runtimeFields = `${runtimeField('documentRoot', 'PHP 文档根目录（可选）', draft.documentRoot, '留空使用压缩包根目录')}${runtimeField('entryPath', 'PHP 入口文件', draft.entryPath || 'index.php', 'index.php')}${runtimeProfile === 'mysql-php' ? runtimeField('initSqlPath', 'MySQL 初始化 SQL', draft.initSqlPath || 'init.sql', 'init.sql') : ''}`
+  } else if (runtimeProfile === 'prebuilt-node') {
+    runtimeFields = `${runtimeField('entryPath', 'Node.js 入口文件（可选）', draft.entryPath, '例如：server.js')}<label>Node.js 启动参数（可选）<textarea name="nodeArgs" rows="2" placeholder="每行一个参数，例如：--port / 3000">${esc(draft.nodeArgs)}</textarea></label>`
+  } else if (runtimeProfile === 'webgoat') {
+    runtimeFields = runtimeField('entryPath', 'Java JAR 入口文件', draft.entryPath || 'webgoat.jar', 'webgoat.jar')
+  } else if (runtimeProfile === 'java-jar') {
+    runtimeFields = `${runtimeField('entryPath', 'Java JAR 运行文件', draft.entryPath || 'app.jar', 'app.jar')}${runtimeField('portArg', 'Java 端口参数（可选）', draft.portArg, '--server.port={port}')}<label>Java 启动参数（可选）<textarea name="javaArgs" rows="2" placeholder="每行一个参数，例如：--profile / demo">${esc(draft.javaArgs)}</textarea></label>`
+  } else if (runtimeProfile === 'python-script') {
+    runtimeFields = `${runtimeField('entryPath', 'Python 运行文件', draft.entryPath || 'app.py', 'app.py')}${runtimeField('portArg', 'Python 端口参数（可选）', draft.portArg, '--port={port}')}<label>Python 启动参数（可选）<textarea name="pythonArgs" rows="2" placeholder="每行一个参数，例如：--mode / lab">${esc(draft.pythonArgs)}</textarea></label>`
+  } else {
+    runtimeFields = `${runtimeField('entryPath', 'Python manage.py 入口', draft.entryPath || 'manage.py', 'manage.py')}${runtimeField('settingsPath', 'Django 设置文件', draft.settingsPath || 'pygoat/settings.py', 'pygoat/settings.py')}`
+  }
+  const sourceField = draft.sourceType === 'archive'
+     ? `<label>本地压缩包<input name="archiveFile" type="file" accept=".zip,application/zip,application/x-zip-compressed"><span class="admin-lab-file-hint" data-archive-file-name>${esc(draft.archiveFileName || '选择 ZIP 文件，最大 256 MiB')}</span></label>`
+    : `<label>来源地址<input name="sourceUrl" type="url" required value="${esc(draft.sourceUrl)}" placeholder="https://github.com/组织/项目"></label>`
+  const rows = customLabs.length
+    ? customLabs.map(lab => `<div class="admin-lab-row"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><span>${esc(lab.sourceType === 'git' ? 'Git 仓库' : '压缩包')} · ${esc(runtimeLabels[lab.runtimeKind] ?? lab.runtimeKind)}</span></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span></div>`).join('')
+    : '<div class="admin-empty-state">还没有自定义靶场，使用上方表单添加。</div>'
+  return `<section class="admin-lab-view" data-admin-view="labs" aria-label="靶场管理">
+    <div class="admin-lab-heading"><h3>添加靶场</h3></div>
+    <form class="admin-lab-form" id="admin-lab-form">
+      <div class="admin-lab-form-primary">
+        <div class="admin-lab-form-grid admin-lab-form-primary-grid"><label>名称<input name="title" required maxlength="80" value="${esc(draft.title)}" placeholder="例如：OWASP WebGoat"></label><label>运行环境<select name="runtimeKind">${option('native-php', 'PHP', draft.runtimeKind)}${option('native-node', 'Node.js', draft.runtimeKind)}${option('native-java', 'Java', draft.runtimeKind)}${option('native-python', 'Python', draft.runtimeKind)}</select></label></div>
+        <div class="admin-lab-form-grid admin-lab-source-grid"><label>来源类型<select name="sourceType">${option('git', 'Git 仓库', draft.sourceType)}${option('archive', '本地 ZIP 压缩包', draft.sourceType)}</select></label>${sourceField}</div>
+      </div>
+      <details class="admin-lab-advanced"${state.adminLabAdvancedOpen ? ' open' : ''}>
+        <summary><strong>高级设置</strong><span>分支、启动入口与展示信息</span></summary>
+        <div class="admin-lab-advanced-body">
+          <div class="admin-lab-form-grid"><label>版本 / 分支<input name="sourceRef" value="${esc(draft.sourceRef)}" placeholder="留空使用默认版本"></label><label>运行模板<select name="runtimeProfile">${profileOptions}</select></label></div>
+          <div class="admin-lab-form-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label></div>
+          <label>许可证<input name="license" value="${esc(draft.license)}" placeholder="留空标记为未声明"></label>
+          <div class="admin-lab-form-grid admin-lab-runtime-grid">${runtimeFields}</div>
+          <label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label>
+          <label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label>
+        </div>
+      </details>
+      <div class="admin-lab-form-actions"><button class="button button-primary" type="submit" ${busyFor('create-lab') ? 'disabled' : ''}>${busyFor('create-lab') ? '添加中…' : '添加靶场'}</button></div>
+    </form>
+    <section class="admin-lab-list" aria-label="自定义靶场列表"><div class="admin-system-card-heading"><h3>已添加</h3></div>${rows}</section>
+  </section>`
 }
 
 function adminSystemPanel() {
@@ -922,9 +1065,10 @@ function adminRecordsPanel() {
   const pagination = nextCursor ? `<div class="admin-record-pagination"><span class="sr-only">还有更多${recordLabel}记录</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
   const auditActions = isAuditPanel ? Object.entries(actionLabels).sort((left, right) => left[0].localeCompare(right[0])).map(([value, label]) => `<button class="admin-action-option" type="button" data-action="filter-audit-action" data-value="${esc(value)}" aria-pressed="${state.adminAuditAction === value}">${esc(label)}</button>`).join('') : ''
   const auditSelectionToolbar = !state.adminLoading && !state.adminError && records.length
+  const auditSelectAllControl = auditSelectionToolbar ? selectAllControl : ''
   const auditActionLabel = actionLabels[state.adminAuditAction] ?? '全部操作'
   const auditActionFilter = `<div class="admin-record-filter"><span>操作类型</span><details class="admin-action-select" data-audit-action-filter="${esc(state.adminAuditAction)}"><summary aria-label="按操作类型筛选审计记录" aria-controls="admin-audit-action-options"><span>${esc(auditActionLabel)}</span></summary><div class="admin-action-options" id="admin-audit-action-options" role="group" aria-label="操作类型"><button class="admin-action-option" type="button" data-action="filter-audit-action" data-value="" aria-pressed="${!state.adminAuditAction}">全部操作</button>${auditActions}</div></details></div>`
-  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计筛选与批量操作">${auditSelectionToolbar ? selectAllControl : ''}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button>${auditSelectionToolbar ? selectionActions : ''}</div>` : ''
+  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计筛选与批量操作">${auditSelectAllControl}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button>${auditSelectionToolbar ? selectionActions : ''}</div>` : ''
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const userRows = isUserPanel ? records.map(item => {
     if (item.kind === 'system') {
@@ -1100,6 +1244,7 @@ function clearAuthenticatedState() {
   state.adminPanelOpen = false
   state.adminView = 'profile'
   state.adminRecordsPanel = null
+  resetAdminLabDraft()
   state.invitation = null
   resetAdminRecords()
   state.toast = null
@@ -1124,7 +1269,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1217,6 +1362,7 @@ async function runAction(action, element) {
     state.adminPanelOpen = true
     state.adminView = 'profile'
     state.adminRecordsPanel = null
+    resetAdminLabDraft()
     resetAdminRecords()
     state.adminLoading = true
     state.adminError = ''
@@ -1224,13 +1370,23 @@ async function runAction(action, element) {
     await refreshAdminPanel()
     return
   }
+  if (action === 'open-admin-lab-form') {
+    if (!state.session || state.session.role !== 'admin') return
+    rememberModalFocus(element)
+    state.adminPanelOpen = true
+    state.adminView = 'labs'
+    state.adminRecordsPanel = null
+    state.adminLoading = false
+    render()
+    return
+  }
   if (action === 'open-admin-section') {
     const section = element.dataset.section
-    if (!['invitations', 'audit', 'users', 'profile', 'system'].includes(section)) return
+    if (!['invitations', 'audit', 'users', 'profile', 'system', 'labs'].includes(section)) return
     if (!state.session || section !== 'profile' && state.session.role !== 'admin') return
     if (section !== 'audit') state.adminAuditReturnToSystem = null
     state.adminView = section
-    if (section === 'profile' || section === 'system') {
+    if (section === 'profile' || section === 'system' || section === 'labs') {
       state.adminRecordsPanel = null
       render()
       if (section === 'system') await refreshAdminOverview()
@@ -1265,6 +1421,7 @@ async function runAction(action, element) {
     state.adminPanelOpen = false
     state.adminView = 'profile'
     state.adminRecordsPanel = null
+    resetAdminLabDraft()
     resetAdminRecords()
     render()
     restoreModalFocus()
@@ -1523,10 +1680,58 @@ document.addEventListener('pointerdown', event => {
 })
 
 window.addEventListener('resize', updateLabCanvasScrollState)
+window.addEventListener('resize', positionOpenAuditActionMenus)
+
+document.addEventListener('scroll', event => {
+  if (event.target instanceof Element && event.target.closest('.admin-dialog-content')) positionOpenAuditActionMenus()
+}, true)
+
+app.addEventListener('toggle', event => {
+  const details = event.target
+  if (!(details instanceof HTMLDetailsElement)) return
+  if (details.matches('.admin-lab-advanced')) {
+    state.adminLabAdvancedOpen = details.open
+    return
+  }
+  if (!details.matches('.admin-action-select')) return
+  positionAuditActionMenu(details)
+  window.requestAnimationFrame(() => positionAuditActionMenu(details))
+}, true)
 
 app.addEventListener('change', event => {
   const input = event.target
-  if (!(input instanceof HTMLInputElement || input instanceof HTMLSelectElement)) return
+  if (!(input instanceof HTMLInputElement || input instanceof HTMLSelectElement || input instanceof HTMLTextAreaElement)) return
+  if (input.form?.id === 'admin-lab-form' && input.name === 'archiveFile') {
+    const file = input.files?.[0] ?? null
+    state.adminLabArchiveFile = file
+    state.adminLabDraft.archiveFileName = file?.name ?? ''
+    const hint = input.form.querySelector('[data-archive-file-name]')
+    if (hint) hint.textContent = file ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB` : '选择 ZIP 文件，最大 256 MiB'
+    return
+  }
+  if (input.form?.id === 'admin-lab-form' && Object.hasOwn(state.adminLabDraft, input.name)) {
+    state.adminLabAdvancedOpen = Boolean(input.form.querySelector('.admin-lab-advanced')?.open)
+    state.adminLabDraft[input.name] = input.value
+    if (input.name === 'runtimeKind') {
+      state.adminLabDraft.runtimeProfile = ({ 'native-php': 'static-php', 'native-node': 'prebuilt-node', 'native-java': 'webgoat', 'native-python': 'pygoat' })[input.value] ?? 'static-php'
+      state.adminLabDraft.documentRoot = ''
+      state.adminLabDraft.entryPath = ''
+      state.adminLabDraft.initSqlPath = ''
+      state.adminLabDraft.nodeArgs = ''
+      state.adminLabDraft.javaArgs = ''
+      state.adminLabDraft.pythonArgs = ''
+      state.adminLabDraft.portArg = ''
+      state.adminLabDraft.settingsPath = ''
+      render()
+    }
+    if (input.name === 'runtimeProfile') render()
+    if (input.name === 'sourceType') {
+      state.adminLabArchiveFile = null
+      state.adminLabDraft.archiveFileName = ''
+      render()
+    }
+    return
+  }
   if (input.dataset.auditFilter) {
     const dateInput = app.querySelector('[data-audit-filter="date"]')
     const actionFilter = app.querySelector('[data-audit-action-filter]')
@@ -1559,6 +1764,93 @@ app.addEventListener('error', event => {
 app.addEventListener('submit', async event => {
   event.preventDefault()
   const form = event.target
+  if (form.id === 'admin-lab-form') {
+    if (!state.session || state.session.role !== 'admin' || busyFor('create-lab')) return
+    const values = Object.fromEntries(new FormData(form).entries())
+    const sourceType = String(values.sourceType ?? 'git')
+    const archiveValue = values.archiveFile
+    const archiveFile = archiveValue && typeof archiveValue === 'object' && Number(archiveValue.size) > 0 ? archiveValue : state.adminLabArchiveFile
+    const profile = String(values.runtimeProfile ?? '').trim() || ({ 'native-php': 'static-php', 'native-node': 'prebuilt-node', 'native-java': 'webgoat', 'native-python': 'pygoat' })[String(values.runtimeKind ?? 'native-php')] || 'static-php'
+    const runtimeConfig = { profile }
+    const addConfigText = (name) => {
+      const value = String(values[name] ?? '').trim()
+      if (value) runtimeConfig[name] = value
+    }
+    if (profile === 'static-php' || profile === 'mysql-php') {
+      addConfigText('documentRoot')
+      addConfigText('entryPath')
+      if (profile === 'mysql-php') addConfigText('initSqlPath')
+    } else if (profile === 'prebuilt-node') {
+      addConfigText('entryPath')
+      const nodeArgs = String(values.nodeArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
+      if (nodeArgs.length) runtimeConfig.nodeArgs = nodeArgs
+    } else if (profile === 'webgoat') {
+      addConfigText('entryPath')
+    } else if (profile === 'java-jar') {
+      addConfigText('entryPath')
+      addConfigText('portArg')
+      const javaArgs = String(values.javaArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
+      if (javaArgs.length) runtimeConfig.javaArgs = javaArgs
+    } else {
+      addConfigText('entryPath')
+      if (profile === 'python-script') {
+        addConfigText('portArg')
+        const pythonArgs = String(values.pythonArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
+        if (pythonArgs.length) runtimeConfig.pythonArgs = pythonArgs
+      } else addConfigText('settingsPath')
+    }
+    const payload = {
+      title: String(values.title ?? '').trim(),
+      sourceType,
+      sourceUrl: String(values.sourceUrl ?? '').trim(),
+      sourceRef: String(values.sourceRef ?? '').trim(),
+      runtimeKind: String(values.runtimeKind ?? 'native-php'),
+      runtimeProfile: profile,
+      profile,
+      runtimeConfig,
+      category: String(values.category ?? '').trim(),
+      difficulty: String(values.difficulty ?? '入门'),
+      license: String(values.license ?? '').trim(),
+      summary: String(values.summary ?? '').trim(),
+      tags: String(values.tags ?? '').split(/[，,]/).map(item => item.trim()).filter(Boolean),
+    }
+    if (!payload.title) {
+      setToast('请填写靶场名称。', 'error')
+      return
+    }
+    if (sourceType === 'git' && !payload.sourceUrl) {
+      setToast('请填写靶场来源地址。', 'error')
+      return
+    }
+    if (sourceType === 'archive' && (!archiveFile || Number(archiveFile.size) === 0)) {
+      setToast('请选择有效的 ZIP 压缩包。', 'error')
+      return
+    }
+    if (sourceType === 'archive' && Number(archiveFile.size) > LAB_ARCHIVE_MAX_BYTES) {
+      setToast('压缩包不能超过 256 MiB。', 'error')
+      return
+    }
+    state.adminLabDraft = { ...state.adminLabDraft, ...payload, tags: payload.tags.join(', ') }
+    beginBusy('create-lab')
+    try {
+      if (sourceType === 'archive') {
+        const uploaded = await uploadLabArchive(archiveFile)
+        payload.sourceUrl = uploaded.sourceUrl
+      }
+      await request('/api/labs', { method: 'POST', body: JSON.stringify(payload), timeout: START_REQUEST_TIMEOUT_MS })
+      await refresh()
+      resetAdminLabDraft()
+      state.adminView = 'labs'
+      state.adminRecordsPanel = null
+      setToast('靶场已添加，资源将在后台准备。')
+    } catch (error) {
+      setToast(error.message, 'error')
+    } finally {
+      endBusy('create-lab')
+      render()
+    }
+    return
+  }
   if (form.id === 'login-form' && state.busy) return
   const values = Object.fromEntries(new FormData(form).entries())
   if (form.id === 'login-form') {
@@ -1630,6 +1922,10 @@ app.addEventListener('submit', async event => {
 
 app.addEventListener('input', event => {
   const input = event.target
+  if (input.form?.id === 'admin-lab-form' && Object.hasOwn(state.adminLabDraft, input.name)) {
+    state.adminLabDraft[input.name] = input.value
+    return
+  }
   if (!input.form || input.form.id !== 'login-form') return
   if (['password', 'passwordConfirm'].includes(input.name)) syncPasswordToggles()
   if (input.name === 'userName') state.loginUserName = input.value

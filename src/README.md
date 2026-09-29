@@ -15,7 +15,7 @@
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
-- `public/`：原生 JavaScript / CSS 工作台；主界面呈现靶场卡片，管理中心弹窗承载个人中心、系统数据、账号、审计和邀请管理，详情弹窗承载实例操作。
+- `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
 - `paths.ts`：统一生成 SQLite、靶场资源、下载缓存、运行实例和导入任务路径。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
 - `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
@@ -37,6 +37,8 @@ npm run dev
 
 离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
+管理员可以通过管理中心添加自定义靶场。来源支持公开 GitHub/GitLab 仓库和本地 ZIP；运行配置使用静态 PHP、PHP + MySQL、Node.js、Java JAR、Python 文件或 PyGoat Django 这几类固定模板。上传包先写入 `data/lab-uploads`，导入成功后再复制到 `data/labs`，SQLite 保存运行模板和永久路径，服务重启时会做路径对账。Node 项目必须带锁文件；带 `requirements.txt` 的自定义 Python 项目必须配置离线 wheelhouse；不符合模板的入口、路径或 ZIP 安全检查会直接拒绝。
+
 Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。PyGoat 依赖只允许通过 `VULNLAB_PYTHON_REQUIREMENTS_FILE` 指向的哈希锁定文件和 `VULNLAB_PYTHON_WHEELHOUSE` 指向的离线 wheelhouse 安装，安装过程不访问包索引。
 
 ## 运行模型
@@ -54,6 +56,8 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 ## 管理中心与账号行为
 
 管理员从工作台左上角的 `VulnLab` 入口打开管理中心。栏目包括个人中心、系统数据、账号管理、审计记录和邀请管理；弹窗内栏目切换保留筛选，关闭或退出登录会清空临时选择状态。
+
+管理员还可以在“靶场管理”栏目创建自定义靶场。添加任务使用管理员 CSRF 会话，任务完成后靶场会进入主目录并出现在工作台；导入期间的状态和错误保存在导入任务中，不会显示为可启动的假就绪状态。
 
 | 接口 | 契约 |
 | --- | --- |
@@ -107,3 +111,7 @@ npm run smoke:toolchains
 生产环境必须显式设置至少 12 字符的 `VULNLAB_ADMIN_PASSWORD` 和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。本地开发保留默认管理员账号 `vulnlab`；注册账号必须使用管理员在管理中心生成的 24 小时一次性邀请码，且当前统一为管理员。注册账号和邀请码状态保存在 SQLite，密码只保存 scrypt 哈希，邀请码只保存 SHA-256 哈希；Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录和注册失败有持久化速率限制。对外监听 `0.0.0.0` 或 `::` 时，还必须设置可信的 `VULNLAB_PUBLIC_URL`。
 
 当前仅维护 Windows x64 本地启动流程，不提供独立服务器部署入口。
+
+## 构建与发行边界
+
+`npm run build` 仅执行 TypeScript 编译并生成 `dist/`，不生成 EXE。当前阶段继续使用 Git 仓库中的源码运行；便携式 Windows 发行版应作为后续独立阶段，随发行目录提供启动器、Node/runtime、前端资源和可写 `data/`，避免每次启动执行 `npm ci` 或重新下载依赖。

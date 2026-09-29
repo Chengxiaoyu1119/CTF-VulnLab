@@ -6,6 +6,22 @@ export type SourceType = 'git' | 'archive'
 
 export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python'
 
+export type LabRuntimeProfile = 'static-php' | 'mysql-php' | 'prebuilt-node' | 'webgoat' | 'pygoat' | 'java-jar' | 'python-script'
+
+export interface LabRuntimeConfig {
+  profile: LabRuntimeProfile
+  /** Relative path inside the imported project. */
+  documentRoot?: string
+  entryPath?: string
+  initSqlPath?: string
+  nodeArgs?: string[]
+  javaArgs?: string[]
+  pythonArgs?: string[]
+  /** 通用进程命令末尾追加的可选参数，支持 {port}/{host} 占位符。 */
+  portArg?: string
+  settingsPath?: string
+}
+
 export type Difficulty = '入门' | '简单' | '中等' | '困难'
 
 export interface Lab {
@@ -20,6 +36,7 @@ export interface Lab {
   license: string
   runtimeKind: RuntimeKind
   providerId: string
+  runtimeConfig: LabRuntimeConfig
   builtin: boolean
   version: string
   status: LabStatus

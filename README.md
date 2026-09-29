@@ -45,7 +45,7 @@ VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面
 
 | 训练工作台 | 管理中心 |
 | --- | --- |
-| 靶场目录、详情、准备状态、启动、访问、续期与停止 | 个人中心、系统数据、账号管理、审计记录、邀请管理 |
+| 靶场目录、详情、准备状态、启动、访问、续期与停止；管理员可从管理中心添加自定义靶场 | 个人中心、系统数据、靶场管理、账号管理、审计记录、邀请管理 |
 | 固定版本来源，首次启动时按需准备资源 | 活动热力图可跳转到当天成功启动审计；邀请码记录使用账号与时间 |
 | PHP、Node.js、Java、Python 与 MariaDB 按靶场选择 | 分页、筛选、键盘操作与窄屏布局共用同一弹窗体验 |
 
@@ -98,6 +98,16 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
 
 九个靶场的目录、版本和运行方式内置在 VulnLab 中。源码和发行包在首次启动时由服务自动下载、校验并保存到项目数据目录；也可以设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 在服务启动时批量准备全部资源。离线包约定为 `<bundle>/runtime/<运行时文件名>`、`<bundle>/labs/<slug>/<version>/source.zip` 或内置发行包固定文件名。
+
+### 自定义靶场
+
+管理员可以在管理中心的“靶场管理”中登记公开 GitHub/GitLab 仓库，或上传本地 ZIP。导入入口只接受四类固定运行契约：静态 PHP、PHP + MySQL、Node.js、Java JAR，以及通用 Python 文件（PyGoat 仍使用 Django 契约）。导入完成后资源复制到 `data/labs`，配置和任务状态写入 SQLite；因此服务重启后仍可见，已缓存资源不会重复下载。ZIP 导入会校验大小、路径穿越、Windows 路径冲突、入口文件和模板字段，导入失败会清理暂存目录。
+
+自定义项目的第三方依赖仍需项目自身提供锁定文件：Node.js 使用 `package-lock.json` / `npm-shrinkwrap.json`，Python `requirements.txt` 只从离线 wheelhouse 安装。当前版本不开放任意命令执行，无法匹配固定契约的项目会被拒绝。
+
+### 构建与发行
+
+`cd src; npm run build` 只是把 TypeScript 编译到 `src/dist`，不是 EXE，也不会把运行时或靶场资源打包进去。当前仓库按源码方式运行即可；后续若要发布 Windows 版本，优先制作包含启动器、Node/runtime、前端资源和可写 `data` 目录的便携式发行目录，再单独设计安装器或 EXE 阶段。
 
 ## 运行依赖
 

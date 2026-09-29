@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
 import { dataPaths } from './paths.js'
-import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabStatus, Overview, OverviewActivity, SessionView, UserRole } from './types.js'
+import type { AppSettings, ImportJob, ImportManifest, Lab, LabInstance, LabRuntimeConfig, LabStatus, Overview, OverviewActivity, SessionView, UserRole } from './types.js'
 
 type Row = Record<string, unknown>
 
@@ -89,6 +89,33 @@ const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
   return runtimeKind
 }
 
+const profileForRuntime = (runtimeKind: Lab['runtimeKind']): LabRuntimeConfig['profile'] => {
+  if (runtimeKind === 'native-node') return 'prebuilt-node'
+  if (runtimeKind === 'native-java') return 'webgoat'
+  if (runtimeKind === 'native-python') return 'pygoat'
+  return 'static-php'
+}
+
+const parseRuntimeConfig = (raw: string, runtimeKind: Lab['runtimeKind']): LabRuntimeConfig => {
+  const fallback = { profile: profileForRuntime(runtimeKind) }
+  try {
+    const value = JSON.parse(raw) as Partial<LabRuntimeConfig>
+    if (typeof value.profile !== 'string' || !['static-php', 'mysql-php', 'prebuilt-node', 'webgoat', 'pygoat', 'java-jar', 'python-script'].includes(value.profile)) return fallback
+    const config: LabRuntimeConfig = { profile: value.profile as LabRuntimeConfig['profile'] }
+    for (const key of ['documentRoot', 'entryPath', 'initSqlPath', 'settingsPath'] as const) {
+      if (typeof value[key] === 'string' && value[key].length <= 160) config[key] = value[key]
+    }
+    if (Array.isArray(value.nodeArgs) && value.nodeArgs.length <= 12 && value.nodeArgs.every(item => typeof item === 'string' && item.length <= 120)) config.nodeArgs = value.nodeArgs
+    for (const key of ['javaArgs', 'pythonArgs'] as const) {
+      if (Array.isArray(value[key]) && value[key].length <= 16 && value[key].every(item => typeof item === 'string' && item.length <= 120)) config[key] = value[key]
+    }
+    if (typeof value.portArg === 'string' && value.portArg.length <= 120) config.portArg = value.portArg
+    return config
+  } catch {
+    return fallback
+  }
+}
+
 const parseLab = (row: Row): Lab => ({
   id: asString(row.id),
   slug: asString(row.slug),
@@ -101,6 +128,7 @@ const parseLab = (row: Row): Lab => ({
   license: asString(row.license),
   runtimeKind: asString(row.runtime_kind) as Lab['runtimeKind'],
   providerId: asString(row.provider_id) || providerForRuntime(asString(row.runtime_kind) as Lab['runtimeKind']),
+  runtimeConfig: parseRuntimeConfig(asString(row.runtime_config_json, '{}'), asString(row.runtime_kind) as Lab['runtimeKind']),
   builtin: Number(row.builtin ?? 0) === 1,
   version: asString(row.version, 'unversioned'),
   status: asString(row.status) as LabStatus,
@@ -198,6 +226,7 @@ export class VulnLabDatabase {
         license TEXT NOT NULL,
         runtime_kind TEXT NOT NULL,
         provider_id TEXT NOT NULL DEFAULT '',
+        runtime_config_json TEXT NOT NULL DEFAULT '{}',
         builtin INTEGER NOT NULL DEFAULT 0,
         version TEXT NOT NULL DEFAULT 'unversioned',
         status TEXT NOT NULL,
@@ -321,6 +350,7 @@ export class VulnLabDatabase {
     this.ensureColumn('import_jobs', 'requested_by', "TEXT NOT NULL DEFAULT 'system'")
     this.ensureColumn('import_jobs', 'manifest_json', 'TEXT')
     this.ensureColumn('labs', 'provider_id', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('labs', 'runtime_config_json', "TEXT NOT NULL DEFAULT '{}'")
     this.ensureColumn('labs', 'builtin', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('labs', 'version', "TEXT NOT NULL DEFAULT 'unversioned'")
     this.ensureColumn('vm_downloads', 'actual_md5', 'TEXT')
@@ -420,7 +450,7 @@ export class VulnLabDatabase {
     const reset = new Set<string>()
     const timestamp = now()
     this.db.transaction(() => {
-      const labs = this.db.prepare("SELECT id, slug, version, runtime_kind, status, local_path FROM labs WHERE builtin = 1 AND status != 'disabled'").all() as Array<{
+      const labs = this.db.prepare("SELECT id, slug, version, runtime_kind, status, local_path FROM labs WHERE status != 'disabled'").all() as Array<{
         id: string
         slug: string
         version: string
@@ -493,7 +523,7 @@ export class VulnLabDatabase {
 
   listLabs(): Lab[] {
     const seedOrder = new Map(seedLabs.map((item, index) => [item.slug, index]))
-    return this.db.prepare("SELECT * FROM labs WHERE builtin = 1 AND status != 'disabled'").all()
+    return this.db.prepare("SELECT * FROM labs WHERE status != 'disabled'").all()
       .map(row => parseLab(row as Row))
       .sort((left, right) => {
         const leftOrder = seedOrder.get(left.slug) ?? Number.MAX_SAFE_INTEGER
@@ -513,14 +543,14 @@ export class VulnLabDatabase {
     return row ? parseLab(row) : null
   }
 
-  createLab(input: Omit<Lab, 'id' | 'createdAt' | 'updatedAt' | 'importedAt' | 'localPath' | 'status' | 'providerId' | 'builtin' | 'version'> & { status?: LabStatus; providerId?: string; builtin?: boolean; version?: string }): Lab {
+  createLab(input: Omit<Lab, 'id' | 'createdAt' | 'updatedAt' | 'importedAt' | 'localPath' | 'status' | 'providerId' | 'runtimeConfig' | 'builtin' | 'version'> & { status?: LabStatus; providerId?: string; runtimeConfig?: LabRuntimeConfig; builtin?: boolean; version?: string }): Lab {
     const timestamp = now()
     const id = randomUUID()
     this.db.prepare(`
       INSERT INTO labs
-        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, provider_id, builtin, version, status, summary, tags_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.slug, input.title, input.category, input.difficulty, input.sourceType, input.sourceUrl, input.sourceRef, input.license, input.runtimeKind, input.providerId ?? providerForRuntime(input.runtimeKind), input.builtin ? 1 : 0, input.version ?? 'custom', input.status ?? 'queued', input.summary, JSON.stringify(input.tags), timestamp, timestamp)
+        (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, provider_id, runtime_config_json, builtin, version, status, summary, tags_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.slug, input.title, input.category, input.difficulty, input.sourceType, input.sourceUrl, input.sourceRef, input.license, input.runtimeKind, input.providerId ?? providerForRuntime(input.runtimeKind), JSON.stringify(input.runtimeConfig ?? { profile: profileForRuntime(input.runtimeKind) }), input.builtin ? 1 : 0, input.version ?? 'custom', input.status ?? 'queued', input.summary, JSON.stringify(input.tags), timestamp, timestamp)
     return this.getLab(id) as Lab
   }
 
@@ -972,8 +1002,8 @@ export class VulnLabDatabase {
     const count = (sql: string) => Number((this.db.prepare(sql).get() as { count: number }).count)
     const settings = this.getSettings()
     return {
-      labCount: count("SELECT COUNT(*) AS count FROM labs WHERE builtin = 1 AND status != 'disabled'"),
-      readyCount: count("SELECT COUNT(*) AS count FROM labs WHERE builtin = 1 AND status = 'ready'"),
+      labCount: count("SELECT COUNT(*) AS count FROM labs WHERE status != 'disabled'"),
+      readyCount: count("SELECT COUNT(*) AS count FROM labs WHERE status = 'ready'"),
       queuedImportCount: count("SELECT COUNT(*) AS count FROM import_jobs WHERE status IN ('queued', 'importing')"),
       runningInstanceCount: count("SELECT COUNT(*) AS count FROM instances WHERE status = 'running'"),
       maxInstances: Number(settings.maxInstances),

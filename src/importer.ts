@@ -58,8 +58,9 @@ export const cleanupImportStaging = async (path: string) => {
   }
 }
 
-export const cleanupStaleVulnLabStaging = async (dataDir: string, now = Date.now()) => {
+export const cleanupStaleVulnLabStaging = async (dataDir: string, now = Date.now(), preserveUploadIds: readonly string[] = []) => {
   const paths = dataPaths(dataDir)
+  const preservedUploads = new Set(preserveUploadIds.map(value => value.toLowerCase()))
   const candidates: string[] = []
   const importJobs = await readdir(paths.imports, { withFileTypes: true }).catch(() => [])
   for (const entry of importJobs) {
@@ -69,13 +70,22 @@ export const cleanupStaleVulnLabStaging = async (dataDir: string, now = Date.now
   for (const entry of runtimeEntries) {
     if (entry.isDirectory()) candidates.push(join(paths.runtimeStaging, entry.name))
   }
+  // 失败的导入保留上传包以便重试；未关联靶场的上传包超过一天后清理。
+  const uploadEntries = await readdir(paths.labUploads, { withFileTypes: true }).catch(() => [])
+  for (const entry of uploadEntries) {
+    if (entry.isFile() && /^[0-9a-f-]{36}\.zip$/i.test(entry.name)) candidates.push(join(paths.labUploads, entry.name))
+  }
   let removed = 0
   for (const path of candidates) {
     if (stagingRoots.has(path)) continue
+    if (path.toLowerCase().startsWith(`${paths.labUploads.toLowerCase()}${sep}`)) {
+      const uploadId = basename(path, '.zip').toLowerCase()
+      if (preservedUploads.has(uploadId)) continue
+    }
     const info = await stat(path).catch(() => null)
-    if (!info?.isDirectory() || now - info.mtimeMs < STALE_STAGING_AGE_MS) continue
+    if (!info || now - info.mtimeMs < STALE_STAGING_AGE_MS) continue
     try {
-      await rm(path, { recursive: true, force: true })
+      await rm(path, { recursive: info.isDirectory(), force: true })
       removed += 1
     } catch {
       // Keep the next startup responsible for a directory that is still locked.

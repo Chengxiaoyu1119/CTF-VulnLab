@@ -41,6 +41,7 @@ export const dataPaths = (dataDir: string) => {
   }
   const child = (parent: string, value: string, label: string) => inside(join(parent, segment(value, label)))
   const labs = join(root, 'labs')
+  const labUploads = join(root, 'lab-uploads')
   const imports = join(root, 'imports')
   const downloads = join(root, 'downloads')
   const runtime = join(root, 'runtime')
@@ -52,6 +53,7 @@ export const dataPaths = (dataDir: string) => {
     root,
     database: join(root, 'vulnlab.sqlite'),
     labs,
+    labUploads,
     imports,
     downloads,
     runtime,
@@ -61,6 +63,7 @@ export const dataPaths = (dataDir: string) => {
     runtimeStaging: runtimeLayout.staging,
     labRoot,
     lab,
+    labUpload: (uploadId: string) => child(labUploads, `${segment(uploadId, '靶场上传标识')}.zip`, '靶场上传文件'),
     importJob: (jobId: string) => child(imports, jobId, '导入任务标识'),
     labDownload: (slug: string, version: string) => child(child(downloads, slug, '靶场标识'), version, '靶场版本'),
     runtimeInstance: (instanceId: string) => child(runtime, instanceId, '运行实例标识'),

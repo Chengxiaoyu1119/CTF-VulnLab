@@ -162,4 +162,40 @@ try {
   await rm(nativeRecoveryRoot, { recursive: true, force: true })
 }
 
+// 辅助端口耗尽时，WebGoat 的主端口必须可在下一次尝试中重新分配。
+// 这个夹具让主端口始终返回 6800、辅助端口始终失败；若主端口泄漏，
+// 第二次调用会错误地变成主端口耗尽，而不是继续报告辅助端口耗尽。
+const auxiliaryPortRoot = await mkdtemp(join(tmpdir(), 'vulnlab-java-port-cleanup-'))
+try {
+  const sourceRoot = join(auxiliaryPortRoot, 'labs', 'webgoat', 'fixture')
+  await mkdir(sourceRoot, { recursive: true })
+  const javaPortProvider = new NativeProcessProvider('native-java', {
+    allocatePort: async (_host, start, end) => {
+      if (start === 6800 && end === 6801) return 6800
+      throw new ProviderError('FIXTURE_PORT_UNAVAILABLE', 'fixture port unavailable', 409)
+    },
+  })
+  const javaInput = {
+    instanceId: 'java-port-cleanup',
+    lab: {
+      ...lab,
+      id: 'lab-webgoat',
+      slug: 'webgoat',
+      title: 'WebGoat',
+      runtimeKind: 'native-java',
+      providerId: 'native-java',
+      runtimeConfig: { profile: 'webgoat' },
+      localPath: sourceRoot,
+    },
+    publicOrigin: 'http://127.0.0.1:6710',
+    lifetimeMinutes: 5,
+    dataDir: auxiliaryPortRoot,
+    runtime: { bindHost: '127.0.0.1', portStart: 6800, portEnd: 6801, phpBinary: 'php', nodeBinary: 'node', javaBinary: 'java', pythonBinary: 'python' },
+  }
+  await assert.rejects(javaPortProvider.start(javaInput), error => error instanceof ProviderError && error.code === 'NATIVE_JAVA_AUX_PORT_EXHAUSTED')
+  await assert.rejects(javaPortProvider.start({ ...javaInput, instanceId: 'java-port-cleanup-2' }), error => error instanceof ProviderError && error.code === 'NATIVE_JAVA_AUX_PORT_EXHAUSTED')
+} finally {
+  await rm(auxiliaryPortRoot, { recursive: true, force: true })
+}
+
 console.log('VulnLab provider test passed: native Provider resolution, MySQL cleanup and process recovery.')

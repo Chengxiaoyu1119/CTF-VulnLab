@@ -81,15 +81,23 @@ const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae', 'xvw
 export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDependencyStatus[], dataDir: string) => {
   const status = new Map(dependencies.map(item => [item.id, item]))
   const entries = await Promise.all(labs.map(async lab => {
+    const customMysql = lab.runtimeConfig?.profile === 'mysql-php'
     const required: RuntimeDependencyStatus['id'][] = lab.runtimeKind === 'native-php'
-      ? ['php', ...(databaseLabs.has(lab.slug) ? ['php-mysqli' as const, 'php-pdo-mysql' as const, 'mysql' as const] : [])]
+      ? ['php', ...(databaseLabs.has(lab.slug) || customMysql ? ['php-mysqli' as const, 'php-pdo-mysql' as const, 'mysql' as const] : [])]
       : lab.runtimeKind === 'native-node' ? ['node']
         : lab.runtimeKind === 'native-java' ? ['java']
           : lab.runtimeKind === 'native-python' ? ['python'] : []
     const missing = required.filter(id => !status.get(id)?.available)
-    if (lab.slug === 'pygoat' && lab.status === 'ready') {
-      const marker = join(dataPaths(dataDir).lab(lab.slug, lab.version), '.vulnlab-python-ready')
-      if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push('python')
+    if (lab.runtimeKind === 'native-python' && lab.status === 'ready') {
+      const requirements = lab.builtin || lab.slug === 'pygoat'
+        ? process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE?.trim()
+        : lab.localPath ? join(lab.localPath, 'requirements.txt') : undefined
+      const needsIsolatedEnv = lab.slug === 'pygoat' || Boolean(requirements && await stat(requirements).then(item => item.isFile()).catch(() => false))
+      if (needsIsolatedEnv) {
+        const root = lab.localPath ?? dataPaths(dataDir).lab(lab.slug, lab.version)
+        const marker = join(root, '.vulnlab-python-ready')
+        if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push('python')
+      }
     }
     return [lab.slug, { available: missing.length === 0, missing: [...new Set(missing)].map(id => status.get(id)?.label ?? id) }]
   }))

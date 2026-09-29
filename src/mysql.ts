@@ -36,6 +36,7 @@ export interface MySqlCleanupInput {
 
 export interface MySqlManager {
   provision(input: MySqlProvisionInput): Promise<MySqlResource>
+  initializeSql?(resource: MySqlResource, sql: string): Promise<void>
   verify(resource: MySqlResource): Promise<void>
   destroy(resource: MySqlResource): Promise<void>
   destroyForInstance(input: MySqlCleanupInput): Promise<void>
@@ -180,6 +181,11 @@ export class CliMySqlManager implements MySqlManager {
 
   async verify(resource: MySqlResource) {
     await this.execute(resource.config, resource.user, resource.password, `USE ${mysqlIdentifier(resource.database)}; SELECT 1;`)
+  }
+
+  async initializeSql(resource: MySqlResource, sql: string) {
+    if (!sql.trim() || sql.length > 8 * 1024 * 1024) throw new MySqlManagerError('MYSQL_INIT_SQL_INVALID', 'MySQL 初始化 SQL 为空或超过 8 MiB。')
+    await this.execute(resource.config, resource.user, resource.password, `USE ${mysqlIdentifier(resource.database)}; ${sql}`)
   }
 
   async destroy(resource: MySqlResource) {

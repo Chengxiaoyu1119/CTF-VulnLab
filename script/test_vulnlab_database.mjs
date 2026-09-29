@@ -100,6 +100,37 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
 
   const lab = database.getLabBySlug('upload-labs')
   assert.ok(lab)
+  const customLab = database.createLab({
+    slug: 'fixture-custom-lab',
+    title: 'Fixture 自定义靶场',
+    category: 'Web',
+    difficulty: '简单',
+    sourceType: 'archive',
+    sourceUrl: 'bundle://fixture-custom-lab/source.zip',
+    sourceRef: 'fixture@local',
+    license: 'MIT',
+    runtimeKind: 'native-php',
+    runtimeConfig: { profile: 'static-php', documentRoot: 'public', entryPath: 'public/index.php' },
+    summary: '自定义靶场持久化夹具。',
+    tags: ['fixture', 'custom'],
+  })
+  assert.equal(customLab.builtin, false)
+  assert.equal(customLab.status, 'queued')
+  assert.equal(customLab.runtimeConfig.profile, 'static-php')
+  assert.equal(customLab.runtimeConfig.documentRoot, 'public')
+  assert.equal(customLab.runtimeConfig.entryPath, 'public/index.php')
+  assert.equal(database.getLabBySlug('fixture-custom-lab')?.title, 'Fixture 自定义靶场')
+  assert.deepEqual(database.getLabBySlug('fixture-custom-lab')?.tags, ['fixture', 'custom'])
+  const reopenedDatabase = new VulnLabDatabase(dataDir)
+  try {
+    assert.equal(reopenedDatabase.getLabBySlug('fixture-custom-lab')?.sourceUrl, 'bundle://fixture-custom-lab/source.zip')
+    assert.equal(reopenedDatabase.getLabBySlug('fixture-custom-lab')?.builtin, false)
+    assert.equal(reopenedDatabase.getLabBySlug('fixture-custom-lab')?.runtimeConfig.profile, 'static-php')
+    assert.equal(reopenedDatabase.getLabBySlug('fixture-custom-lab')?.runtimeConfig.documentRoot, 'public')
+    assert.equal(reopenedDatabase.getLabBySlug('fixture-custom-lab')?.runtimeConfig.entryPath, 'public/index.php')
+  } finally {
+    reopenedDatabase.close()
+  }
   const manifestFor = (item, localPath, adapterId = 'github-git') => ({
     adapterId,
     sourceUrl: item.sourceUrl,

@@ -18,7 +18,7 @@ import { prepareInstalledLab } from './runtime-prep.js'
 import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
 import { dataPaths } from './paths.js'
-import type { AppSettings, ImportManifest, Lab, LabInstance, SessionView, SystemOverview } from './types.js'
+import type { AppSettings, Difficulty, ImportManifest, Lab, LabInstance, LabRuntimeConfig, RuntimeKind, SessionView, SourceType, SystemOverview } from './types.js'
 import type { RuntimeToolchainId } from './runtime-toolchains.js'
 
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('VulnLab 当前仅支持 Windows x64。')
@@ -116,6 +116,10 @@ const recoverProviderInstances = async () => {
 }
 const trustProxy = process.env.VULNLAB_TRUST_PROXY === 'true'
 const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 64 * 1024, trustProxy })
+const maxLabUploadBytes = 256 * 1024 * 1024
+for (const contentType of ['application/octet-stream', 'application/zip', 'application/x-zip-compressed']) {
+  app.addContentTypeParser(contentType, { parseAs: 'buffer', bodyLimit: maxLabUploadBytes }, (_request, body, done) => done(null, body))
+}
 const loginWindowMs = 60_000
 const loginLimit = isProduction ? 10 : 30
 const registrationUnavailableMessage = '注册失败，请检查注册信息后重试。'
@@ -172,7 +176,7 @@ const projectToolchainsForLab = (lab: Lab): RuntimeToolchainId[] => {
   if (!useProjectToolchainsByDefault) return []
   if (lab.runtimeKind === 'native-php') return [
     ...(explicitExternalRuntime.php ? [] : ['php' as const]),
-    ...(databaseLabs.has(lab.slug) && !explicitExternalRuntime.mysql ? ['mariadb' as const] : []),
+    ...((databaseLabs.has(lab.slug) || lab.runtimeConfig?.profile === 'mysql-php') && !explicitExternalRuntime.mysql ? ['mariadb' as const] : []),
   ]
   if (lab.runtimeKind === 'native-node') return explicitExternalRuntime.node ? [] : ['node']
   if (lab.runtimeKind === 'native-java') return explicitExternalRuntime.java ? [] : ['java']
@@ -340,6 +344,33 @@ const requireCsrf = (request: FastifyRequest, reply: FastifyReply, session: Sess
 
 const requestBody = (request: FastifyRequest) => (request.body ?? {}) as Record<string, unknown>
 
+const runtimeProfiles: Record<RuntimeKind, readonly LabRuntimeConfig['profile'][]> = {
+  'native-php': ['static-php', 'mysql-php'],
+  'native-node': ['prebuilt-node'],
+  'native-java': ['webgoat', 'java-jar'],
+  'native-python': ['pygoat', 'python-script'],
+}
+
+const defaultRuntimeProfile = (runtimeKind: RuntimeKind): LabRuntimeConfig['profile'] => runtimeProfiles[runtimeKind][0]
+
+const labSlug = (value: string) => value
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 48) || 'custom-lab'
+
+const validDifficulties: readonly Difficulty[] = ['入门', '简单', '中等', '困难']
+
+const textField = (body: Record<string, unknown>, name: string, fallback = '', max = 200) => {
+  const value = body[name]
+  if (value === undefined) return fallback
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  return text.length <= max ? text : null
+}
+
 const recordPageSize = 50
 
 const requestRecordPage = (request: FastifyRequest, reply: FastifyReply): RecordPageOptions | null => {
@@ -431,24 +462,76 @@ const bundledLabArchive = async (lab: Lab) => {
   return (await stat(archive).catch(() => null))?.isFile() ? archive : null
 }
 
+const uploadedLabArchive = async (lab: Lab) => {
+  const match = /^upload:\/\/([0-9a-f-]{36})$/i.exec(lab.sourceUrl)
+  if (!match) return null
+  const archive = storage.labUpload(match[1].toLowerCase())
+  return (await stat(archive).catch(() => null))?.isFile() ? archive : null
+}
+
+const runtimePath = (root: string, relativePath: string, label: string) => {
+  const normalized = relativePath.replaceAll('\\', '/')
+  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || normalized.split('/').some(item => !item || item === '.' || item === '..')) {
+    throw new ImporterError(`${label} 必须是项目内的相对路径。`)
+  }
+  const target = resolve(root, normalized)
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+  if (!target.startsWith(prefix)) throw new ImporterError(`${label} 超出靶场目录。`)
+  return target
+}
+
+const validateImportedLab = async (lab: Lab, localPath: string) => {
+  const rootStat = await stat(localPath).catch(() => null)
+  if (!rootStat?.isDirectory()) throw new ImporterError('靶场压缩包必须解包为项目目录。')
+  const config = lab.runtimeConfig ?? { profile: 'static-php' as const }
+  if (config.profile === 'static-php' || config.profile === 'mysql-php') {
+    const documentRoot = config.documentRoot ? runtimePath(localPath, config.documentRoot, 'PHP 文档根目录') : localPath
+    if (!(await isDirectory(documentRoot))) throw new ImporterError('PHP 文档根目录不存在。')
+    const entryPath = config.entryPath || 'index.php'
+    const entry = runtimePath(documentRoot, entryPath, 'PHP 入口文件')
+    if (!(await stat(entry).then(item => item.isFile()).catch(() => false))) throw new ImporterError(`PHP 入口文件不存在：${entryPath}。`)
+    if (config.profile === 'mysql-php') {
+      const initSql = runtimePath(localPath, config.initSqlPath || 'init.sql', 'MySQL 初始化 SQL')
+      if (!(await stat(initSql).then(item => item.isFile()).catch(() => false))) throw new ImporterError(`MySQL 初始化 SQL 不存在：${config.initSqlPath || 'init.sql'}。`)
+    }
+    return
+  }
+  if (config.profile === 'prebuilt-node') {
+    const candidates = [config.entryPath, 'build/app.js', 'dist/app.js', 'app.js', 'server.js'].filter((value): value is string => Boolean(value))
+    for (const candidate of candidates) if (await stat(runtimePath(localPath, candidate, 'Node.js 入口文件')).then(item => item.isFile()).catch(() => false)) return
+    throw new ImporterError('Node.js 项目缺少可运行入口文件。')
+  }
+  if (config.profile === 'webgoat' || config.profile === 'java-jar') {
+    const candidates = [config.entryPath, config.profile === 'webgoat' ? 'webgoat.jar' : 'app.jar'].filter((value): value is string => Boolean(value))
+    for (const candidate of candidates) if (await stat(runtimePath(localPath, candidate, 'Java JAR 入口')).then(item => item.isFile()).catch(() => false)) return
+    throw new ImporterError('Java 项目缺少可运行 JAR 入口。')
+  }
+  if (config.profile === 'python-script') {
+    const script = runtimePath(localPath, config.entryPath || 'app.py', 'Python 运行文件')
+    if (!(await stat(script).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Python 项目缺少可运行文件。')
+    return
+  }
+  const manage = runtimePath(localPath, config.entryPath || 'manage.py', 'Python 入口文件')
+  if (!(await stat(manage).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Python 项目缺少 manage.py 入口。')
+  const settings = runtimePath(localPath, config.settingsPath || 'pygoat/settings.py', 'Python 设置文件')
+  if (!(await stat(settings).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Python 项目缺少 Django 设置文件。')
+}
+
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
-  if (!lab.builtin || manifest.adapterId === 'builtin-release') return manifest
+  if (manifest.adapterId === 'builtin-release') return manifest
   const targetRoot = storage.lab(lab.slug, lab.version)
   const targetPath = targetRoot
   if (resolve(manifest.localPath) === resolve(targetPath)) return manifest
-  if (await isDirectory(targetRoot)) {
-    const promoted = { ...manifest, localPath: targetPath }
-    await writeFile(join(targetRoot, 'vulnlab.manifest.json'), JSON.stringify(promoted, null, 2), 'utf8')
-    await rm(storage.importJob(jobId), { recursive: true, force: true })
-    return promoted
-  }
-  if (!(await isDirectory(manifest.localPath))) throw new ImporterError('内置靶场安装清单指向的资源已不存在，请重新安装。')
+  const manifestStat = await stat(manifest.localPath).catch(() => null)
+  if (!manifestStat) throw new ImporterError('靶场安装清单指向的资源已不存在，请重新安装。')
+  // 单文件压缩包的清单路径指向文件；Provider 使用目录，因此提升其所在目录。
+  const stagedPath = manifestStat.isFile() ? dirname(manifest.localPath) : manifest.localPath
   await rm(targetRoot, { recursive: true, force: true })
   await mkdir(dirname(targetRoot), { recursive: true })
   try {
-    await rename(manifest.localPath, targetPath)
+    await rename(stagedPath, targetPath)
   } catch {
-    await cp(manifest.localPath, targetPath, { recursive: true, force: true })
+    await cp(stagedPath, targetPath, { recursive: true, force: true })
   }
   const promoted = { ...manifest, localPath: targetPath }
   await writeFile(join(targetRoot, 'vulnlab.manifest.json'), JSON.stringify(promoted, null, 2), 'utf8')
@@ -475,7 +558,7 @@ const runImportJob = (jobId: string, actor: string) => {
     try {
       const progress = (value: number, stage: string, message: string) => database.updateJob(jobId, { status: 'importing', progress: value, stage, message })
       const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
-      const localArchive = hasBuiltinAsset(lab.slug) ? null : await bundledLabArchive(lab)
+      const localArchive = hasBuiltinAsset(lab.slug) ? null : await uploadedLabArchive(lab) ?? await bundledLabArchive(lab)
       if (!hasBuiltinAsset(lab.slug) && !localArchive && !adapter) throw new ImporterError('当前来源没有可用的 Source Adapter。')
       if (!hasBuiltinAsset(lab.slug) && !localArchive && adapter && !adapter.implemented) throw new ImporterError(`${adapter.label} 已登记，但当前版本还未实现下载与运行适配。`)
       if (!hasBuiltinAsset(lab.slug) && !localArchive && offlineMode) throw new ImporterError('当前处于离线模式，未找到该靶场的本地发行包。')
@@ -518,9 +601,16 @@ const runImportJob = (jobId: string, actor: string) => {
           })
         : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
       try {
+        // 单文件压缩包先校验文件所在目录，再提升为持久靶场目录。
+        if (importedManifest.adapterId !== 'builtin-release') {
+          const importedPathStat = await stat(importedManifest.localPath).catch(() => null)
+          const importedProjectPath = importedPathStat?.isFile() ? dirname(importedManifest.localPath) : importedManifest.localPath
+          await validateImportedLab(lab, importedProjectPath)
+        }
         const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
-        await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary)
+        await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary, nativeRuntime.nodeBinary)
         database.completeJob(jobId, manifest)
+        // 上传包与靶场保持关联，Provider 或运行时失败后仍可重新导入。
         await cleanupOutdatedBuiltinVersions({ ...lab, localPath: manifest.localPath })
         database.addAudit(actor, 'import.completed', lab.title, `${manifest.resolvedRef} · sha256:${manifest.archiveSha256}`)
       } finally {
@@ -617,7 +707,7 @@ const queueStartAfterImport = (labId: string, jobId: string, actor: string, orig
     } catch (error) {
       const message = error instanceof Error ? error.message : '靶场准备完成，但启动失败。'
       database.updateLabStatus(preparedLab.id, 'error')
-      database.updateJob(jobId, { message: `资源已准备，但启动失败：${message}`, error: message })
+      database.updateJob(jobId, { status: 'error', stage: 'failed', progress: 0, message: `资源已准备，但启动失败：${message}`, error: message })
       database.addAudit(actor, 'instance.start.failed', preparedLab.title, message)
       app.log.error(error, `靶场 ${preparedLab.slug} 自动启动失败。`)
       return null
@@ -635,7 +725,7 @@ const queueStartAfterImport = (labId: string, jobId: string, actor: string, orig
 const bootstrapBuiltinLabs = async () => {
   for (const job of database.listJobsParsed().filter(item => item.status === 'queued')) {
     const lab = database.getLab(job.labId)
-    if (!lab?.builtin) continue
+    if (!lab || lab.status === 'disabled') continue
     const claimed = database.claimJob(job.id)
     if (claimed) runImportJob(claimed.id, 'system')
   }
@@ -646,7 +736,7 @@ const bootstrapBuiltinLabs = async () => {
         const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
         if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
       }
-      await prepareInstalledLab(database.getLab(lab.id) ?? lab, undefined, nativeRuntime.pythonBinary)
+      await prepareInstalledLab(database.getLab(lab.id) ?? lab, undefined, nativeRuntime.pythonBinary, nativeRuntime.nodeBinary)
       await cleanupOutdatedBuiltinVersions(database.getLab(lab.id) ?? lab)
     } catch (error) {
       const message = error instanceof Error ? error.message : '运行依赖准备失败。'
@@ -838,6 +928,198 @@ app.get('/api/overview', async (request, reply) => {
   return overview
 })
 
+app.post('/api/lab-archives', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const archive = Buffer.isBuffer(request.body) ? request.body : null
+  if (!archive || archive.byteLength === 0) return reply.code(400).send({ code: 'LAB_ARCHIVE_EMPTY', message: '请选择有效的 ZIP 压缩包。' })
+  if (archive.byteLength > maxLabUploadBytes) return reply.code(413).send({ code: 'LAB_ARCHIVE_TOO_LARGE', message: '压缩包不能超过 256 MiB。' })
+  const rawName = request.headers['x-vulnlab-file-name']
+  const fileName = (Array.isArray(rawName) ? rawName[0] : rawName ?? '').trim()
+  if (fileName && !/\.zip$/i.test(fileName)) return reply.code(400).send({ code: 'LAB_ARCHIVE_FORMAT_UNSUPPORTED', message: '当前只接受 ZIP 压缩包。' })
+  const uploadId = randomUUID()
+  const destination = storage.labUpload(uploadId)
+  await mkdir(dirname(destination), { recursive: true })
+  await writeFile(destination, archive, { flag: 'wx' })
+  database.addAudit(session.userName, 'lab.archive.upload', fileName || 'source.zip', `${uploadId} · ${archive.byteLength} bytes`)
+  return reply.code(201).send({ token: uploadId, sourceUrl: `upload://${uploadId}`, size: archive.byteLength })
+})
+
+app.post('/api/labs', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+
+  const body = requestBody(request)
+  const title = textField(body, 'title', '', 80)
+  let sourceUrl = textField(body, 'sourceUrl', '', 500)
+  const sourceType = body.sourceType === undefined ? 'git' : body.sourceType
+  const runtimeKind = body.runtimeKind === undefined ? 'native-php' : body.runtimeKind
+  if (!title || !sourceUrl) return reply.code(400).send({ code: 'LAB_FIELDS_REQUIRED', message: '请填写靶场名称和来源地址。' })
+  if (sourceType !== 'git' && sourceType !== 'archive') return reply.code(409).send({ code: 'LAB_SOURCE_TYPE_UNSUPPORTED', message: '当前添加入口只支持 GitHub、GitLab 或项目 bundle 中的发行包。' })
+  if (typeof runtimeKind !== 'string' || !Object.hasOwn(runtimeProfiles, runtimeKind)) {
+    return reply.code(400).send({ code: 'LAB_RUNTIME_INVALID', message: '运行模板无效。' })
+  }
+  const kind = runtimeKind as RuntimeKind
+  const runtimeConfigBody = body.runtimeConfig && typeof body.runtimeConfig === 'object' && !Array.isArray(body.runtimeConfig)
+    ? body.runtimeConfig as Record<string, unknown>
+    : {}
+  const rawProfile = body.profile ?? runtimeConfigBody.profile
+  const profile = (typeof rawProfile === 'string' && rawProfile.trim() ? rawProfile.trim() : defaultRuntimeProfile(kind)) as LabRuntimeConfig['profile']
+  if (!runtimeProfiles[kind].includes(profile)) {
+    return reply.code(400).send({ code: 'LAB_RUNTIME_PROFILE_INVALID', message: '运行模板与运行类型不匹配。' })
+  }
+  const configValue = (name: string) => body[name] ?? runtimeConfigBody[name]
+  const configText = (name: string, fallback = '', max = 160) => {
+    const value = configValue(name)
+    if (value === undefined) return fallback
+    if (typeof value !== 'string') return null
+    const text = value.trim()
+    return text.length <= max ? text : null
+  }
+  const relativeConfigPath = (name: string, fallback = '') => {
+    const value = configText(name, fallback)
+    if (value === null) return null
+    if (!value) return ''
+    if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.replaceAll('\\', '/').split('/').some(part => part === '.' || part === '..' || !part)) return null
+    return value.replaceAll('\\', '/')
+  }
+  const runtimeConfig: LabRuntimeConfig = { profile }
+  if (profile === 'static-php' || profile === 'mysql-php') {
+    const documentRoot = relativeConfigPath('documentRoot')
+    const entryPath = relativeConfigPath('entryPath', 'index.php')
+    if (documentRoot === null || entryPath === null || !entryPath) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'PHP 文档根目录或入口路径无效。' })
+    if (documentRoot) runtimeConfig.documentRoot = documentRoot
+    runtimeConfig.entryPath = entryPath
+    if (profile === 'mysql-php') {
+      const initSqlPath = relativeConfigPath('initSqlPath', 'init.sql')
+      if (initSqlPath === null || !initSqlPath) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'MySQL 初始化 SQL 路径无效。' })
+      runtimeConfig.initSqlPath = initSqlPath
+    }
+  } else if (profile === 'prebuilt-node') {
+    const entryPath = relativeConfigPath('entryPath')
+    if (entryPath === null) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Node.js 入口路径无效。' })
+    if (entryPath) runtimeConfig.entryPath = entryPath
+    const rawArgs = configValue('nodeArgs')
+    if (rawArgs !== undefined) {
+      if (!Array.isArray(rawArgs) || rawArgs.length > 12 || !rawArgs.every(item => typeof item === 'string' && item.length <= 120)) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Node.js 启动参数无效。' })
+      runtimeConfig.nodeArgs = rawArgs.map(item => item.trim()).filter(Boolean)
+    }
+  } else if (profile === 'webgoat' || profile === 'java-jar') {
+    const entryPath = relativeConfigPath('entryPath', profile === 'webgoat' ? 'webgoat.jar' : 'app.jar')
+    if (entryPath === null || !entryPath) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Java JAR 入口路径无效。' })
+    runtimeConfig.entryPath = entryPath
+    if (profile === 'java-jar') {
+      const rawArgs = configValue('javaArgs')
+      if (rawArgs !== undefined) {
+        if (!Array.isArray(rawArgs) || rawArgs.length > 16 || !rawArgs.every(item => typeof item === 'string' && item.length <= 120)) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Java 启动参数无效。' })
+        runtimeConfig.javaArgs = rawArgs.map(item => item.trim()).filter(Boolean)
+      }
+      const portArg = configText('portArg', '', 120)
+      if (portArg === null || (portArg && !portArg.includes('{port}'))) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Java 端口参数必须包含 {port} 占位符。' })
+      if (portArg) runtimeConfig.portArg = portArg
+    }
+  } else if (profile === 'pygoat') {
+    const entryPath = relativeConfigPath('entryPath', 'manage.py')
+    const settingsPath = relativeConfigPath('settingsPath', 'pygoat/settings.py')
+    if (entryPath === null || settingsPath === null || !entryPath || !settingsPath) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Python 入口或设置路径无效。' })
+    runtimeConfig.entryPath = entryPath
+    runtimeConfig.settingsPath = settingsPath
+  } else {
+    const entryPath = relativeConfigPath('entryPath', 'app.py')
+    if (entryPath === null || !entryPath) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Python 运行文件路径无效。' })
+    runtimeConfig.entryPath = entryPath
+    const rawArgs = configValue('pythonArgs')
+    if (rawArgs !== undefined) {
+      if (!Array.isArray(rawArgs) || rawArgs.length > 16 || !rawArgs.every(item => typeof item === 'string' && item.length <= 120)) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Python 启动参数无效。' })
+      runtimeConfig.pythonArgs = rawArgs.map(item => item.trim()).filter(Boolean)
+    }
+    const portArg = configText('portArg', '', 120)
+    if (portArg === null || (portArg && !portArg.includes('{port}'))) return reply.code(400).send({ code: 'LAB_RUNTIME_CONFIG_INVALID', message: 'Python 端口参数必须包含 {port} 占位符。' })
+    if (portArg) runtimeConfig.portArg = portArg
+  }
+
+  const category = textField(body, 'category', 'Web', 32)
+  const summary = textField(body, 'summary', '', 500)
+  const license = textField(body, 'license', '未声明', 80)
+  const requestedSlug = textField(body, 'slug', '', 48)
+  const rawSourceRef = textField(body, 'sourceRef', '', 200)
+  if (category === null || summary === null || license === null || requestedSlug === null || rawSourceRef === null) {
+    return reply.code(400).send({ code: 'LAB_FIELDS_INVALID', message: '靶场文本字段长度或格式无效。' })
+  }
+  const difficulty = body.difficulty === undefined ? '中等' : body.difficulty
+  if (typeof difficulty !== 'string' || !validDifficulties.includes(difficulty as Difficulty)) {
+    return reply.code(400).send({ code: 'LAB_DIFFICULTY_INVALID', message: '难度值无效。' })
+  }
+  const tagsValue = body.tags === undefined ? [] : body.tags
+  if (!Array.isArray(tagsValue) || tagsValue.length > 8 || !tagsValue.every(tag => typeof tag === 'string' && tag.trim().length > 0 && tag.trim().length <= 24)) {
+    return reply.code(400).send({ code: 'LAB_TAGS_INVALID', message: '标签最多 8 个，且每个标签不超过 24 个字符。' })
+  }
+  if (requestedSlug && !/^[a-z0-9][a-z0-9-]{0,47}$/.test(requestedSlug)) {
+    return reply.code(400).send({ code: 'LAB_SLUG_INVALID', message: '靶场标识只能使用小写字母、数字和短横线。' })
+  }
+
+  let sourceRef = ''
+  if (sourceType === 'archive') {
+    const uploadMatch = /^upload:\/\/([0-9a-f-]{36})$/i.exec(sourceUrl)
+    const bundleMatch = /^bundle:\/\/([A-Za-z0-9._-]+)$/.exec(sourceUrl)
+    if (!uploadMatch && !bundleMatch) return reply.code(400).send({ code: 'LAB_ARCHIVE_SOURCE_INVALID', message: '本地压缩包必须先上传，或使用已配置的 bundle:// 发行包标识。' })
+    if (uploadMatch) {
+      const uploaded = storage.labUpload(uploadMatch[1].toLowerCase())
+      if (!(await stat(uploaded).then(item => item.isFile()).catch(() => false))) return reply.code(404).send({ code: 'LAB_ARCHIVE_NOT_FOUND', message: '上传的压缩包不存在或已过期，请重新选择。' })
+      sourceUrl = `upload://${uploadMatch[1].toLowerCase()}`
+      sourceRef = rawSourceRef || 'upload'
+    } else {
+      if (!bundleDir) return reply.code(409).send({ code: 'LAB_ARCHIVE_BUNDLE_UNAVAILABLE', message: '项目 bundle 未配置，无法使用 bundle:// 发行包。' })
+      if (rawSourceRef && !/^[A-Za-z0-9._/-]+$/.test(rawSourceRef)) return reply.code(400).send({ code: 'LAB_SOURCE_REF_INVALID', message: '发行包版本标识格式无效。' })
+      sourceRef = rawSourceRef || 'local'
+    }
+  } else {
+    let parsedUrl: URL
+    try { parsedUrl = new URL(sourceUrl) } catch { return reply.code(400).send({ code: 'LAB_SOURCE_INVALID', message: '来源地址不是有效 URL。' }) }
+    let adapter
+    try { adapter = adapterFor(sourceUrl, 'git') } catch { adapter = null }
+    if (!adapter?.implemented) return reply.code(409).send({ code: 'LAB_SOURCE_UNSUPPORTED', message: '当前只支持公开的 GitHub 或 GitLab 仓库。' })
+    const sourcePath = parsedUrl.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '')
+    if (parsedUrl.search || parsedUrl.hash || !sourcePath || sourcePath.split('/').length < 2 || /\.git$/i.test(parsedUrl.pathname)) {
+      return reply.code(400).send({ code: 'LAB_SOURCE_INVALID', message: '仓库地址必须是公开的 HTTPS 项目地址，不支持查询参数、锚点或 .git 尾缀。' })
+    }
+    const sourceRefSuffix = rawSourceRef.includes('@') ? rawSourceRef.slice(rawSourceRef.indexOf('@') + 1) : rawSourceRef
+    if (sourceRefSuffix && !/^[A-Za-z0-9._/-]+$/.test(sourceRefSuffix)) return reply.code(400).send({ code: 'LAB_SOURCE_REF_INVALID', message: '版本只能使用分支名或 commit 标识。' })
+    sourceRef = sourceRefSuffix ? `${sourcePath}@${sourceRefSuffix}` : ''
+  }
+
+  const baseSlug = requestedSlug || labSlug(title)
+  let slug = baseSlug
+  let suffix = 2
+  while (database.getLabBySlug(slug)) {
+    if (requestedSlug) return reply.code(409).send({ code: 'LAB_SLUG_EXISTS', message: '靶场标识已存在，请更换标识。' })
+    const suffixText = `-${suffix}`
+    slug = `${baseSlug.slice(0, 48 - suffixText.length)}${suffixText}`
+    suffix += 1
+  }
+
+  const lab = database.createLab({
+    slug,
+    title,
+    category: category || 'Web',
+    difficulty: difficulty as Difficulty,
+    sourceType: sourceType as SourceType,
+    sourceUrl,
+    sourceRef,
+    license: license || '未声明',
+    runtimeKind: kind,
+    runtimeConfig,
+    summary,
+    tags: tagsValue.map(tag => (tag as string).trim()),
+    status: 'queued',
+    version: 'custom',
+    builtin: false,
+  })
+  const result = startLabInstall(lab, session.userName)
+  database.addAudit(session.userName, 'lab.create', lab.title, `${lab.slug} · ${lab.sourceUrl}`)
+  return reply.code(result.started ? 202 : 200).send(result)
+})
+
 app.get('/api/labs', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
@@ -868,7 +1150,8 @@ app.post('/api/labs/:id/install', async (request, reply) => {
   const lab = database.getLab(id)
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
   const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
-  if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的安装器尚未接通。' })
+  const archiveAvailable = lab.sourceType === 'archive' && Boolean(await uploadedLabArchive(lab) ?? await bundledLabArchive(lab))
+  if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented && !archiveAvailable) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的安装器尚未接通。' })
   const result = startLabInstall(lab, session.userName)
   database.addAudit(session.userName, 'lab.install', lab.title, lab.version)
   return reply.code(result.started ? 202 : 200).send(result)
@@ -889,7 +1172,8 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
   if (lab.status !== 'ready') {
     const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
-    if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的内置资源尚未接通。' })
+    const archiveAvailable = lab.sourceType === 'archive' && Boolean(await uploadedLabArchive(lab) ?? await bundledLabArchive(lab))
+    if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented && !archiveAvailable) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的资源来源尚未接通。' })
     const preparation = startLabInstall(lab, session.userName)
     if (!preparation.job?.id) return reply.code(409).send({ code: 'LAB_PREPARE_FAILED', message: '靶场准备任务未创建。' })
     queueStartAfterImport(lab.id, preparation.job.id, session.userName, publicOrigin(request))
@@ -965,7 +1249,7 @@ app.post('/api/runtime/prepare', async (request, reply) => {
   }
   database.addAudit(session.userName, 'runtime.prepare', 'project', projectEnvironment.getStatus().runtimeDir)
   const dependencies = await runtimeDependencies()
-  const activeLabs = database.listLabs().filter(lab => lab.builtin && lab.status !== 'disabled')
+  const activeLabs = database.listLabs().filter(lab => lab.status !== 'disabled')
   const readiness = await runtimeReadiness(activeLabs, dependencies)
   const missing = [...new Set(activeLabs.flatMap(lab => readiness[lab.slug]?.missing ?? []))]
   const failed = project.toolchains.filter(item => item.state === 'error').map(item => item.label)
@@ -1055,7 +1339,10 @@ app.setErrorHandler((error, _request, reply) => {
 })
 
 const start = async () => {
-  const removedStagingDirs = await cleanupStaleVulnLabStaging(dataDir)
+  const preservedUploadIds = database.listLabs()
+    .map(lab => /^upload:\/\/([0-9a-f-]{36})$/i.exec(lab.sourceUrl)?.[1] ?? '')
+    .filter(Boolean)
+  const removedStagingDirs = await cleanupStaleVulnLabStaging(dataDir, Date.now(), preservedUploadIds)
   if (removedStagingDirs) app.log.info({ removedStagingDirs }, '已清理项目数据目录中的异常退出暂存目录。')
   const reconciliation = database.reconcileBuiltinPaths(dataDir)
   if (reconciliation.repaired.length || reconciliation.reset.length) {

@@ -249,6 +249,16 @@ try {
     await utimes(staleDir, staleTime, staleTime)
     assert.equal(await cleanupStaleVulnLabStaging(staleDataDir), 1)
     await assert.rejects(stat(staleDir))
+
+    const uploadId = '11111111-1111-4111-8111-111111111111'
+    const uploadPath = join(staleDataDir, 'lab-uploads', `${uploadId}.zip`)
+    await mkdir(join(staleDataDir, 'lab-uploads'), { recursive: true })
+    await writeFile(uploadPath, Buffer.from('fixture'))
+    await utimes(uploadPath, staleTime, staleTime)
+    assert.equal(await cleanupStaleVulnLabStaging(staleDataDir, Date.now(), [uploadId]), 0)
+    await stat(uploadPath)
+    assert.equal(await cleanupStaleVulnLabStaging(staleDataDir), 1)
+    await assert.rejects(stat(uploadPath))
   } finally {
     await rm(staleDataDir, { recursive: true, force: true })
   }

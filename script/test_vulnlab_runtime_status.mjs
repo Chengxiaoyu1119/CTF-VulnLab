@@ -32,6 +32,15 @@ try {
   await writeFile(join(root, 'labs', 'pygoat', 'fixture', '.vulnlab-python-ready'), 'ready')
   readiness = await runtimeReadinessByLab(labs, dependencies, root)
   assert.equal(readiness.pygoat.available, true)
+  const customRoot = join(root, 'custom-python')
+  await mkdir(customRoot, { recursive: true })
+  const customPython = { ...lab('custom-python', 'native-python'), builtin: false, localPath: customRoot, runtimeConfig: { profile: 'python-script', entryPath: 'app.py' } }
+  await writeFile(join(customRoot, 'requirements.txt'), 'fixture==1.0\n')
+  readiness = await runtimeReadinessByLab([customPython], dependencies, root)
+  assert.deepEqual(readiness['custom-python'].missing, ['Python'])
+  await writeFile(join(customRoot, '.vulnlab-python-ready'), 'ready')
+  readiness = await runtimeReadinessByLab([customPython], dependencies, root)
+  assert.equal(readiness['custom-python'].available, true)
   console.log('VulnLab runtime status test passed: per-lab dependency gates and PyGoat readiness marker.')
 } finally {
   await rm(root, { recursive: true, force: true })

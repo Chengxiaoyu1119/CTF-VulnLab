@@ -236,9 +236,10 @@ const removeTree = async (root: string) => {
   await rm(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 150 }).catch(() => undefined)
 }
 
-type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs' | 'mutillidae' | 'xvwa'
+type DatabaseLabProfile = 'dvwa' | 'pikachu' | 'sqli-labs' | 'mutillidae' | 'xvwa' | 'custom-mysql'
 
 const databaseProfile = (lab: Lab): DatabaseLabProfile | null => {
+  if (lab.runtimeConfig?.profile === 'mysql-php') return 'custom-mysql'
   if (lab.slug === 'dvwa') return 'dvwa'
   if (lab.slug === 'pikachu') return 'pikachu'
   if (lab.slug === 'sqli-labs') return 'sqli-labs'
@@ -246,6 +247,23 @@ const databaseProfile = (lab: Lab): DatabaseLabProfile | null => {
   if (lab.slug === 'xvwa') return 'xvwa'
   return null
 }
+
+const projectPath = (root: string, relativePath: string, label: string) => {
+  const normalized = relativePath.replaceAll('\\', '/')
+  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || normalized.split('/').some(part => !part || part === '.' || part === '..')) {
+    throw new ProviderError('NATIVE_PHP_RUNTIME_CONFIG_INVALID', `${label} 必须是项目内的相对路径。`, 409)
+  }
+  const target = resolve(root, normalized)
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+  if (!target.startsWith(prefix)) throw new ProviderError('NATIVE_PHP_RUNTIME_CONFIG_INVALID', `${label} 超出靶场目录。`, 409)
+  return target
+}
+
+const entryUrlPath = (relativePath: string) => relativePath
+  .replaceAll('\\', '/')
+  .split('/')
+  .map(segment => encodeURIComponent(segment))
+  .join('/')
 
 const sqliLabsMysqlCompat = `<?php
 if (!function_exists('mysql_connect')) {
@@ -651,6 +669,16 @@ export class NativePhpProvider implements LabProvider {
       }
       const mutillidaeRoot = profile === 'mutillidae' ? await configureMutillidae(bootstrapRoot) : null
       if (profile === 'xvwa') await configureXvwa(sourceRoot, appUrlRoot)
+      if (profile === 'custom-mysql') {
+        const initPath = projectPath(bootstrapRoot, input.lab.runtimeConfig?.initSqlPath || 'init.sql', 'MySQL 初始化 SQL')
+        const sql = await readFile(initPath, 'utf8').catch(() => {
+          throw new ProviderError('NATIVE_PHP_DB_INIT_SQL_NOT_FOUND', '自定义 PHP+MySQL 初始化 SQL 不存在。', 409)
+        })
+        if (!this.mysqlManager.initializeSql) throw new ProviderError('NATIVE_PHP_DB_INIT_UNSUPPORTED', '当前 MySQL Provider 不支持初始化 SQL。', 503)
+        await this.mysqlManager.initializeSql(resource, sql)
+        await this.mysqlManager.verify(resource)
+        return
+      }
       const phpInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(bootstrapRoot) }
         : input
@@ -749,7 +777,19 @@ export class NativePhpProvider implements LabProvider {
       const runtimeInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(sourceTarget) }
         : input
-      const documentRoot = profile === 'xvwa' ? runtimeRoot : mutillidaeRoot ?? runtimeRoot
+      const customRoot = ['static-php', 'mysql-php'].includes(input.lab.runtimeConfig?.profile ?? '') && input.lab.runtimeConfig?.documentRoot
+        ? projectPath(runtimeRoot, input.lab.runtimeConfig.documentRoot, 'PHP 文档根目录')
+        : null
+      const customPhp = ['static-php', 'mysql-php'].includes(input.lab.runtimeConfig?.profile ?? '')
+      const configuredEntry = input.lab.runtimeConfig?.entryPath
+      // 内置 PHP 靶场保留 Provider 专属入口；自定义靶场使用声明的入口文件。
+      const customEntry = customPhp && (configuredEntry || !input.lab.builtin) ? configuredEntry || 'index.php' : ''
+      if (customEntry) {
+        const entryRoot = customRoot ?? runtimeRoot
+        const entryFile = projectPath(entryRoot, customEntry, 'PHP 入口文件')
+        if (!(await stat(entryFile).catch(() => null))?.isFile()) throw new ProviderError('NATIVE_PHP_ENTRY_NOT_FOUND', 'PHP 入口文件不存在。', 409)
+      }
+      const documentRoot = customRoot ?? (profile === 'xvwa' ? runtimeRoot : mutillidaeRoot ?? runtimeRoot)
       processInfo = await this.startPhpProcess(documentRoot, runtimeInput, profile && database ? this.databaseEnvironment(profile, database) : {})
       const runtime: NativeRuntime = { child: processInfo.child, root: runtimeRoot, port: processInfo.port, bindHost: input.runtime.bindHost, database }
       this.runtimes.set(input.instanceId, runtime)
@@ -763,7 +803,9 @@ export class NativePhpProvider implements LabProvider {
         if (detachedDatabase) void this.mysqlManager.destroy(detachedDatabase).catch(() => undefined)
       })
       const timestamps = lease(input.lifetimeMinutes)
-      const endpointSuffix = profile === 'xvwa' ? 'xvwa/' : ''
+      const endpointSuffix = profile === 'xvwa'
+        ? 'xvwa/'
+        : customEntry && customEntry !== 'index.php' ? entryUrlPath(customEntry) : ''
       return {
         ...timestamps,
         endpoint: `${input.proxyEndpoint ?? `${runtimeOrigin(input.publicOrigin, processInfo.port, input.runtime.publicOriginTemplate)}/`}${endpointSuffix}`,
@@ -879,12 +921,19 @@ const waitForNativeHttp = async (host: string, port: number, child: ChildProcess
 
 const findExistingFile = async (root: string, candidates: readonly string[]) => {
   for (const candidate of candidates) {
-    const path = resolve(root, candidate)
+    const normalized = candidate.replaceAll('\\', '/')
+    if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || normalized.split('/').some(part => !part || part === '.' || part === '..')) continue
+    const path = resolve(root, normalized)
+    const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+    if (!path.startsWith(prefix)) continue
     const info = await stat(path).catch(() => null)
     if (info?.isFile()) return path
   }
   return null
 }
+
+const renderProcessArgs = (args: readonly string[] | undefined, portArg: string | undefined, port: number, host: string) => [...(args ?? []), ...(portArg ? [portArg] : [])]
+  .map(value => value.replaceAll('{port}', String(port)).replaceAll('{host}', host))
 
 export interface NativeProcessProviderOptions {
   spawnImpl?: SpawnFunction
@@ -929,22 +978,43 @@ export class NativeProcessProvider implements LabProvider {
 
   private async command(input: ProviderStartInput, root: string, port: number, auxiliaryPort?: number) {
     if (this.id === 'native-node') {
-      const entry = await findExistingFile(root, ['build/app.js', 'dist/app.js', 'app.js', 'server.js'])
-      if (!entry) throw new ProviderError('NATIVE_NODE_ENTRY_NOT_FOUND', 'Juice Shop 发行包缺少 Node.js 启动入口。', 409)
+      const configuredEntry = input.lab.runtimeConfig?.entryPath
+      const candidates = [configuredEntry, 'build/app.js', 'dist/app.js', 'app.js', 'server.js'].filter((value): value is string => Boolean(value))
+      const entry = await findExistingFile(root, candidates)
+      if (!entry) throw new ProviderError('NATIVE_NODE_ENTRY_NOT_FOUND', 'Node.js 项目缺少可运行启动入口。', 409)
       return {
         binary: input.runtime.nodeBinary,
-        args: [entry],
+        args: [entry, ...(input.lab.runtimeConfig?.nodeArgs ?? [])],
         cwd: root,
         environment: { PORT: String(port), HOST: input.runtime.bindHost, NODE_ENV: 'production' },
         endpointSuffix: '',
       }
     }
     if (this.id === 'native-java') {
-      if (!auxiliaryPort) throw new ProviderError('NATIVE_JAVA_AUX_PORT_REQUIRED', 'WebGoat 缺少 WebWolf 运行端口。', 500)
-      const jar = input.lab.localPath && (await stat(input.lab.localPath).catch(() => null))?.isFile()
+      const javaProfile = input.lab.runtimeConfig?.profile ?? 'webgoat'
+      const configuredEntry = input.lab.runtimeConfig?.entryPath
+      const jar = configuredEntry
+        ? await findExistingFile(root, [configuredEntry])
+        : input.lab.localPath && (await stat(input.lab.localPath).catch(() => null))?.isFile()
         ? resolve(input.lab.localPath)
         : await findExistingFile(root, ['webgoat.jar', `webgoat-${input.lab.version}.jar`])
-      if (!jar) throw new ProviderError('NATIVE_JAVA_JAR_NOT_FOUND', 'WebGoat 发行包缺少可运行 JAR。', 409)
+      if (!jar) throw new ProviderError('NATIVE_JAVA_JAR_NOT_FOUND', 'Java 项目缺少可运行 JAR。', 409)
+      if (javaProfile !== 'webgoat') {
+        return {
+          binary: input.runtime.javaBinary,
+          args: ['-Dfile.encoding=UTF-8', '-jar', jar, ...renderProcessArgs(input.lab.runtimeConfig?.javaArgs, input.lab.runtimeConfig?.portArg, port, input.runtime.bindHost)],
+          cwd: root,
+          environment: {
+            HOME: root,
+            USERPROFILE: root,
+            HOST: input.runtime.bindHost,
+            PORT: String(port),
+            SERVER_PORT: String(port),
+          },
+          endpointSuffix: '',
+        }
+      }
+      if (!auxiliaryPort) throw new ProviderError('NATIVE_JAVA_AUX_PORT_REQUIRED', 'WebGoat 缺少 WebWolf 运行端口。', 500)
       return {
         binary: input.runtime.javaBinary,
         args: ['-Dfile.encoding=UTF-8', '-jar', jar, `--server.address=${input.runtime.bindHost}`, `--webgoat.port=${port}`, `--webwolf.port=${auxiliaryPort}`],
@@ -953,12 +1023,26 @@ export class NativeProcessProvider implements LabProvider {
         endpointSuffix: 'WebGoat/',
       }
     }
-    const manage = await findExistingFile(root, ['manage.py'])
-    if (!manage) throw new ProviderError('NATIVE_PYTHON_ENTRY_NOT_FOUND', 'PyGoat 源码缺少 manage.py。', 409)
+    if (input.lab.runtimeConfig?.profile === 'python-script') {
+      const script = await findExistingFile(root, [input.lab.runtimeConfig.entryPath || 'app.py'])
+      if (!script) throw new ProviderError('NATIVE_PYTHON_ENTRY_NOT_FOUND', 'Python 项目缺少可运行文件。', 409)
+      const venvPython = await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/Scripts/python.exe'])
+      const binary = venvPython ?? input.runtime.pythonBinary
+      const prefix = !venvPython && basename(input.runtime.pythonBinary).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
+      return {
+        binary,
+        args: [...prefix, script, ...renderProcessArgs(input.lab.runtimeConfig.pythonArgs, input.lab.runtimeConfig.portArg, port, input.runtime.bindHost)],
+        cwd: root,
+        environment: { PYTHONUNBUFFERED: '1', HOST: input.runtime.bindHost, PORT: String(port) },
+        endpointSuffix: '',
+      }
+    }
+    const manage = await findExistingFile(root, [input.lab.runtimeConfig?.entryPath || 'manage.py'])
+    if (!manage) throw new ProviderError('NATIVE_PYTHON_ENTRY_NOT_FOUND', 'Python 项目缺少可运行入口。', 409)
     const venvPython = await findExistingFile(input.lab.localPath as string, ['.vulnlab-venv/Scripts/python.exe'])
-    const settingsPath = join(root, 'pygoat', 'settings.py')
+    const settingsPath = join(root, ...(input.lab.runtimeConfig?.settingsPath || 'pygoat/settings.py').split('/'))
     let settings = await readFile(settingsPath, 'utf8').catch(() => '')
-    if (!settings) throw new ProviderError('NATIVE_PYTHON_SETTINGS_NOT_FOUND', 'PyGoat 缺少 Django 设置文件。', 409)
+    if (!settings) throw new ProviderError('NATIVE_PYTHON_SETTINGS_NOT_FOUND', 'Python 项目缺少 Django 设置文件。', 409)
     settings = settings
       .replace(/^import django_heroku\s*$/m, '')
       .replace(/^django_heroku\.settings\(locals\(\)\)\s*$/m, '')
@@ -967,12 +1051,14 @@ export class NativeProcessProvider implements LabProvider {
     await writeFile(settingsPath, settings, 'utf8')
     const binary = venvPython ?? input.runtime.pythonBinary
     const prefix = !venvPython && basename(input.runtime.pythonBinary).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
-    await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root, { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'pygoat.settings' })
+    const settingsModule = (input.lab.runtimeConfig?.settingsPath || 'pygoat/settings.py')
+      .replaceAll('\\', '/').replace(/\.py$/i, '').split('/').filter(Boolean).join('.')
+    await this.runCommand(binary, [...prefix, manage, 'migrate', '--noinput'], root, { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: settingsModule })
     return {
       binary,
       args: [...prefix, manage, 'runserver', `${input.runtime.bindHost}:${port}`, '--noreload'],
       cwd: root,
-      environment: { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'pygoat.settings' },
+      environment: { PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: settingsModule },
       endpointSuffix: '',
     }
   }
@@ -1043,8 +1129,19 @@ export class NativeProcessProvider implements LabProvider {
     const dataPrefix = dataRoot.endsWith(sep) ? dataRoot : `${dataRoot}${sep}`
     if (sourcePath !== dataRoot && !sourcePath.startsWith(dataPrefix)) throw new ProviderError(`${processErrorPrefix[this.id]}_SOURCE_OUTSIDE_DATA`, '靶场资源必须位于 VulnLab 数据目录内。', 409)
     const runtimeRoot = paths.runtimeInstance(input.instanceId)
+    // WebGoat 需要同时预留主端口和 WebWolf 辅助端口。辅助端口分配失败时，
+    // 主端口也必须立即释放，否则每次重试都会留下一个不可见的保留端口，
+    // 最终把端口池耗尽。
     const port = await this.claimPort(input.runtime)
-    const auxiliaryPort = this.id === 'native-java' ? await this.claimFollowingPort(input.runtime, port) : undefined
+    let auxiliaryPort: number | undefined
+    try {
+      auxiliaryPort = this.id === 'native-java' && (input.lab.runtimeConfig?.profile ?? 'webgoat') === 'webgoat'
+        ? await this.claimFollowingPort(input.runtime, port)
+        : undefined
+    } catch (error) {
+      this.reservedPorts.delete(port)
+      throw error
+    }
     let child: ChildProcess | null = null
     let stderrTail = ''
     try {
