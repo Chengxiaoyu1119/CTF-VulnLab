@@ -517,6 +517,13 @@ const validateImportedLab = async (lab: Lab, localPath: string) => {
   if (!(await stat(settings).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Python 项目缺少 Django 设置文件。')
 }
 
+const validateImportedManifest = async (lab: Lab, manifest: ImportManifest) => {
+  if (manifest.adapterId === 'builtin-release') return
+  const importedPathStat = await stat(manifest.localPath).catch(() => null)
+  const projectPath = importedPathStat?.isFile() ? dirname(manifest.localPath) : manifest.localPath
+  await validateImportedLab(lab, projectPath)
+}
+
 const promoteBuiltinManifest = async (lab: Lab, jobId: string, manifest: ImportManifest) => {
   if (manifest.adapterId === 'builtin-release') return manifest
   const targetRoot = storage.lab(lab.slug, lab.version)
@@ -602,11 +609,7 @@ const runImportJob = (jobId: string, actor: string) => {
         : (() => { throw new ImporterError(`当前版本尚未实现 ${adapter?.label ?? '该来源'}。`) })()
       try {
         // 单文件压缩包先校验文件所在目录，再提升为持久靶场目录。
-        if (importedManifest.adapterId !== 'builtin-release') {
-          const importedPathStat = await stat(importedManifest.localPath).catch(() => null)
-          const importedProjectPath = importedPathStat?.isFile() ? dirname(importedManifest.localPath) : importedManifest.localPath
-          await validateImportedLab(lab, importedProjectPath)
-        }
+        await validateImportedManifest(lab, importedManifest)
         const manifest = await promoteBuiltinManifest(lab, jobId, importedManifest)
         await prepareInstalledLab({ ...lab, localPath: manifest.localPath }, progress, nativeRuntime.pythonBinary, nativeRuntime.nodeBinary)
         database.completeJob(jobId, manifest)
@@ -733,6 +736,7 @@ const bootstrapBuiltinLabs = async () => {
     const job = database.listJobsParsed().find(item => item.labId === lab.id && item.status === 'completed' && item.manifest)
     try {
       if (job?.manifest) {
+        await validateImportedManifest(lab, job.manifest)
         const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
         if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
       }
