@@ -23,11 +23,13 @@ export interface RegisteredUser {
   passwordHash: string
   role: UserRole
   createdAt: string
+  disabled: boolean
 }
 
 export interface RegisteredUserView {
   userName: string
   createdAt: string
+  disabled: boolean
 }
 
 export interface InvitationRecord {
@@ -357,6 +359,7 @@ export class VulnLabDatabase {
     this.ensureColumn('vm_downloads', 'actual_sha1', 'TEXT')
     this.ensureColumn('vm_downloads', 'checksum_verified', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('invitations', 'used_by_user_name', 'TEXT')
+    this.ensureColumn('users', 'disabled', 'INTEGER NOT NULL DEFAULT 0')
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -713,35 +716,46 @@ export class VulnLabDatabase {
     return defaults
   }
 
-  createSession(id: string, userName: string, role: UserRole, csrfToken: string, expiresAt: number) {
-    const timestamp = now()
-    this.db.prepare(`
-      INSERT INTO sessions (id, user_name, role, csrf_token, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, userName, role, csrfToken, new Date(expiresAt).toISOString(), timestamp)
+  createSession(id: string, userName: string, role: UserRole, csrfToken: string, expiresAt: number, requireRegisteredUser = false): boolean {
+    const transaction = this.db.transaction(() => {
+      if (requireRegisteredUser) {
+        const user = this.db.prepare('SELECT disabled FROM users WHERE user_name = ? COLLATE NOCASE').get(userName) as { disabled: number } | undefined
+        if (!user || user.disabled === 1) return false
+      }
+      this.db.prepare(`
+        INSERT INTO sessions (id, user_name, role, csrf_token, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(id, userName, role, csrfToken, new Date(expiresAt).toISOString(), now())
+      return true
+    })
+    return transaction.immediate()
   }
 
   getUser(userName: string): RegisteredUser | null {
-    const row = this.db.prepare('SELECT user_name AS userName, password_hash AS passwordHash, role, created_at AS createdAt FROM users WHERE user_name = ? COLLATE NOCASE').get(userName) as Row | undefined
+    const row = this.db.prepare('SELECT user_name AS userName, password_hash AS passwordHash, role, created_at AS createdAt, disabled FROM users WHERE user_name = ? COLLATE NOCASE').get(userName) as Row | undefined
     if (!row || asString(row.role) !== 'admin') return null
     return {
       userName: asString(row.userName),
       passwordHash: asString(row.passwordHash),
       role: 'admin',
       createdAt: asString(row.createdAt),
+      disabled: Number(row.disabled) === 1,
     }
   }
 
   listRegisteredUsers(options: RecordPageOptions = { limit: 100, cursor: null }): RecordPage<RegisteredUserView> {
     const cursor = options.cursor
     const rows = this.db.prepare(`
-      SELECT user_name AS userName, created_at AS createdAt
+      SELECT user_name AS userName, created_at AS createdAt, disabled
       FROM users
       WHERE role = 'admin'
         AND (? IS NULL OR created_at < ? OR (created_at = ? AND user_name < ?))
       ORDER BY created_at DESC, user_name DESC
       LIMIT ?
-    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1) as RegisteredUserView[]
+    `).all(cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.createdAt ?? null, cursor?.id ?? null, options.limit + 1).map(row => {
+      const user = row as { userName: string; createdAt: string; disabled: number }
+      return { ...user, disabled: user.disabled === 1 }
+    }) as RegisteredUserView[]
     const total = Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get() as { count: number }).count)
     return pageResult(rows, options, total, item => item.userName)
   }
@@ -762,6 +776,16 @@ export class VulnLabDatabase {
       return names.length
     })
     return transaction(userNames)
+  }
+
+  setRegisteredUserDisabled(userName: string, disabled: boolean): boolean {
+    const transaction = this.db.transaction(() => {
+      const result = this.db.prepare('UPDATE users SET disabled = ? WHERE user_name = ? COLLATE NOCASE').run(disabled ? 1 : 0, userName)
+      if (result.changes !== 1) return false
+      if (disabled) this.db.prepare('DELETE FROM sessions WHERE user_name = ? COLLATE NOCASE').run(userName)
+      return true
+    })
+    return transaction.immediate()
   }
 
   createInvitation(id: string, codeHash: string, createdBy: string, expiresAt: string): InvitationRecord {

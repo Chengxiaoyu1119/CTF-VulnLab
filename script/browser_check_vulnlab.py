@@ -341,11 +341,15 @@ def main() -> None:
         )
         assert canvas_frame_style["borderRadius"] == "12px" and canvas_frame_style["borderTopWidth"] == "1px", canvas_frame_style
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        expect(page.locator(".lab-grid .lab-add-card")).to_have_count(0)
+        expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
         assert page.locator(".lab-card").evaluate_all("elements => elements.every(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight })")
         expect(page.locator(".lab-add-hint")).to_have_count(0)
         expect(page.get_by_text("从管理中心导入", exact=True)).to_have_count(0)
+        page.locator(".lab-add-card").get_by_role("button", name="添加靶场").click()
+        expect(page.locator("#admin-lab-form")).to_be_visible()
+        page.get_by_role("button", name="关闭管理中心").click()
+        expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".lab-card-cover")).to_have_count(9)
         assert page.locator(".lab-card-cover").evaluate_all(
             "elements => elements.every(element => element.complete && element.naturalWidth > 0)"
@@ -545,7 +549,7 @@ def main() -> None:
         assert centered_identity <= 1, centered_identity
         expect(page.locator(".admin-user-system [data-admin-record-select], .admin-user-system .record-delete")).to_have_count(0)
         expect(page.locator(".admin-user-table-head")).to_have_count(0)
-        expect(page.locator(".user-history")).to_be_visible()
+        expect(page.locator(".user-history")).to_have_count(0)
         expect(page.locator(".admin-user-empty")).to_have_text("暂无注册账号")
         system_account_style = page.locator(".admin-user-system").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor })"
@@ -611,14 +615,21 @@ def main() -> None:
             assert page.locator('[data-audit-filter="date"]').evaluate("element => getComputedStyle(element).colorScheme") == "dark"
             assert page.locator(".admin-record-filters").evaluate("element => getComputedStyle(element).paddingLeft") == "0px"
             date_focus_style = page.locator('[data-audit-filter="date"]').evaluate(
-                "element => { element.focus(); const style = getComputedStyle(element); return { outlineColor: style.outlineColor, boxShadow: style.boxShadow }; }"
+                "element => { element.focus(); const style = getComputedStyle(element); return { outlineStyle: style.outlineStyle, borderColor: style.borderColor, boxShadow: style.boxShadow }; }"
             )
-            assert date_focus_style == {"outlineColor": "rgb(119, 119, 119)", "boxShadow": "none"}, date_focus_style
+            assert date_focus_style == {"outlineStyle": "none", "borderColor": "rgb(52, 52, 52)", "boxShadow": "none"}, date_focus_style
             page.locator('[data-audit-filter="date"]').click()
             date_mouse_focus_style = page.locator('[data-audit-filter="date"]').evaluate(
-                "element => ({ focused: element.matches(':focus'), boxShadow: getComputedStyle(element).boxShadow })"
+                "element => ({ focused: element.matches(':focus'), outlineStyle: getComputedStyle(element).outlineStyle, borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow })"
             )
-            assert date_mouse_focus_style == {"focused": True, "boxShadow": "none"}, date_mouse_focus_style
+            assert date_mouse_focus_style == {"focused": True, "outlineStyle": "none", "borderColor": "rgb(52, 52, 52)", "boxShadow": "none"}, date_mouse_focus_style
+            page.locator('.admin-audit-return').focus()
+            page.keyboard.press('Tab')
+            page.keyboard.press('Tab')
+            date_keyboard_focus_style = page.locator('[data-audit-filter="date"]').evaluate(
+                "element => ({ focused: element.matches(':focus'), focusVisible: element.matches(':focus-visible'), outlineStyle: getComputedStyle(element).outlineStyle, borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow })"
+            )
+            assert date_keyboard_focus_style == {"focused": True, "focusVisible": True, "outlineStyle": "none", "borderColor": "rgb(52, 52, 52)", "boxShadow": "none"}, date_keyboard_focus_style
             action_picker.locator("summary").click()
             expect(action_picker.locator(".admin-action-options")).to_be_visible()
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -655,6 +666,10 @@ def main() -> None:
             with page.expect_response(lambda response: "/api/audit?" in response.url and "date=2000-01-01" in response.url and response.request.method == "GET"):
                 page.locator('[data-audit-filter="date"]').fill("2000-01-01")
             expect(page.locator(".audit-entry")).to_have_count(0)
+            selected_date_style = page.locator('[data-audit-filter="date"]').evaluate(
+                "element => ({ outlineStyle: getComputedStyle(element).outlineStyle, borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow })"
+            )
+            assert selected_date_style == {"outlineStyle": "none", "borderColor": "rgb(52, 52, 52)", "boxShadow": "none"}, selected_date_style
             expect(page.locator(".admin-select-all-spacer")).to_have_count(0)
             expect(page.locator('[data-admin-select-all="audit"]')).to_have_count(0)
             date_filter_without_records = page.locator('[data-audit-filter="date"]').evaluate(
@@ -784,6 +799,10 @@ def main() -> None:
             "header => { const head = [...header.children].map(item => item.getBoundingClientRect().left); const row = [...document.querySelector('.invitation-history-card').children].map(item => item.getBoundingClientRect().left); return { columns: head.length, offsets: head.map((left, index) => Math.abs(left - row[index])) } }"
         )
         assert invitation_header_alignment["columns"] == 6 and max(invitation_header_alignment["offsets"]) <= 1, invitation_header_alignment
+        invitation_status_alignment = page.locator(".invitation-history-head").evaluate(
+            "header => { const heading = header.children[1].getBoundingClientRect(); const status = document.querySelector('.invitation-field-status strong').getBoundingClientRect(); return Math.abs((heading.left + heading.width / 2) - (status.left + status.width / 2)); }"
+        )
+        assert invitation_status_alignment <= 1, invitation_status_alignment
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
         expect(page.locator(".invitation-history-card")).to_have_count(52)
@@ -796,11 +815,15 @@ def main() -> None:
         if page.locator(".admin-record-pagination").count():
             expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
         assert page.locator(".admin-record-toolbar").evaluate("element => getComputedStyle(element).position") == "sticky"
-        for width, height in [(1440, 900), (768, 1024), (720, 520), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
+        for width, height in [(1440, 900), (768, 1024), (720, 520), (641, 480), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
             page.set_viewport_size({"width": width, "height": height})
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
             assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth"), width
             assert page.locator(".invitation-history-card").evaluate_all("elements => elements.every(element => element.scrollWidth <= element.clientWidth)"), width
+            invitation_select_alignment = page.locator('[data-admin-select-all="invitations"]').evaluate(
+                "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"invitations\"]').getBoundingClientRect().left })"
+            )
+            assert abs(invitation_select_alignment["toolbar"] - invitation_select_alignment["row"]) <= 0.1, (width, invitation_select_alignment)
             invitation_column_overflows = page.locator(".invitation-history-card").evaluate_all(
                 """rows => rows.map(row => {
                     const expiry = row.querySelector('.invitation-field-expiry')
@@ -839,11 +862,19 @@ def main() -> None:
         invitation_select_alignment = page.locator('[data-admin-select-all="invitations"]').evaluate(
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"invitations\"]').getBoundingClientRect().left })"
         )
-        assert abs(invitation_select_alignment["toolbar"] - invitation_select_alignment["row"]) <= 1, invitation_select_alignment
+        assert abs(invitation_select_alignment["toolbar"] - invitation_select_alignment["row"]) <= 0.1, invitation_select_alignment
         select_all = page.locator('[data-admin-select-all="invitations"]')
         select_all.check()
         expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {generated_invitation_records} 条")
+        checked_focus_style = select_all.evaluate(
+            "element => { element.focus(); const style = getComputedStyle(element); return { appearance: style.appearance, outline: style.outlineStyle, boxShadow: style.boxShadow, checked: element.checked }; }"
+        )
+        assert checked_focus_style == {"appearance": "none", "outline": "none", "boxShadow": "none", "checked": True}, checked_focus_style
         select_all.uncheck()
+        unchecked_focus_style = select_all.evaluate(
+            "element => { const style = getComputedStyle(element); return { appearance: style.appearance, outline: style.outlineStyle, boxShadow: style.boxShadow, checked: element.checked }; }"
+        )
+        assert unchecked_focus_style == {"appearance": "none", "outline": "none", "boxShadow": "none", "checked": False}, unchecked_focus_style
         batch_invitation_ids = []
         for index in (1, 2):
             record = page.locator(".invitation-history-card").nth(index)
@@ -922,7 +953,7 @@ def main() -> None:
             )
         invitation_button.click()
         expect(page.locator(".invitation-history-card[data-status='used']")).to_have_count(len(account_names) + 1)
-        expect(page.locator("[data-admin-select-all='invitations'], [data-admin-record-select='invitations'], .invitation-history-card[data-status='used'] .record-delete")).to_have_count(0)
+        expect(page.locator(".invitation-history-card[data-status='used'] [data-admin-record-select='invitations'], .invitation-history-card[data-status='used'] .record-delete")).to_have_count(0)
         for user_name in account_names:
             used_invitation_row = page.locator('.invitation-history-card[data-status="used"]').filter(has_text=user_name)
             expect(used_invitation_row).to_have_count(1)
@@ -954,18 +985,37 @@ def main() -> None:
         expect(system_admin_row).not_to_contain_text("·")
         expect(system_admin_row.locator("time")).to_have_count(0)
         expect(system_admin_row.locator("[data-admin-record-select], .record-delete")).to_have_count(0)
+        account_panel_order = page.locator(".admin-record-view").evaluate(
+            "element => ['.admin-user-system', '.admin-record-toolbar', '.admin-user-table-head', '.user-history'].map(selector => [...element.children].indexOf(element.querySelector(selector)))"
+        )
+        assert account_panel_order == sorted(account_panel_order) and account_panel_order[0] == 0, account_panel_order
+        account_spacing = page.locator(".admin-user-system").evaluate(
+            "system => { const tools = document.querySelector('.admin-dialog-tools').getBoundingClientRect(); const profile = system.getBoundingClientRect(); const toolbar = document.querySelector('.admin-record-toolbar'); const toolbarBox = toolbar.getBoundingClientRect(); const style = getComputedStyle(toolbar); return { top: profile.top - tools.bottom, toolbar: toolbarBox.top - profile.bottom, toolbarHeight: toolbarBox.height, backgroundColor: style.backgroundColor, borderRadius: style.borderRadius, position: style.position } }"
+        )
+        assert 7 <= account_spacing["top"] <= 10 and 11 <= account_spacing["toolbar"] <= 14 and account_spacing["toolbarHeight"] == 36, account_spacing
+        assert account_spacing["backgroundColor"] == "rgba(0, 0, 0, 0)" and account_spacing["borderRadius"] == "0px" and account_spacing["position"] == "static", account_spacing
         expect(page.locator(".admin-user-table-head")).to_contain_text("账号")
         expect(page.locator(".admin-user-table-head")).to_contain_text("注册时间")
         expect(page.locator(".admin-user-table-head")).to_contain_text("操作")
-        expect(system_admin_row.locator(".admin-user-name")).to_have_text("vulnlab")
+        expect(page.locator(".admin-user-meta, .admin-user-inviter")).to_have_count(0)
+        account_heading = page.locator(".user-history .admin-user-heading").first
+        expect(account_heading.locator(".admin-user-name + .admin-user-role")).to_have_text("管理员")
+        account_heading_alignment = account_heading.evaluate(
+            "element => { const name = element.querySelector('.admin-user-name').getBoundingClientRect(); const role = element.querySelector('.admin-user-role').getBoundingClientRect(); return { nameRight: name.right, roleLeft: role.left, sameRow: Math.abs(name.top - role.top) <= 2 }; }"
+        )
+        assert account_heading_alignment["roleLeft"] >= account_heading_alignment["nameRight"] and account_heading_alignment["sameRow"], account_heading_alignment
         account_row_style = page.locator(".admin-user-entry").first.evaluate(
             "element => ({ borderRadius: getComputedStyle(element).borderRadius, borderWidth: getComputedStyle(element).borderWidth, backgroundColor: getComputedStyle(element).backgroundColor, historyBorder: getComputedStyle(document.querySelector('.user-history')).borderWidth, headerBorder: getComputedStyle(document.querySelector('.admin-user-table-head')).borderWidth, roleBorder: getComputedStyle(document.querySelector('.admin-user-role')).borderLeftWidth })"
         )
         assert account_row_style == {"borderRadius": "8px", "borderWidth": "0px", "backgroundColor": "rgb(35, 35, 35)", "historyBorder": "0px", "headerBorder": "0px", "roleBorder": "0px"}, account_row_style
         account_column_alignment = page.locator(".admin-user-table-head").evaluate(
-            "element => { const boxes = [...element.children].map(item => item.getBoundingClientRect()); const user = document.querySelector('.admin-user-entry:not([data-kind=system])'); const name = user.querySelector('.admin-user-name').getBoundingClientRect(); const time = user.querySelector('.admin-user-time').getBoundingClientRect(); return { accountHeaderLeft: boxes[1].left, userNameLeft: name.left, dateHeaderRight: boxes[2].right, userTimeRight: time.right } }"
+            "element => { const boxes = [...element.children].map(item => item.getBoundingClientRect()); const selectLabel = document.querySelector('[data-admin-select-all=\"users\"]').closest('label').querySelector('span').getBoundingClientRect(); const user = document.querySelector('.admin-user-entry:not([data-kind=system])'); const name = user.querySelector('.admin-user-name').getBoundingClientRect(); const time = user.querySelector('.admin-user-time').getBoundingClientRect(); return { selectLabelLeft: selectLabel.left, accountHeaderLeft: boxes[1].left, userNameLeft: name.left, dateHeaderRight: boxes[2].right, userTimeRight: time.right } }"
         )
-        assert abs(account_column_alignment["accountHeaderLeft"] - account_column_alignment["userNameLeft"]) <= 1 and abs(account_column_alignment["dateHeaderRight"] - account_column_alignment["userTimeRight"]) <= 1, account_column_alignment
+        assert abs(account_column_alignment["selectLabelLeft"] - account_column_alignment["accountHeaderLeft"]) <= 1 and abs(account_column_alignment["accountHeaderLeft"] - account_column_alignment["userNameLeft"]) <= 1 and abs(account_column_alignment["dateHeaderRight"] - account_column_alignment["userTimeRight"]) <= 1, account_column_alignment
+        account_toolbar_alignment = page.locator(".admin-record-toolbar").evaluate(
+            "toolbar => ({ selectAll: toolbar.querySelector('[data-admin-select-all=\"users\"]').getBoundingClientRect().left, firstRow: document.querySelector('.admin-user-entry:not([data-kind=system]) [data-admin-record-select=\"users\"]').getBoundingClientRect().left, scrollWidth: toolbar.scrollWidth, clientWidth: toolbar.clientWidth })"
+        )
+        assert abs(account_toolbar_alignment["selectAll"] - account_toolbar_alignment["firstRow"]) <= 1 and account_toolbar_alignment["scrollWidth"] <= account_toolbar_alignment["clientWidth"], account_toolbar_alignment
         account_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
@@ -982,6 +1032,20 @@ def main() -> None:
         )
         assert 0 < account_visible_rows <= 7, account_visible_rows
         page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-desktop.png"), full_page=True)
+        expect(page.locator('.admin-user-entry[data-kind="system"] .admin-user-toggle')).to_have_count(0)
+        expect(page.locator(".admin-user-toggle")).to_have_count(len(account_names))
+        protected_account_status = page.evaluate(
+            """async () => {
+                const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
+                const response = await fetch('/api/auth/users/vulnlab/status', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrfToken },
+                    body: JSON.stringify({ disabled: true }),
+                })
+                return { status: response.status, body: await response.json() }
+            }"""
+        )
+        assert protected_account_status == {"status": 409, "body": {"code": "BUILTIN_ACCOUNT_PROTECTED", "message": "内置管理员 vulnlab 不能被禁用。"}}, protected_account_status
         for width in (390, 320):
             page.set_viewport_size({"width": width, "height": 568})
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
@@ -989,7 +1053,7 @@ def main() -> None:
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
             assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= 568, (width, dialog_box)
             assert page.locator(".admin-user-table-head").evaluate("element => getComputedStyle(element).display") == "none"
-            assert page.locator(".admin-user-system .admin-user-name").evaluate("element => element.scrollWidth <= element.clientWidth")
+            expect(page.locator('.admin-user-entry[data-kind="system"]')).to_have_count(1)
             if width == 320:
                 page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -1001,10 +1065,22 @@ def main() -> None:
             "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
         )
         assert abs(account_select_alignment["toolbar"] - account_select_alignment["row"]) <= 1, account_select_alignment
-        for user_name in account_names[:2]:
+        account_checkbox = page.locator('[data-admin-record-select="users"]').first
+        for action in ("check", "uncheck"):
+            getattr(account_checkbox, action)()
+            checkbox_focus_style = account_checkbox.evaluate(
+                "element => ({ checked: element.checked, focused: element.matches(':focus'), outlineStyle: getComputedStyle(element).outlineStyle, boxShadow: getComputedStyle(element).boxShadow, borderWidth: getComputedStyle(element).borderWidth })"
+            )
+            assert checkbox_focus_style["focused"] and checkbox_focus_style["outlineStyle"] == "none" and checkbox_focus_style["boxShadow"] == "none" and checkbox_focus_style["borderWidth"] == "1px", checkbox_focus_style
+        for index, user_name in enumerate(account_names[:2]):
             row = page.locator(f'.admin-user-entry[data-id="{user_name}"]')
             expect(row).to_have_count(1)
             row.locator('[data-admin-record-select="users"]').check()
+            if index == 0:
+                selected_account_style = row.evaluate(
+                    "element => ({ backgroundColor: getComputedStyle(element).backgroundColor, borderRadius: getComputedStyle(element).borderRadius })"
+                )
+                assert selected_account_style == {"backgroundColor": "rgb(38, 38, 38)", "borderRadius": "5px"}, selected_account_style
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
         page.get_by_role("button", name="删除所选", exact=True).click()
         account_bulk_confirm = page.get_by_role("dialog", name="删除选中的账号")
@@ -1020,6 +1096,52 @@ def main() -> None:
         expect(account_page.locator(".labs-screen")).to_be_visible()
         account_page.locator('[data-action="open-admin-panel"]').click()
         account_page.locator('[data-action="open-admin-section"][data-section="users"]').click()
+        expect(account_page.locator(".admin-user-toggle")).to_have_count(0)
+        unauthorized_account_status = account_page.evaluate(
+            """async ({ userName }) => {
+                const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
+                const response = await fetch(`/api/auth/users/${encodeURIComponent(userName)}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrfToken },
+                    body: JSON.stringify({ disabled: true }),
+                })
+                return { status: response.status, body: await response.json() }
+            }""",
+            {"userName": account_names[4]},
+        )
+        assert unauthorized_account_status == {"status": 403, "body": {"code": "ACCOUNT_STATUS_FORBIDDEN", "message": "只有内置管理员 vulnlab 可以禁用或启用账号。"}}, unauthorized_account_status
+        disabled_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+        disabled_page = disabled_context.new_page()
+        disabled_page.goto(BASE_URL, wait_until="networkidle")
+        disabled_page.get_by_label("账号", exact=True).fill(account_names[3])
+        disabled_page.get_by_label("密码", exact=True).fill(account_password)
+        disabled_page.get_by_label("密码", exact=True).press("Enter")
+        expect(disabled_page.locator(".labs-screen")).to_be_visible()
+        disable_target = account_names[3]
+        page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle').click()
+        disable_confirm = page.get_by_role("dialog", name="禁用账号")
+        expect(disable_confirm).to_contain_text("立即退出所有会话")
+        disable_confirm.get_by_role("button", name="禁用账号", exact=True).click()
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-disabled')).to_have_text("已禁用")
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_text("启用")
+        revoked_session = disabled_page.evaluate(
+            """async () => {
+                const response = await fetch('/api/auth/session', { cache: 'no-store' })
+                return { status: response.status, body: await response.json() }
+            }"""
+        )
+        assert revoked_session == {"status": 200, "body": None}, revoked_session
+        disabled_page.reload(wait_until="networkidle")
+        disabled_page.get_by_label("账号", exact=True).fill(disable_target)
+        disabled_page.get_by_label("密码", exact=True).fill(account_password)
+        disabled_page.get_by_label("密码", exact=True).press("Enter")
+        expect(disabled_page.locator("#login-error")).to_contain_text("该账号已被禁用，请联系内置管理员 vulnlab。")
+        page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle').click()
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-disabled')).to_have_count(0)
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_text("禁用")
+        disabled_page.get_by_label("密码", exact=True).press("Enter")
+        expect(disabled_page.locator(".labs-screen")).to_be_visible()
+        disabled_context.close()
         expect(account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')).to_have_count(1)
         current_account_row = account_page.locator(f'.admin-user-entry[data-id="{account_names[2]}"]')
         expect(current_account_row).to_contain_text("当前登录")
@@ -1058,6 +1180,10 @@ def main() -> None:
             page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
         audit_dialog_box = page.locator('.admin-dialog:visible').bounding_box()
         assert audit_dialog_box and round(audit_dialog_box["width"]) == 640 and round(audit_dialog_box["height"]) == 480, audit_dialog_box
+        audit_toolbar_gap = page.locator(".admin-dialog-tools").evaluate(
+            "tools => document.querySelector('.admin-record-filters').getBoundingClientRect().top - tools.getBoundingClientRect().bottom"
+        )
+        assert 0 <= audit_toolbar_gap <= 8, audit_toolbar_gap
         expect(page.locator(".audit-entry")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
@@ -1314,7 +1440,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="运行", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="资源", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="审计", exact=True)).to_have_count(0)
-        desktop_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        desktop_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(desktop_columns.split()) == 3, desktop_columns
         workspace_display = page.locator(".lab-workspace").evaluate("element => getComputedStyle(element).display")
         assert workspace_display == "grid", workspace_display
@@ -1368,7 +1494,7 @@ def main() -> None:
             and item["overflow"] == "hidden"
             for item in all_card_corner_styles
         ), all_card_corner_styles
-        desktop_rows = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
+        desktop_rows = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) >= 3, desktop_rows
         page.set_viewport_size({"width": 1345, "height": 965})
         expect(page.locator(".workspace-brand-mark")).not_to_be_visible()
@@ -1383,7 +1509,7 @@ def main() -> None:
         expect(page.locator(".workspace-brand")).to_be_visible()
         expect(page.locator(".workspace-brand-trigger")).to_be_visible()
         expect(page.locator(".workspace-admin-trigger")).to_have_count(0)
-        medium_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        medium_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(medium_columns.split()) == 3, medium_columns
         medium_card_ratio = page.locator('.lab-card').first.evaluate(
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
@@ -1397,21 +1523,53 @@ def main() -> None:
         desktop_canvas = page.locator(".lab-canvas").evaluate(
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
         )
-        assert desktop_canvas["scrollHeight"] <= desktop_canvas["clientHeight"], desktop_canvas
+        assert desktop_canvas["scrollHeight"] > desktop_canvas["clientHeight"], desktop_canvas
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-down"))
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-up"))
+        expect(page.locator(".lab-canvas")).not_to_have_class(re.compile(r"can-scroll-down"))
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-down"))
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1440, "height": 900})
         desktop_canvas = page.locator(".lab-canvas").evaluate(
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })"
         )
-        assert desktop_canvas["scrollHeight"] <= desktop_canvas["clientHeight"], desktop_canvas
+        assert desktop_canvas["scrollHeight"] > desktop_canvas["clientHeight"], desktop_canvas
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1743, "height": 1021})
         large_desktop_canvas = page.locator(".lab-canvas").evaluate(
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height })"
         )
-        assert large_desktop_canvas["scrollHeight"] <= large_desktop_canvas["clientHeight"], large_desktop_canvas
+        assert large_desktop_canvas["scrollHeight"] > large_desktop_canvas["clientHeight"], large_desktop_canvas
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert large_desktop_canvas["width"] <= 900 and large_desktop_canvas["height"] <= 640, large_desktop_canvas
+        page.set_viewport_size({"width": 1600, "height": 841})
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        screenshot_viewport_spacing = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas')
+                const cards = [...document.querySelectorAll('.lab-card')]
+                const addCard = document.querySelector('.lab-add-card')
+                const canvasBox = canvas.getBoundingClientRect()
+                const firstCardBox = cards[0].getBoundingClientRect()
+                const ninthCardBox = cards[8].getBoundingClientRect()
+                const addCardBox = addCard.getBoundingClientRect()
+                return {
+                    firstTopGap: firstCardBox.top - canvasBox.top,
+                    ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
+                    addCardHiddenBeforeScroll: addCardBox.top >= canvasBox.bottom,
+                    allNineVisible: cards.every(card => {
+                        const box = card.getBoundingClientRect()
+                        return box.top >= canvasBox.top && box.bottom <= canvasBox.bottom
+                    })
+                }
+            }"""
+        )
+        assert screenshot_viewport_spacing["allNineVisible"], screenshot_viewport_spacing
+        assert abs(screenshot_viewport_spacing["firstTopGap"] - screenshot_viewport_spacing["ninthBottomGap"]) <= 2, screenshot_viewport_spacing
+        assert screenshot_viewport_spacing["addCardHiddenBeforeScroll"], screenshot_viewport_spacing
+        page.set_viewport_size({"width": 1440, "height": 900})
         detail_trigger = page.locator(".lab-card-media").first
         page.set_viewport_size({"width": 1440, "height": 900})
         detail_trigger.click()
@@ -1478,15 +1636,101 @@ def main() -> None:
             popup_info.value.close()
             expect(page.locator(".lab-detail-dialog")).to_have_count(0)
             expect(running_detail_trigger).to_be_focused()
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        page.wait_for_timeout(120)
+        lab_grid_spacing = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas')
+                const cards = [...document.querySelectorAll('.lab-card')]
+                const addCard = document.querySelector('.lab-add-card')
+                const rect = element => element.getBoundingClientRect()
+                const canvasBox = rect(canvas)
+                const firstCardBox = rect(cards[0])
+                const ninthCardBox = rect(cards[8])
+                const addCardBox = rect(addCard)
+                return {
+                    clientHeight: canvas.clientHeight,
+                    scrollHeight: canvas.scrollHeight,
+                    firstTopGap: firstCardBox.top - canvasBox.top,
+                    ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
+                    allNineVisible: cards.every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom),
+                    addCardAfterNine: addCardBox.top > ninthCardBox.bottom
+                }
+            }"""
+        )
+        assert lab_grid_spacing["scrollHeight"] > lab_grid_spacing["clientHeight"], lab_grid_spacing
+        assert lab_grid_spacing["allNineVisible"] and lab_grid_spacing["addCardAfterNine"], lab_grid_spacing
+        assert abs(lab_grid_spacing["firstTopGap"] - lab_grid_spacing["ninthBottomGap"]) <= 5, lab_grid_spacing
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
+        page.wait_for_timeout(120)
+        add_card_bottom_gap = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas')
+                const firstCard = document.querySelector('.lab-card')
+                const addCard = document.querySelector('.lab-add-card')
+                return {
+                    atBottom: canvas.scrollTop + canvas.clientHeight >= canvas.scrollHeight - 1,
+                    canScrollUp: canvas.classList.contains('can-scroll-up'),
+                    bottomGap: canvas.getBoundingClientRect().bottom - addCard.getBoundingClientRect().bottom
+                }
+            }"""
+        )
+        assert add_card_bottom_gap["atBottom"] and add_card_bottom_gap["canScrollUp"], add_card_bottom_gap
+        assert abs(lab_grid_spacing["firstTopGap"] - add_card_bottom_gap["bottomGap"]) <= 5, add_card_bottom_gap
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        page.wait_for_timeout(120)
         page.screenshot(path=str(OUTPUT_DIR / "labs-desktop.png"), full_page=True)
         if PRIMARY_SCREENSHOT:
             primary = Path(PRIMARY_SCREENSHOT)
             primary.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(primary), full_page=True)
 
+        page.set_viewport_size({"width": 927, "height": 675})
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        page.wait_for_timeout(120)
+        compact_desktop_spacing = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas')
+                const cards = [...document.querySelectorAll('.lab-card')]
+                const rect = element => element.getBoundingClientRect()
+                const canvasBox = rect(canvas)
+                const firstCardBox = rect(cards[0])
+                const ninthCardBox = rect(cards[8])
+                return {
+                    clientHeight: canvas.clientHeight,
+                    scrollHeight: canvas.scrollHeight,
+                    firstTopGap: firstCardBox.top - canvasBox.top,
+                    ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
+                    allNineVisible: cards.every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom)
+                }
+            }"""
+        )
+        assert compact_desktop_spacing["scrollHeight"] > compact_desktop_spacing["clientHeight"], compact_desktop_spacing
+        assert compact_desktop_spacing["allNineVisible"], compact_desktop_spacing
+        assert abs(compact_desktop_spacing["firstTopGap"] - compact_desktop_spacing["ninthBottomGap"]) <= 2, compact_desktop_spacing
+        expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-down"))
+        page.screenshot(path=str(OUTPUT_DIR / "labs-short-desktop.png"), full_page=True)
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
+        page.wait_for_timeout(120)
+        compact_desktop_add_card = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas')
+                const card = document.querySelector('.lab-add-card').getBoundingClientRect()
+                const canvasBox = canvas.getBoundingClientRect()
+                return {
+                    atBottom: canvas.scrollTop + canvas.clientHeight >= canvas.scrollHeight - 1,
+                    canScrollUp: canvas.classList.contains('can-scroll-up'),
+                    addCardVisible: card.top >= canvasBox.top && card.bottom <= canvasBox.bottom
+                }
+            }"""
+        )
+        assert compact_desktop_add_card["atBottom"] and compact_desktop_add_card["canScrollUp"] and compact_desktop_add_card["addCardVisible"], compact_desktop_add_card
+        page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        page.set_viewport_size({"width": 1440, "height": 900})
+
         page.set_viewport_size({"width": 890, "height": 978})
         expect(page.locator(".labs-screen")).to_be_visible()
-        wide_tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        wide_tablet_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(wide_tablet_columns.split()) == 3, wide_tablet_columns
         wide_tablet_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
@@ -1500,7 +1744,7 @@ def main() -> None:
         page.set_viewport_size({"width": 768, "height": 1024})
         expect(page.locator(".labs-screen")).to_be_visible()
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        tablet_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        tablet_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(tablet_columns.split()) == 2, tablet_columns
         tablet_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
@@ -1732,7 +1976,7 @@ def main() -> None:
         expect(page.locator(".workspace-account")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
 
-        mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        mobile_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
         mobile_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
@@ -1793,7 +2037,7 @@ def main() -> None:
         page.locator(".lab-canvas").focus()
         page.mouse.move(0, 0)
         expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        compact_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        compact_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(compact_columns.split()) == 2, compact_columns
         compact_card_box = page.locator(".lab-card").first.bounding_box()
         assert compact_card_box and compact_card_box["height"] <= 125, compact_card_box
@@ -1870,10 +2114,10 @@ def main() -> None:
         page.reload(wait_until="networkidle")
         page.wait_for_timeout(950)
         expect(page.locator(".lab-grid .lab-card")).to_have_count(12)
-        expect(page.locator(".lab-grid .lab-add-card")).to_have_count(0)
+        expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
         expect(page.locator(".lab-pagination")).to_have_count(0)
-        expanded_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        expanded_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(expanded_columns.split()) == 3, expanded_columns
         expanded_canvas = page.locator(".lab-canvas").evaluate(
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"

@@ -50,10 +50,22 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   assert.equal(database.registerUserWithInvitation('available-student', 'scrypt-fixture-hash', 'duplicate-code-hash-fixture', ['vulnlab']), 'created')
   const listedUsers = database.listRegisteredUsers(firstRecordPage).items
   assert.ok(listedUsers.some(item => item.userName === 'student-fixture'))
-  assert.ok(listedUsers.every(item => Object.keys(item).sort().join(',') === 'createdAt,userName'))
+  assert.ok(listedUsers.every(item => Object.keys(item).sort().join(',') === 'createdAt,disabled,userName' && item.disabled === false))
   database.createSession('student-session-a', 'student-fixture', 'admin', 'csrf-fixture-a', Date.now() + 86_400_000)
   database.createSession('student-session-b', 'student-fixture', 'admin', 'csrf-fixture-b', Date.now() + 86_400_000)
   database.createSession('available-session', 'available-student', 'admin', 'csrf-fixture-c', Date.now() + 86_400_000)
+  database.createSession('available-session-2', 'available-student', 'admin', 'csrf-fixture-d', Date.now() + 86_400_000)
+  assert.equal(database.setRegisteredUserDisabled('vulnlab', true), false)
+  assert.equal(database.setRegisteredUserDisabled('AVAILABLE-STUDENT', true), true)
+  assert.equal(database.getUser('available-student')?.disabled, true)
+  assert.equal(database.listRegisteredUsers(firstRecordPage).items.find(item => item.userName === 'available-student')?.disabled, true)
+  assert.equal(database.createSession('blocked-session', 'available-student', 'admin', 'csrf-fixture-e', Date.now() + 86_400_000, true), false)
+  assert.equal(database.getSession('blocked-session'), null)
+  assert.equal(database.getSession('available-session'), null)
+  assert.equal(database.getSession('available-session-2'), null)
+  assert.equal(database.setRegisteredUserDisabled('available-student', false), true)
+  assert.equal(database.getUser('available-student')?.disabled, false)
+  assert.equal(database.createSession('available-session', 'available-student', 'admin', 'csrf-fixture-c', Date.now() + 86_400_000, true), true)
   database.addAudit('student-fixture', 'account.delete', 'account', 'account deletion is retained in audit history')
   assert.equal(database.deleteRegisteredUsers(['available-student', 'missing-student']), 0)
   assert.ok(database.getUser('available-student'))
@@ -339,6 +351,12 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   const legacyDataDir = join(dataDir, 'legacy')
   await mkdir(legacyDataDir, { recursive: true })
   const legacyDb = new SQLiteDatabase(join(legacyDataDir, 'vulnlab.sqlite'))
+  legacyDb.exec(`CREATE TABLE users (
+    user_name TEXT PRIMARY KEY COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`)
   legacyDb.exec(`CREATE TABLE invitations (
     id TEXT PRIMARY KEY,
     code_hash TEXT NOT NULL UNIQUE,
@@ -348,12 +366,16 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
     revoked_at TEXT,
     created_at TEXT NOT NULL
   )`)
-  legacyDb.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?, ?, ?)').run('legacy-used', 'legacy-used-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString(), new Date().toISOString(), null, new Date().toISOString())
+  const legacyUsedAt = new Date().toISOString()
+  legacyDb.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('legacy-user', 'legacy-hash', 'admin', legacyUsedAt)
+  legacyDb.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?, ?, ?)').run('legacy-used', 'legacy-used-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString(), legacyUsedAt, null, legacyUsedAt)
   legacyDb.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?, ?, ?)').run('legacy-unused', 'legacy-unused-hash', 'vulnlab', new Date(Date.now() + 86_400_000).toISOString(), null, null, new Date().toISOString())
   legacyDb.close()
   const migratedDatabase = new VulnLabDatabase(legacyDataDir)
   try {
     const migratedInvitations = migratedDatabase.listInvitations(firstRecordPage).items
+    assert.deepEqual(migratedDatabase.listRegisteredUsers(firstRecordPage).items.find(item => item.userName === 'legacy-user'), { userName: 'legacy-user', createdAt: legacyUsedAt, disabled: false })
+    assert.equal(migratedDatabase.getUser('legacy-user')?.disabled, false)
     assert.equal(migratedInvitations.find(item => item.id === 'legacy-used')?.status, 'used')
     assert.equal(migratedInvitations.find(item => item.id === 'legacy-used')?.usedByUserName, null)
     assert.equal(migratedInvitations.find(item => item.id === 'legacy-unused')?.status, 'active')

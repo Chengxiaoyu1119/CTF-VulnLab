@@ -37,6 +37,7 @@ CLAUDE.md
 .agents/
 .idea/
 .vscode/
+docs/
 
 # 操作系统与编辑器元数据
 .DS_Store

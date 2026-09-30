@@ -826,15 +826,21 @@ app.post('/api/auth/login', async (request, reply) => {
   const userName = typeof body.userName === 'string' ? body.userName.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
   const registeredUser = database.getUser(userName)
+  const validRegisteredUser = registeredUser && samePasswordHash(registeredUser.passwordHash, password) ? registeredUser : null
+  if (validRegisteredUser?.disabled) return reply.code(403).send({ code: 'ACCOUNT_DISABLED', message: '该账号已被禁用，请联系内置管理员 vulnlab。' })
   const user = adminAccount.userName === userName && sameSecret(adminAccount.password, password)
     ? adminAccount
-    : registeredUser && samePasswordHash(registeredUser.passwordHash, password)
-      ? registeredUser
+    : validRegisteredUser
+      ? validRegisteredUser
       : null
   if (!user) return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码错误' })
   const sessionId = randomUUID()
   const csrfToken = randomBytes(24).toString('hex')
-  database.createSession(sessionId, user.userName, user.role, csrfToken, Date.now() + 8 * 60 * 60 * 1000)
+  if (!database.createSession(sessionId, user.userName, user.role, csrfToken, Date.now() + 8 * 60 * 60 * 1000, user === validRegisteredUser)) {
+    const currentUser = database.getUser(user.userName)
+    if (currentUser?.disabled) return reply.code(403).send({ code: 'ACCOUNT_DISABLED', message: '该账号已被禁用，请联系内置管理员 vulnlab。' })
+    return reply.code(401).send({ code: 'INVALID_CREDENTIALS', message: '账号或密码错误' })
+  }
   database.clearLoginAttempts(clientKey)
   reply.setCookie('vulnlab_session', sessionId, { path: '/api', httpOnly: true, sameSite: 'lax', secure: secureCookies, signed: true, maxAge: 8 * 60 * 60 })
   database.addAudit(user.userName, 'login', 'session', '登录 VulnLab')
@@ -866,6 +872,21 @@ app.get('/api/auth/users', async (request, reply) => {
   const users = database.listRegisteredUsers({ ...page, limit: page.cursor ? page.limit : page.limit - 1 })
   const items = page.cursor ? users.items : [{ kind: 'system' as const, userName: defaultAdminUser, createdAt: null }, ...users.items]
   return recordPageResponse(reply, { ...users, items, total: users.total + 1 })
+})
+
+app.patch('/api/auth/users/:userName/status', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  if (session.userName.toLowerCase() !== defaultAdminUser) return reply.code(403).send({ code: 'ACCOUNT_STATUS_FORBIDDEN', message: '只有内置管理员 vulnlab 可以禁用或启用账号。' })
+  const { userName } = request.params as { userName: string }
+  if (!accountPattern.test(userName)) return reply.code(400).send({ code: 'INVALID_USERNAME', message: '账号格式不正确。' })
+  if (userName.toLowerCase() === defaultAdminUser) return reply.code(409).send({ code: 'BUILTIN_ACCOUNT_PROTECTED', message: '内置管理员 vulnlab 不能被禁用。' })
+  const disabled = requestBody(request).disabled
+  if (typeof disabled !== 'boolean') return reply.code(400).send({ code: 'ACCOUNT_STATUS_INVALID', message: '账号状态参数无效。' })
+  if (!database.setRegisteredUserDisabled(userName, disabled)) return reply.code(404).send({ code: 'ACCOUNT_NOT_FOUND', message: '账号不存在。' })
+  const action = disabled ? 'account.disable' : 'account.enable'
+  database.addAudit(session.userName, action, 'account', `${disabled ? '禁用' : '启用'}账号：${userName}`)
+  return { ok: true, userName, disabled }
 })
 
 app.delete('/api/auth/users', async (request, reply) => {
