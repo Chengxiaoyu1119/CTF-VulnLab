@@ -24,6 +24,19 @@ if not SCREENSHOT_DIR:
 OUTPUT_DIR = Path(SCREENSHOT_DIR)
 
 
+def assert_admin_selection_buttons_match_logout(page) -> None:
+    sizes = page.locator(".admin-selection-actions button").evaluate_all(
+        """buttons => {
+            const logout = document.querySelector('.dialog-actions [data-action="logout"]').getBoundingClientRect()
+            return buttons.map(button => {
+                const rect = button.getBoundingClientRect()
+                return { width: rect.width, height: rect.height, matches: rect.width === logout.width && rect.height === logout.height }
+            })
+        }"""
+    )
+    assert sizes and all(size["matches"] for size in sizes), sizes
+
+
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
@@ -284,6 +297,9 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "login-success-notice-desktop.png"), full_page=True)
         expect(page.get_by_text("DVWA", exact=True)).to_have_count(1)
         expect(page.locator(".labs-screen")).to_be_visible()
+        initial_labs_payload = page.evaluate("async () => await (await fetch('/api/labs')).json()")
+        default_lab_count = len(initial_labs_payload)
+        assert default_lab_count >= 9, default_lab_count
         expect(page.locator(".workspace-brand")).to_be_visible()
         expect(page.locator(".workspace-brand-mark")).to_be_visible()
         assert page.locator(".workspace-brand-mark").evaluate("element => element.complete && element.naturalWidth > 0")
@@ -340,24 +356,25 @@ def main() -> None:
             "element => ({ width: getComputedStyle(element).width, height: getComputedStyle(element).height, borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth })"
         )
         assert canvas_frame_style["borderRadius"] == "12px" and canvas_frame_style["borderTopWidth"] == "1px", canvas_frame_style
-        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
         expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
-        assert page.locator(".lab-card").evaluate_all("elements => elements.every(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight })")
+        assert page.locator(".lab-card").evaluate_all("elements => elements.slice(0, 9).every(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight })")
         expect(page.locator(".lab-add-hint")).to_have_count(0)
         expect(page.get_by_text("从管理中心导入", exact=True)).to_have_count(0)
         page.locator(".lab-add-card").get_by_role("button", name="添加靶场").click()
         expect(page.locator("#admin-lab-form")).to_be_visible()
         page.get_by_role("button", name="关闭管理中心").click()
         expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
-        expect(page.locator(".lab-card-cover")).to_have_count(9)
-        assert page.locator(".lab-card-cover").evaluate_all(
+        expect(page.locator(".lab-card-cover")).to_have_count(default_lab_count)
+        cover_image_count = page.locator("img.lab-card-cover").count()
+        expect(page.locator(".lab-card-cover-fallback")).to_have_count(default_lab_count - cover_image_count)
+        assert page.locator("img.lab-card-cover").evaluate_all(
             "elements => elements.every(element => element.complete && element.naturalWidth > 0)"
         )
-        assert page.locator(".lab-grid .lab-card-cover").evaluate_all(
+        assert page.locator(".lab-grid img.lab-card-cover").evaluate_all(
             "elements => elements.map(element => element.getAttribute('loading'))"
-        ) == [None, None, None, "lazy", "lazy", "lazy", "lazy", "lazy", "lazy"]
-        initial_labs_payload = page.evaluate("async () => await (await fetch('/api/labs')).json()")
+        ) == [None, None, None, *["lazy"] * (cover_image_count - 3)]
         mutillidae_lab = next(lab for lab in initial_labs_payload if lab["slug"] == "mutillidae")
         mutillidae_trigger = page.locator(".lab-card-media").nth(7)
         mutillidae_trigger.click()
@@ -788,19 +805,51 @@ def main() -> None:
         page.get_by_role("button", name="生成邀请码", exact=True).click()
         expect(invitation_code).to_have_count(1)
         assert len(invitation_code.inner_text()) == 32
-        expect(page.locator(".invitation-one-time-note")).to_have_text("邀请码明文仅在生成时展示，请立即复制保存。")
+        generated_invitation_code = invitation_code.inner_text()
+        generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
+        assert generated_invitation_id
+        expect(page.locator(".invitation-one-time-note")).to_have_text("本标签页生成的有效邀请码，也可点击列表中的“有效”标识复制。")
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator(".invitation-history-card")).to_have_count(50)
+        invitation_copy_button = page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .invitation-status-copy')
+        expect(invitation_copy_button).to_have_text("有效")
+        page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE_URL)
+        invitation_copy_button.click()
+        expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
+        assert page.evaluate("navigator.clipboard.readText()") == generated_invitation_code
+        page.locator(".admin-dialog .dialog-close").click()
+        expect(page.locator(".admin-dialog")).to_have_count(0)
+        page.locator('[data-action="open-admin-panel"]').click()
+        page.locator('[data-action="open-admin-section"][data-section="invitations"]').click()
+        expect(page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"]')).to_have_count(1)
+        page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .invitation-status-copy').click()
+        expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
+        assert page.evaluate("navigator.clipboard.readText()") == generated_invitation_code
+        page.reload()
+        expect(page.locator(".labs-screen")).to_be_visible()
+        page.locator('[data-action="open-admin-panel"]').click()
+        page.locator('[data-action="open-admin-section"][data-section="invitations"]').click()
+        expect(page.locator(".invitation-card code")).to_have_text(generated_invitation_code)
+        page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .invitation-status-copy').click()
+        expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
+        assert page.evaluate("navigator.clipboard.readText()") == generated_invitation_code
         expect(page.locator(".invitation-history-head")).to_contain_text("状态")
         expect(page.locator(".invitation-history-head")).to_contain_text("创建人 / 时间")
         expect(page.locator(".invitation-history-head")).to_contain_text("使用账号 / 时间")
         expect(page.locator(".invitation-history-head")).to_contain_text("有效期")
+        assert page.locator(".invitation-history-head").evaluate("element => getComputedStyle(element).borderBottomWidth") == "0px"
+        expect(page.locator(".invitation-history-head").locator('[data-admin-select-all="invitations"]')).to_have_count(1)
+        expect(page.locator(".invitation-history-head .admin-select-all > span")).to_have_count(0)
+        invitation_select_gap = page.locator(".invitation-history-head").evaluate(
+            "element => { const checkbox = element.querySelector('[data-admin-select-all=\"invitations\"]').getBoundingClientRect(); const status = element.children[1].getBoundingClientRect(); return status.left + status.width / 2 - checkbox.right; }"
+        )
+        assert 0 < invitation_select_gap <= 50, invitation_select_gap
         invitation_header_alignment = page.locator(".invitation-history-head").evaluate(
             "header => { const head = [...header.children].map(item => item.getBoundingClientRect().left); const row = [...document.querySelector('.invitation-history-card').children].map(item => item.getBoundingClientRect().left); return { columns: head.length, offsets: head.map((left, index) => Math.abs(left - row[index])) } }"
         )
         assert invitation_header_alignment["columns"] == 6 and max(invitation_header_alignment["offsets"]) <= 1, invitation_header_alignment
         invitation_status_alignment = page.locator(".invitation-history-head").evaluate(
-            "header => { const heading = header.children[1].getBoundingClientRect(); const status = document.querySelector('.invitation-field-status strong').getBoundingClientRect(); return Math.abs((heading.left + heading.width / 2) - (status.left + status.width / 2)); }"
+            "header => { const heading = header.children[1].getBoundingClientRect(); const status = document.querySelector('.invitation-field-status > strong, .invitation-status-copy').getBoundingClientRect(); return Math.abs((heading.left + heading.width / 2) - (status.left + status.width / 2)); }"
         )
         assert invitation_status_alignment <= 1, invitation_status_alignment
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
@@ -814,7 +863,7 @@ def main() -> None:
         assert invitation_scroll_style["scrollbarWidth"] == "thin", invitation_scroll_style
         if page.locator(".admin-record-pagination").count():
             expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
-        assert page.locator(".admin-record-toolbar").evaluate("element => getComputedStyle(element).position") == "sticky"
+        assert page.locator(".invitation-history-head").evaluate("element => getComputedStyle(element).position") == "sticky"
         for width, height in [(1440, 900), (768, 1024), (720, 520), (641, 480), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
             page.set_viewport_size({"width": width, "height": height})
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
@@ -853,7 +902,7 @@ def main() -> None:
             }"""
         )
         assert 0 < invitation_visible_rows <= 8, invitation_visible_rows
-        expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_disabled()
+        expect(page.get_by_role("button", name="删除", exact=True)).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "admin-records-window-desktop.png"), full_page=True)
         generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
         assert generated_invitation_id
@@ -866,6 +915,19 @@ def main() -> None:
         select_all = page.locator('[data-admin-select-all="invitations"]')
         select_all.check()
         expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {generated_invitation_records} 条")
+        assert_admin_selection_buttons_match_logout(page)
+        invitation_footer_order = page.locator(".dialog-actions").evaluate(
+            "element => [...element.children].map(item => item.classList.contains('admin-selection-actions') ? 'admin-selection-actions' : item.dataset.action || item.className)"
+        )
+        assert invitation_footer_order.index("admin-selection-actions") < invitation_footer_order.index("logout"), invitation_footer_order
+        for width in (390, 320):
+            page.set_viewport_size({"width": width, "height": 568})
+            assert_admin_selection_buttons_match_logout(page)
+            invitation_footer_layout = page.locator(".dialog-actions").evaluate(
+                "element => { const box = element.getBoundingClientRect(); const items = [...element.children].map(item => item.getBoundingClientRect()).filter(rect => rect.width); return { width: box.width, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, fits: items.every(item => item.left >= box.left - 1 && item.right <= box.right + 1), ordered: items.every((item, index) => index === 0 || item.left >= items[index - 1].right - 1) }; }"
+            )
+            assert invitation_footer_layout["scrollWidth"] <= invitation_footer_layout["clientWidth"] and invitation_footer_layout["fits"] and invitation_footer_layout["ordered"], (width, invitation_footer_layout)
+        page.set_viewport_size({"width": 1440, "height": 900})
         checked_focus_style = select_all.evaluate(
             "element => { element.focus(); const style = getComputedStyle(element); return { appearance: style.appearance, outline: style.outlineStyle, boxShadow: style.boxShadow, checked: element.checked }; }"
         )
@@ -887,14 +949,14 @@ def main() -> None:
         )
         assert selected_invitation_style == {"borderBottomColor": "rgb(43, 43, 43)", "backgroundColor": "rgb(36, 36, 36)"}, selected_invitation_style
         page.screenshot(path=str(OUTPUT_DIR / "admin-records-selected-desktop.png"), full_page=True)
-        page.get_by_role("button", name="删除所选", exact=True).click()
+        page.get_by_role("button", name="删除", exact=True).click()
         invitation_bulk_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
         expect(invitation_bulk_confirm).to_be_visible()
         invitation_bulk_confirm.get_by_role("button", name="取消", exact=True).click()
-        expect(page.get_by_role("button", name="删除所选", exact=True)).to_be_focused()
-        page.get_by_role("button", name="删除所选", exact=True).click()
+        expect(page.get_by_role("button", name="删除", exact=True)).to_be_focused()
+        page.get_by_role("button", name="删除", exact=True).click()
         invitation_bulk_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
-        invitation_bulk_confirm.get_by_role("button", name="删除所选", exact=True).click()
+        invitation_bulk_confirm.get_by_role("button", name="删除", exact=True).click()
         for record_id in batch_invitation_ids:
             expect(page.locator(f'.invitation-history-card[data-id="{record_id}"]')).to_have_count(0)
         expect(page.locator(".invitation-history-card")).to_have_count(generated_invitation_records - 2)
@@ -915,10 +977,10 @@ def main() -> None:
         if remaining_invitation_records:
             page.locator('[data-admin-select-all="invitations"]').check()
             expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {remaining_invitation_records} 条")
-            page.get_by_role("button", name="删除所选", exact=True).click()
+            page.get_by_role("button", name="删除", exact=True).click()
             invitation_cleanup_confirm = page.get_by_role("dialog", name="删除选中的邀请码记录")
             expect(invitation_cleanup_confirm).to_be_visible()
-            invitation_cleanup_confirm.get_by_role("button", name="删除所选", exact=True).click()
+            invitation_cleanup_confirm.get_by_role("button", name="删除", exact=True).click()
             expect(page.locator(".invitation-history-card")).to_have_count(0)
         account_password = "secret123"
         account_names = [f"ui-delete-{os.getpid()}-{time.time_ns() % 100000}-{index}" for index in range(6)]
@@ -986,14 +1048,13 @@ def main() -> None:
         expect(system_admin_row.locator("time")).to_have_count(0)
         expect(system_admin_row.locator("[data-admin-record-select], .record-delete")).to_have_count(0)
         account_panel_order = page.locator(".admin-record-view").evaluate(
-            "element => ['.admin-user-system', '.admin-record-toolbar', '.admin-user-table-head', '.user-history'].map(selector => [...element.children].indexOf(element.querySelector(selector)))"
+            "element => ['.admin-user-system', '.admin-user-table-head', '.user-history'].map(selector => [...element.children].indexOf(element.querySelector(selector)))"
         )
         assert account_panel_order == sorted(account_panel_order) and account_panel_order[0] == 0, account_panel_order
         account_spacing = page.locator(".admin-user-system").evaluate(
-            "system => { const tools = document.querySelector('.admin-dialog-tools').getBoundingClientRect(); const profile = system.getBoundingClientRect(); const toolbar = document.querySelector('.admin-record-toolbar'); const toolbarBox = toolbar.getBoundingClientRect(); const style = getComputedStyle(toolbar); return { top: profile.top - tools.bottom, toolbar: toolbarBox.top - profile.bottom, toolbarHeight: toolbarBox.height, backgroundColor: style.backgroundColor, borderRadius: style.borderRadius, position: style.position } }"
+            "system => { const tools = document.querySelector('.admin-dialog-tools').getBoundingClientRect(); const profile = system.getBoundingClientRect(); const header = document.querySelector('.admin-user-table-head'); const headerBox = header.getBoundingClientRect(); return { top: profile.top - tools.bottom, header: headerBox.top - profile.bottom, headerHeight: headerBox.height } }"
         )
-        assert 7 <= account_spacing["top"] <= 10 and 11 <= account_spacing["toolbar"] <= 14 and account_spacing["toolbarHeight"] == 36, account_spacing
-        assert account_spacing["backgroundColor"] == "rgba(0, 0, 0, 0)" and account_spacing["borderRadius"] == "0px" and account_spacing["position"] == "static", account_spacing
+        assert 7 <= account_spacing["top"] <= 10 and 7 <= account_spacing["header"] <= 12 and account_spacing["headerHeight"] >= 34, account_spacing
         expect(page.locator(".admin-user-table-head")).to_contain_text("账号")
         expect(page.locator(".admin-user-table-head")).to_contain_text("注册时间")
         expect(page.locator(".admin-user-table-head")).to_contain_text("操作")
@@ -1009,13 +1070,15 @@ def main() -> None:
         )
         assert account_row_style == {"borderRadius": "8px", "borderWidth": "0px", "backgroundColor": "rgb(35, 35, 35)", "historyBorder": "0px", "headerBorder": "0px", "roleBorder": "0px"}, account_row_style
         account_column_alignment = page.locator(".admin-user-table-head").evaluate(
-            "element => { const boxes = [...element.children].map(item => item.getBoundingClientRect()); const selectLabel = document.querySelector('[data-admin-select-all=\"users\"]').closest('label').querySelector('span').getBoundingClientRect(); const user = document.querySelector('.admin-user-entry:not([data-kind=system])'); const name = user.querySelector('.admin-user-name').getBoundingClientRect(); const time = user.querySelector('.admin-user-time').getBoundingClientRect(); return { selectLabelLeft: selectLabel.left, accountHeaderLeft: boxes[1].left, userNameLeft: name.left, dateHeaderRight: boxes[2].right, userTimeRight: time.right } }"
+            "element => { const boxes = [...element.children].map(item => item.getBoundingClientRect()); const selectBox = element.querySelector('[data-admin-select-all=\"users\"]').getBoundingClientRect(); const user = document.querySelector('.admin-user-entry:not([data-kind=system])'); const rowBox = user.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect(); const name = user.querySelector('.admin-user-name').getBoundingClientRect(); const time = user.querySelector('.admin-user-time').getBoundingClientRect(); return { selectLeft: selectBox.left, rowSelectLeft: rowBox.left, accountHeaderLeft: boxes[1].left, userNameLeft: name.left, dateHeaderRight: boxes[2].right, userTimeRight: time.right } }"
         )
-        assert abs(account_column_alignment["selectLabelLeft"] - account_column_alignment["accountHeaderLeft"]) <= 1 and abs(account_column_alignment["accountHeaderLeft"] - account_column_alignment["userNameLeft"]) <= 1 and abs(account_column_alignment["dateHeaderRight"] - account_column_alignment["userTimeRight"]) <= 1, account_column_alignment
-        account_toolbar_alignment = page.locator(".admin-record-toolbar").evaluate(
-            "toolbar => ({ selectAll: toolbar.querySelector('[data-admin-select-all=\"users\"]').getBoundingClientRect().left, firstRow: document.querySelector('.admin-user-entry:not([data-kind=system]) [data-admin-record-select=\"users\"]').getBoundingClientRect().left, scrollWidth: toolbar.scrollWidth, clientWidth: toolbar.clientWidth })"
+        expect(page.locator(".admin-user-table-head .admin-select-all > span")).to_have_count(0)
+        assert abs(account_column_alignment["selectLeft"] - account_column_alignment["rowSelectLeft"]) <= 1 and abs(account_column_alignment["accountHeaderLeft"] - account_column_alignment["userNameLeft"]) <= 1 and abs(account_column_alignment["dateHeaderRight"] - account_column_alignment["userTimeRight"]) <= 1, account_column_alignment
+        account_header_widths = page.locator(".admin-user-table-head").evaluate(
+            "element => [...element.children].map(item => item.getBoundingClientRect().width)"
         )
-        assert abs(account_toolbar_alignment["selectAll"] - account_toolbar_alignment["firstRow"]) <= 1 and account_toolbar_alignment["scrollWidth"] <= account_toolbar_alignment["clientWidth"], account_toolbar_alignment
+        assert account_header_widths[0] == 28 and account_header_widths[2] >= 154 and account_header_widths[3] >= 42, account_header_widths
+        expect(page.locator(".admin-record-toolbar")).to_have_count(0)
         account_scroll_style = page.locator(".admin-dialog-content").evaluate(
             "element => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"
         )
@@ -1033,7 +1096,9 @@ def main() -> None:
         assert 0 < account_visible_rows <= 7, account_visible_rows
         page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-desktop.png"), full_page=True)
         expect(page.locator('.admin-user-entry[data-kind="system"] .admin-user-toggle')).to_have_count(0)
-        expect(page.locator(".admin-user-toggle")).to_have_count(len(account_names))
+        expect(page.locator(".admin-user-toggle")).to_have_count(0)
+        expect(page.locator(".admin-selection-actions")).to_have_count(0)
+        expect(page.get_by_role("button", name="禁用", exact=True)).to_have_count(0)
         protected_account_status = page.evaluate(
             """async () => {
                 const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
@@ -1052,7 +1117,11 @@ def main() -> None:
             assert page.locator(".admin-user-entry").evaluate_all("elements => elements.every(element => element.scrollWidth <= element.clientWidth)"), width
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
             assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= 568, (width, dialog_box)
-            assert page.locator(".admin-user-table-head").evaluate("element => getComputedStyle(element).display") == "none"
+            assert page.locator(".admin-user-table-head").evaluate("element => getComputedStyle(element).display") == "flex"
+            mobile_account_checkbox_alignment = page.locator(".admin-user-table-head").evaluate(
+                "element => ({ selectAll: element.querySelector('[data-admin-select-all=\"users\"]').getBoundingClientRect().left, firstRow: document.querySelector('.admin-user-entry:not([data-kind=system]) [data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
+            )
+            assert abs(mobile_account_checkbox_alignment["selectAll"] - mobile_account_checkbox_alignment["firstRow"]) <= 1, (width, mobile_account_checkbox_alignment)
             expect(page.locator('.admin-user-entry[data-kind="system"]')).to_have_count(1)
             if width == 320:
                 page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-mobile.png"), full_page=True)
@@ -1062,9 +1131,9 @@ def main() -> None:
         expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
         page.set_viewport_size({"width": 1440, "height": 900})
         account_select_alignment = page.locator('[data-admin-select-all="users"]').evaluate(
-            "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
+            "element => ({ toolbar: element.closest('.admin-user-table-head').getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left, input: element.getBoundingClientRect().left })"
         )
-        assert abs(account_select_alignment["toolbar"] - account_select_alignment["row"]) <= 1, account_select_alignment
+        assert abs(account_select_alignment["input"] - account_select_alignment["row"]) <= 1, account_select_alignment
         account_checkbox = page.locator('[data-admin-record-select="users"]').first
         for action in ("check", "uncheck"):
             getattr(account_checkbox, action)()
@@ -1082,7 +1151,38 @@ def main() -> None:
                 )
                 assert selected_account_style == {"backgroundColor": "rgb(38, 38, 38)", "borderRadius": "5px"}, selected_account_style
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
-        page.get_by_role("button", name="删除所选", exact=True).click()
+        account_status_toolbar_order = page.locator(".admin-selection-actions button").evaluate_all("elements => elements.map(element => element.textContent.trim())")
+        assert account_status_toolbar_order == ["禁用", "删除"], account_status_toolbar_order
+        assert_admin_selection_buttons_match_logout(page)
+        assert page.locator(".dialog-actions .admin-selection-actions").count() == 1
+        assert page.locator(".dialog-actions").evaluate(
+            "element => element.querySelector('.admin-selection-actions').compareDocumentPosition(element.querySelector('[data-action=logout]')) & Node.DOCUMENT_POSITION_FOLLOWING"
+        )
+        for width in (390, 320):
+            page.set_viewport_size({"width": width, "height": 568})
+            account_footer_layout = page.locator(".dialog-actions").evaluate(
+                "element => { const box = element.getBoundingClientRect(); const items = [...element.children].map(item => item.getBoundingClientRect()).filter(rect => rect.width); return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, fits: items.every(item => item.left >= box.left - 1 && item.right <= box.right + 1), ordered: items.every((item, index) => index === 0 || item.left >= items[index - 1].right - 1) }; }"
+            )
+            assert account_footer_layout["scrollWidth"] <= account_footer_layout["clientWidth"] and account_footer_layout["fits"] and account_footer_layout["ordered"], (width, account_footer_layout)
+            assert_admin_selection_buttons_match_logout(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.get_by_role("button", name="禁用", exact=True).click()
+        disable_selected_confirm = page.get_by_role("dialog", name="禁用账号")
+        expect(disable_selected_confirm).to_contain_text("已选中的 2 个账号")
+        disable_selected_confirm.get_by_role("button", name="禁用账号", exact=True).click()
+        for user_name in account_names[:2]:
+            expect(page.locator(f'.admin-user-entry[data-id="{user_name}"] .admin-user-disabled')).to_have_text("已禁用")
+        for user_name in account_names[:2]:
+            page.locator(f'.admin-user-entry[data-id="{user_name}"] [data-admin-record-select="users"]').check()
+        expect(page.get_by_role("button", name="启用", exact=True)).to_be_enabled()
+        page.get_by_role("button", name="启用", exact=True).click()
+        enable_selected_confirm = page.get_by_role("dialog", name="启用账号")
+        enable_selected_confirm.get_by_role("button", name="启用账号", exact=True).click()
+        for user_name in account_names[:2]:
+            expect(page.locator(f'.admin-user-entry[data-id="{user_name}"] .admin-user-disabled')).to_have_count(0)
+        for user_name in account_names[:2]:
+            page.locator(f'.admin-user-entry[data-id="{user_name}"] [data-admin-record-select="users"]').check()
+        page.get_by_role("button", name="删除", exact=True).click()
         account_bulk_confirm = page.get_by_role("dialog", name="删除选中的账号")
         expect(account_bulk_confirm).to_be_visible()
         account_bulk_confirm.get_by_role("button", name="删除账号", exact=True).click()
@@ -1097,6 +1197,7 @@ def main() -> None:
         account_page.locator('[data-action="open-admin-panel"]').click()
         account_page.locator('[data-action="open-admin-section"][data-section="users"]').click()
         expect(account_page.locator(".admin-user-toggle")).to_have_count(0)
+        expect(account_page.get_by_role("button", name="禁用", exact=True)).to_have_count(0)
         unauthorized_account_status = account_page.evaluate(
             """async ({ userName }) => {
                 const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json()
@@ -1112,18 +1213,23 @@ def main() -> None:
         assert unauthorized_account_status == {"status": 403, "body": {"code": "ACCOUNT_STATUS_FORBIDDEN", "message": "只有内置管理员 vulnlab 可以禁用或启用账号。"}}, unauthorized_account_status
         disabled_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
         disabled_page = disabled_context.new_page()
+        disabled_login_responses = []
+        disabled_page_errors = []
+        disabled_page.on("response", lambda response: disabled_login_responses.append(response) if response.url.endswith("/api/auth/login") else None)
+        disabled_page.on("pageerror", lambda error: disabled_page_errors.append(str(error)))
         disabled_page.goto(BASE_URL, wait_until="networkidle")
         disabled_page.get_by_label("账号", exact=True).fill(account_names[3])
         disabled_page.get_by_label("密码", exact=True).fill(account_password)
         disabled_page.get_by_label("密码", exact=True).press("Enter")
         expect(disabled_page.locator(".labs-screen")).to_be_visible()
         disable_target = account_names[3]
-        page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle').click()
+        page.locator(f'.admin-user-entry[data-id="{disable_target}"] [data-admin-record-select="users"]').check()
+        page.get_by_role("button", name="禁用", exact=True).click()
         disable_confirm = page.get_by_role("dialog", name="禁用账号")
-        expect(disable_confirm).to_contain_text("立即退出所有会话")
+        expect(disable_confirm).to_contain_text("立即退出所有登录会话")
         disable_confirm.get_by_role("button", name="禁用账号", exact=True).click()
         expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-disabled')).to_have_text("已禁用")
-        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_text("启用")
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_count(0)
         revoked_session = disabled_page.evaluate(
             """async () => {
                 const response = await fetch('/api/auth/session', { cache: 'no-store' })
@@ -1136,9 +1242,25 @@ def main() -> None:
         disabled_page.get_by_label("密码", exact=True).fill(account_password)
         disabled_page.get_by_label("密码", exact=True).press("Enter")
         expect(disabled_page.locator("#login-error")).to_contain_text("该账号已被禁用，请联系内置管理员 vulnlab。")
-        page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle').click()
+        assert [response.status for response in disabled_login_responses] == [200, 403], [response.status for response in disabled_login_responses]
+        assert disabled_login_responses[-1].json() == {"code": "ACCOUNT_DISABLED", "message": "该账号已被禁用，请联系内置管理员 vulnlab。"}
+        assert disabled_page_errors == [], disabled_page_errors
+        close_login_error = disabled_page.locator(".login-error-close")
+        close_login_error.focus()
+        close_focus_style = close_login_error.evaluate(
+            "element => ({ outline: getComputedStyle(element).outlineStyle, boxShadow: getComputedStyle(element).boxShadow })"
+        )
+        assert close_focus_style == {"outline": "none", "boxShadow": "none"}, close_focus_style
+        close_login_error.click()
+        expect(disabled_page.locator("#login-error")).to_have_count(0)
+        disabled_account_row = page.locator(f'.admin-user-entry[data-id="{disable_target}"]')
+        disabled_account_row.locator('[data-admin-record-select="users"]').check()
+        expect(page.get_by_role("button", name="启用", exact=True)).to_be_enabled()
+        page.get_by_role("button", name="启用", exact=True).click()
+        enable_account_confirm = page.get_by_role("dialog", name="启用账号")
+        enable_account_confirm.get_by_role("button", name="启用账号", exact=True).click()
         expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-disabled')).to_have_count(0)
-        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_text("禁用")
+        expect(page.locator(f'.admin-user-entry[data-id="{disable_target}"] .admin-user-toggle')).to_have_count(0)
         disabled_page.get_by_label("密码", exact=True).press("Enter")
         expect(disabled_page.locator(".labs-screen")).to_be_visible()
         disabled_context.close()
@@ -1152,7 +1274,7 @@ def main() -> None:
         expect(account_page.get_by_role("heading", name="攻防控制台", exact=True)).to_be_visible()
         for user_name in account_names[3:]:
             page.locator(f'.admin-user-entry[data-id="{user_name}"] [data-admin-record-select="users"]').check()
-        page.get_by_role("button", name="删除所选", exact=True).click()
+        page.get_by_role("button", name="删除", exact=True).click()
         account_cleanup_confirm = page.get_by_role("dialog", name="删除选中的账号")
         expect(account_cleanup_confirm).to_be_visible()
         account_cleanup_confirm.get_by_role("button", name="删除账号", exact=True).click()
@@ -1170,20 +1292,26 @@ def main() -> None:
         page.unroute("**/api/audit*", fail_audit_records)
         page.locator('[data-action="retry-admin-records"]').click()
         expect(page.locator(".audit-entry")).to_have_count(50)
+        expect(page.get_by_role("button", name="删除", exact=True)).to_have_count(0)
         audit_filter_label_style = page.locator(".admin-record-filter").first.evaluate(
             "element => ({ fontSize: getComputedStyle(element).fontSize, color: getComputedStyle(element).color })"
         )
         assert audit_filter_label_style == {"fontSize": "11px", "color": "rgb(153, 153, 153)"}, audit_filter_label_style
         assert page.locator('[data-audit-filter="date"]').evaluate("element => getComputedStyle(element).width") == "108px"
         assert page.locator(".admin-action-select").evaluate("element => getComputedStyle(element).width") == "116px"
+        expect(page.locator('.admin-record-filters [data-admin-select-all="audit"]')).to_have_count(1)
+        expect(page.locator(".admin-record-filters .admin-select-all > span")).to_have_count(0)
+        audit_filter_spacing = page.locator(".admin-record-filters").evaluate(
+            "filters => { const checkbox = filters.querySelector('[data-admin-select-all=\"audit\"]').getBoundingClientRect(); const date = filters.querySelector('[data-audit-filter=\"date\"]').closest('.admin-record-filter').getBoundingClientRect(); return { gap: date.left - checkbox.right, borderBottomWidth: getComputedStyle(filters).borderBottomWidth }; }"
+        )
+        assert audit_filter_spacing["gap"] >= 11 and audit_filter_spacing["borderBottomWidth"] == "0px", audit_filter_spacing
         if page.locator('[data-action="clear-audit-filters"]:not([disabled])').count():
             page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
         audit_dialog_box = page.locator('.admin-dialog:visible').bounding_box()
         assert audit_dialog_box and round(audit_dialog_box["width"]) == 640 and round(audit_dialog_box["height"]) == 480, audit_dialog_box
-        audit_toolbar_gap = page.locator(".admin-dialog-tools").evaluate(
-            "tools => document.querySelector('.admin-record-filters').getBoundingClientRect().top - tools.getBoundingClientRect().bottom"
+        assert page.locator(".admin-record-filters").evaluate(
+            "filters => ['[data-admin-select-all=\"audit\"]', '[data-audit-filter=\"date\"]', '.admin-action-select', '[data-action=\"clear-audit-filters\"]'].every(selector => filters.contains(filters.querySelector(selector))) && getComputedStyle(filters).position === 'sticky'"
         )
-        assert 0 <= audit_toolbar_gap <= 8, audit_toolbar_gap
         expect(page.locator(".audit-entry")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
         page.get_by_role("button", name="加载更多", exact=True).click()
@@ -1286,6 +1414,8 @@ def main() -> None:
             batch_audit_ids.append(record.get_attribute("data-id"))
             record.locator('[data-admin-record-select="audit"]').check()
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
+        expect(page.get_by_role("button", name="删除", exact=True)).to_have_count(1)
+        assert_admin_selection_buttons_match_logout(page)
         selected_audit_style = page.locator(".audit-entry.is-selected").first.evaluate(
             "element => ({ borderColor: getComputedStyle(element).borderColor, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
@@ -1297,31 +1427,48 @@ def main() -> None:
             "element => ({ selectAll: element.querySelector('[data-admin-select-all=\"audit\"]').getBoundingClientRect().left, firstRow: document.querySelector('.audit-entry [data-admin-record-select=\"audit\"]').getBoundingClientRect().left })"
         )
         assert abs(audit_checkbox_alignment["selectAll"] - audit_checkbox_alignment["firstRow"]) <= 1, audit_checkbox_alignment
-        audit_toolbar_bottoms = page.locator(".admin-record-filters").evaluate(
-            """element => ['[data-admin-select-all="audit"]', '[data-audit-filter="date"]', '.admin-action-select', '[data-action="clear-audit-filters"]', '.admin-selection-count', '.admin-bulk-delete']
+        audit_filter_centers = page.locator(".admin-record-filters").evaluate(
+            """element => ['[data-admin-select-all="audit"]', '[data-audit-filter="date"]', '.admin-action-select > summary', '[data-action="clear-audit-filters"]']
                 .map(selector => {
                     const item = element.querySelector(selector)
-                    return (item?.matches('input[type="checkbox"]') ? item.closest('label') : item)?.getBoundingClientRect().bottom
+                    const rect = item?.getBoundingClientRect()
+                    return rect ? Math.round((rect.top + rect.bottom) / 2) : undefined
                 })
                 .filter(value => value !== undefined)
-                .map(Math.round)"""
+            """
         )
-        assert len(audit_toolbar_bottoms) == 6 and len(set(audit_toolbar_bottoms)) == 1, audit_toolbar_bottoms
+        assert len(audit_filter_centers) == 4 and max(audit_filter_centers) - min(audit_filter_centers) <= 1, audit_filter_centers
+        audit_selection_centers = page.locator(".dialog-actions").evaluate(
+            """element => ['.admin-selection-count', '.admin-bulk-delete', '[data-action="logout"]']
+                .map(selector => {
+                    const item = element.querySelector(selector)
+                    const rect = item?.getBoundingClientRect()
+                    return rect ? Math.round((rect.top + rect.bottom) / 2) : undefined
+                })
+                .filter(value => value !== undefined)
+            """
+        )
+        assert len(audit_selection_centers) == 3 and max(audit_selection_centers) - min(audit_selection_centers) <= 1, audit_selection_centers
         audit_toolbar_overflow = page.locator(".admin-record-filters").evaluate("element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })")
         assert audit_toolbar_overflow["scrollWidth"] <= audit_toolbar_overflow["clientWidth"], audit_toolbar_overflow
         for width, height in [(1440, 900), (390, 844), (320, 568)]:
             page.set_viewport_size({"width": width, "height": height})
+            assert_admin_selection_buttons_match_logout(page)
             responsive_checkbox_alignment = page.locator(".admin-record-filters").evaluate(
                 "element => ({ selectAll: element.querySelector('[data-admin-select-all=\"audit\"]').getBoundingClientRect().left, firstRow: document.querySelector('.audit-entry [data-admin-record-select=\"audit\"]').getBoundingClientRect().left, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })"
             )
             assert abs(responsive_checkbox_alignment["selectAll"] - responsive_checkbox_alignment["firstRow"]) <= 1, (width, responsive_checkbox_alignment)
             assert responsive_checkbox_alignment["scrollWidth"] <= responsive_checkbox_alignment["clientWidth"], (width, responsive_checkbox_alignment)
+            audit_footer_layout = page.locator(".dialog-actions").evaluate(
+                "element => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })"
+            )
+            assert audit_footer_layout["scrollWidth"] <= audit_footer_layout["clientWidth"], (width, audit_footer_layout)
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.get_by_role("button", name="删除所选", exact=True).click()
+        page.get_by_role("button", name="删除", exact=True).click()
         audit_bulk_confirm = page.get_by_role("dialog", name="删除选中的审计记录")
         expect(audit_bulk_confirm).to_be_visible()
         with page.expect_response(lambda response: response.url.endswith("/api/audit") and response.request.method == "DELETE") as audit_delete_response_info:
-            audit_bulk_confirm.get_by_role("button", name="删除所选", exact=True).click()
+            audit_bulk_confirm.get_by_role("button", name="删除", exact=True).click()
         assert audit_delete_response_info.value.json().get("deleted") == 2
         for record_id in batch_audit_ids:
             expect(page.locator(f'.audit-entry[data-id="{record_id}"]')).to_have_count(0)
@@ -1359,8 +1506,8 @@ def main() -> None:
         expect(page.get_by_role("button", name="管理中心", exact=True)).to_be_visible()
         expect(page.locator(".lab-card-head")).to_have_count(0)
         expect(page.locator(".lab-card-status")).to_have_count(0)
-        expect(page.locator(".lab-card-title")).to_have_count(9)
-        expect(page.locator(".lab-card-caption")).to_have_count(9)
+        expect(page.locator(".lab-card-title")).to_have_count(default_lab_count)
+        expect(page.locator(".lab-card-caption")).to_have_count(default_lab_count)
         expect(page.locator(".lab-card-actions")).to_have_count(0)
         expect(page.locator('.lab-grid [data-action="start-instance"]')).to_have_count(0)
         page.mouse.move(0, 0)
@@ -1393,10 +1540,7 @@ def main() -> None:
         desktop_titles = page.locator(".lab-card .lab-card-title").evaluate_all(
             "elements => elements.map(element => element.textContent.trim())"
         )
-        assert desktop_titles == [
-            "DVWA", "Pikachu", "SQLi-Labs", "Upload-Labs",
-            "XVWA", "OWASP Juice Shop", "OWASP WebGoat", "OWASP Mutillidae II", "OWASP PyGoat",
-        ], desktop_titles
+        assert desktop_titles == [lab["title"] for lab in initial_labs_payload], desktop_titles
         caption_metrics = page.locator('.lab-card-caption').evaluate_all(
             """elements => elements.map(element => {
                 const caption = element.getBoundingClientRect()
@@ -1440,7 +1584,7 @@ def main() -> None:
         expect(page.get_by_role("button", name="运行", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="资源", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="审计", exact=True)).to_have_count(0)
-        desktop_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        desktop_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(desktop_columns.split()) == 3, desktop_columns
         workspace_display = page.locator(".lab-workspace").evaluate("element => getComputedStyle(element).display")
         assert workspace_display == "grid", workspace_display
@@ -1494,7 +1638,7 @@ def main() -> None:
             and item["overflow"] == "hidden"
             for item in all_card_corner_styles
         ), all_card_corner_styles
-        desktop_rows = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateRows")
+        desktop_rows = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateRows")
         assert len(desktop_rows.split()) >= 3, desktop_rows
         page.set_viewport_size({"width": 1345, "height": 965})
         expect(page.locator(".workspace-brand-mark")).not_to_be_visible()
@@ -1509,7 +1653,7 @@ def main() -> None:
         expect(page.locator(".workspace-brand")).to_be_visible()
         expect(page.locator(".workspace-brand-trigger")).to_be_visible()
         expect(page.locator(".workspace-admin-trigger")).to_have_count(0)
-        medium_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        medium_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(medium_columns.split()) == 3, medium_columns
         medium_card_ratio = page.locator('.lab-card').first.evaluate(
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
@@ -1559,7 +1703,8 @@ def main() -> None:
                     firstTopGap: firstCardBox.top - canvasBox.top,
                     ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
                     addCardHiddenBeforeScroll: addCardBox.top >= canvasBox.bottom,
-                    allNineVisible: cards.every(card => {
+                    tenthCardHiddenBeforeScroll: cards.length <= 9 || cards[9].getBoundingClientRect().top >= canvasBox.bottom,
+                    allNineVisible: cards.slice(0, 9).every(card => {
                         const box = card.getBoundingClientRect()
                         return box.top >= canvasBox.top && box.bottom <= canvasBox.bottom
                     })
@@ -1567,6 +1712,7 @@ def main() -> None:
             }"""
         )
         assert screenshot_viewport_spacing["allNineVisible"], screenshot_viewport_spacing
+        assert screenshot_viewport_spacing["tenthCardHiddenBeforeScroll"], screenshot_viewport_spacing
         assert abs(screenshot_viewport_spacing["firstTopGap"] - screenshot_viewport_spacing["ninthBottomGap"]) <= 2, screenshot_viewport_spacing
         assert screenshot_viewport_spacing["addCardHiddenBeforeScroll"], screenshot_viewport_spacing
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -1653,13 +1799,14 @@ def main() -> None:
                     scrollHeight: canvas.scrollHeight,
                     firstTopGap: firstCardBox.top - canvasBox.top,
                     ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
-                    allNineVisible: cards.every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom),
+                    allNineVisible: cards.slice(0, 9).every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom),
+                    tenthCardHiddenBeforeScroll: cards.length <= 9 || rect(cards[9]).top >= canvasBox.bottom,
                     addCardAfterNine: addCardBox.top > ninthCardBox.bottom
                 }
             }"""
         )
         assert lab_grid_spacing["scrollHeight"] > lab_grid_spacing["clientHeight"], lab_grid_spacing
-        assert lab_grid_spacing["allNineVisible"] and lab_grid_spacing["addCardAfterNine"], lab_grid_spacing
+        assert lab_grid_spacing["allNineVisible"] and lab_grid_spacing["tenthCardHiddenBeforeScroll"] and lab_grid_spacing["addCardAfterNine"], lab_grid_spacing
         assert abs(lab_grid_spacing["firstTopGap"] - lab_grid_spacing["ninthBottomGap"]) <= 5, lab_grid_spacing
         page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
         page.wait_for_timeout(120)
@@ -1701,12 +1848,13 @@ def main() -> None:
                     scrollHeight: canvas.scrollHeight,
                     firstTopGap: firstCardBox.top - canvasBox.top,
                     ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
-                    allNineVisible: cards.every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom)
+                    allNineVisible: cards.slice(0, 9).every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom),
+                    tenthCardHiddenBeforeScroll: cards.length <= 9 || rect(cards[9]).top >= canvasBox.bottom
                 }
             }"""
         )
         assert compact_desktop_spacing["scrollHeight"] > compact_desktop_spacing["clientHeight"], compact_desktop_spacing
-        assert compact_desktop_spacing["allNineVisible"], compact_desktop_spacing
+        assert compact_desktop_spacing["allNineVisible"] and compact_desktop_spacing["tenthCardHiddenBeforeScroll"], compact_desktop_spacing
         assert abs(compact_desktop_spacing["firstTopGap"] - compact_desktop_spacing["ninthBottomGap"]) <= 2, compact_desktop_spacing
         expect(page.locator(".lab-canvas")).to_have_class(re.compile(r"can-scroll-down"))
         page.screenshot(path=str(OUTPUT_DIR / "labs-short-desktop.png"), full_page=True)
@@ -1726,11 +1874,22 @@ def main() -> None:
         )
         assert compact_desktop_add_card["atBottom"] and compact_desktop_add_card["canScrollUp"] and compact_desktop_add_card["addCardVisible"], compact_desktop_add_card
         page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
+        page.set_viewport_size({"width": 1320, "height": 800})
+        add_card_grid_fit = page.evaluate(
+            """() => {
+                const first = document.querySelector('.lab-card').getBoundingClientRect()
+                const add = document.querySelector('.lab-add-card').getBoundingClientRect()
+                return { firstWidth: first.width, addWidth: add.width, addRatio: add.width / add.height }
+            }"""
+        )
+        assert abs(add_card_grid_fit["firstWidth"] - add_card_grid_fit["addWidth"]) <= 1, add_card_grid_fit
+        assert abs(add_card_grid_fit["addRatio"] - 1.5) <= 0.03, add_card_grid_fit
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1440, "height": 900})
 
         page.set_viewport_size({"width": 890, "height": 978})
         expect(page.locator(".labs-screen")).to_be_visible()
-        wide_tablet_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        wide_tablet_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(wide_tablet_columns.split()) == 3, wide_tablet_columns
         wide_tablet_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
@@ -1743,8 +1902,8 @@ def main() -> None:
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 768, "height": 1024})
         expect(page.locator(".labs-screen")).to_be_visible()
-        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        tablet_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
+        tablet_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(tablet_columns.split()) == 2, tablet_columns
         tablet_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
@@ -1960,7 +2119,7 @@ def main() -> None:
 
         page.set_viewport_size({"width": 390, "height": 844})
         expect(page.locator(".lab-grid")).to_be_visible()
-        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
         mobile_titles = page.locator(".lab-card .lab-card-title").evaluate_all(
             "elements => elements.map(element => element.textContent.trim())"
@@ -1968,15 +2127,15 @@ def main() -> None:
         assert mobile_titles == desktop_titles, mobile_titles
         expect(page.locator(".lab-card-actions")).to_have_count(0)
         expect(page.locator('.lab-grid [data-action="start-instance"]')).to_have_count(0)
-        expect(page.locator(".lab-card-caption")).to_have_count(9)
-        expect(page.locator(".lab-card-cover")).to_have_count(9)
+        expect(page.locator(".lab-card-caption")).to_have_count(default_lab_count)
+        expect(page.locator(".lab-card-cover")).to_have_count(default_lab_count)
         expect(page.locator('.lab-card-caption').first).to_be_visible()
         expect(page.get_by_role("complementary", name="运行状态")).to_have_count(0)
         expect(page.locator(".lab-workspace-head, .workspace-nav")).to_have_count(0)
         expect(page.locator(".workspace-account")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
 
-        mobile_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        mobile_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
         mobile_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
@@ -2036,13 +2195,13 @@ def main() -> None:
         # Blur the restored trigger before checking the fixed title footer.
         page.locator(".lab-canvas").focus()
         page.mouse.move(0, 0)
-        expect(page.locator(".lab-grid .lab-card")).to_have_count(9)
-        compact_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
+        compact_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(compact_columns.split()) == 2, compact_columns
         compact_card_box = page.locator(".lab-card").first.bounding_box()
         assert compact_card_box and compact_card_box["height"] <= 125, compact_card_box
         expect(page.locator(".lab-card-actions")).to_have_count(0)
-        expect(page.locator(".lab-card-caption")).to_have_count(9)
+        expect(page.locator(".lab-card-caption")).to_have_count(default_lab_count)
         expect(page.locator('.lab-card-caption').first).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "labs-compact.png"), full_page=True)
@@ -2113,11 +2272,11 @@ def main() -> None:
         page.route("**/api/labs", labs_with_expanded_catalog)
         page.reload(wait_until="networkidle")
         page.wait_for_timeout(950)
-        expect(page.locator(".lab-grid .lab-card")).to_have_count(12)
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count + 3)
         expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
         expect(page.locator(".lab-pagination")).to_have_count(0)
-        expanded_columns = page.locator(".lab-card-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        expanded_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(expanded_columns.split()) == 3, expanded_columns
         expanded_canvas = page.locator(".lab-canvas").evaluate(
             "element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY, scrollbarWidth: getComputedStyle(element).scrollbarWidth })"

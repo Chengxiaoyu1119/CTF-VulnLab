@@ -78,6 +78,7 @@ const state = {
   adminAuditExpandedId: null,
   adminAuditReturnToSystem: null,
   invitation: null,
+  invitationCodes: new Map(),
   invitations: [],
   audit: [],
   users: [],
@@ -192,6 +193,59 @@ async function uploadLabArchive(file) {
 const adminRecordPath = panel => panel === 'invitations' ? '/api/auth/invitations' : panel === 'users' ? '/api/auth/users' : '/api/audit'
 const adminRecordId = (panel, item) => panel === 'users' ? item.userName : item.id
 const isAdminRecordSelectable = (panel, item) => !(panel === 'users' && item.kind === 'system') && !(panel === 'invitations' && item.status === 'used')
+const invitationCodeStorageKey = () => state.session?.userName ? `vulnlab:invitation-codes:${state.session.userName.toLowerCase()}` : ''
+
+function persistInvitationCodes() {
+  const key = invitationCodeStorageKey()
+  if (!key) return
+  const entries = [...state.invitationCodes].filter(([, item]) => item.expiresAt > Date.now())
+  try { sessionStorage.setItem(key, JSON.stringify(entries)) } catch {}
+}
+
+function restoreInvitationCodes() {
+  state.invitationCodes = new Map()
+  const key = invitationCodeStorageKey()
+  if (!key) return
+  try {
+    const entries = JSON.parse(sessionStorage.getItem(key) ?? '[]')
+    if (!Array.isArray(entries)) return
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue
+      const [id, item] = entry
+      if (typeof id === 'string' && item && typeof item.code === 'string' && item.code.length <= 128 && Number.isFinite(item.expiresAt) && item.expiresAt > Date.now()) {
+        state.invitationCodes.set(id, item)
+      }
+    }
+    const latest = [...state.invitationCodes].at(-1)
+    if (latest) state.invitation = { id: latest[0], code: latest[1].code, expiresAt: new Date(latest[1].expiresAt).toISOString() }
+    persistInvitationCodes()
+  } catch {}
+}
+
+function saveInvitationCode(invitation) {
+  state.invitationCodes.set(invitation.id, { code: invitation.code, expiresAt: Date.parse(invitation.expiresAt) })
+  persistInvitationCodes()
+}
+
+function forgetInvitationCode(id) {
+  state.invitationCodes.delete(id)
+  persistInvitationCodes()
+}
+
+function getInvitationCode(id) {
+  const item = state.invitationCodes.get(id)
+  if (item && item.expiresAt > Date.now()) return item.code
+  if (item) forgetInvitationCode(id)
+  return ''
+}
+
+function clearInvitationCodes() {
+  const key = invitationCodeStorageKey()
+  state.invitationCodes.clear()
+  if (key) {
+    try { sessionStorage.removeItem(key) } catch {}
+  }
+}
 
 function resetAdminRecords() {
   systemRequestVersion += 1
@@ -310,6 +364,7 @@ async function bootstrap() {
   try {
     state.session = await request('/api/auth/session')
     state.csrfToken = state.session?.csrfToken ?? ''
+    if (state.session) restoreInvitationCodes()
     if (state.session) await refresh()
   } catch (error) {
     state.error = error.message
@@ -832,15 +887,24 @@ function patchLabs() {
     grid.prepend(cardGrid)
     for (const card of [...grid.children].filter(child => child.classList.contains('lab-card'))) cardGrid.append(card)
   }
-  const cards = new Map([...cardGrid.querySelectorAll('.lab-card')].map(card => [card.querySelector('[data-id]')?.dataset.id, card]))
+  let overflowGrid = grid.querySelector('.lab-card-overflow')
+  const cards = new Map([...grid.querySelectorAll('.lab-card')].map(card => [card.querySelector('[data-id]')?.dataset.id, card]))
   visibleLabs.forEach((lab, index) => {
+    if (index >= 9 && !overflowGrid) {
+      overflowGrid = document.createElement('div')
+      overflowGrid.className = 'lab-card-grid lab-card-overflow'
+      overflowGrid.setAttribute('aria-label', '更多靶场')
+      grid.append(overflowGrid)
+    }
+    const destination = index < 9 ? cardGrid : overflowGrid
     let card = cards.get(lab.id)
     if (!card) {
       const template = document.createElement('template')
       template.innerHTML = labCard(lab, index)
       card = template.content.firstElementChild
     }
-    if (cardGrid.children[index] !== card) cardGrid.insertBefore(card, cardGrid.children[index] ?? null)
+    const cardIndex = index < 9 ? index : index - 9
+    if (destination.children[cardIndex] !== card) destination.insertBefore(card, destination.children[cardIndex] ?? null)
     cards.delete(lab.id)
     const view = labCardView(lab)
     card.dataset.state = view.cardState
@@ -855,6 +919,7 @@ function patchLabs() {
     else card.removeAttribute('aria-busy')
   })
   cards.forEach(card => card.remove())
+  if (overflowGrid && !overflowGrid.querySelector('.lab-card')) overflowGrid.remove()
   if (state.session?.role === 'admin') {
     if (!grid.querySelector('.lab-add-card')) grid.insertAdjacentHTML('beforeend', '<article class="lab-add-card"><button class="lab-add-card-button" type="button" data-action="open-admin-lab-form" aria-label="添加靶场"><span class="lab-add-card-icon" aria-hidden="true">+</span><span class="lab-add-card-label">添加靶场</span></button></article>')
     const addCard = grid.querySelector('.lab-add-card')
@@ -919,17 +984,45 @@ function adminPanel() {
   if (!state.adminPanelOpen) return ''
   const isAdmin = state.session?.role === 'admin'
   const view = state.adminView
+  const recordSelection = ['invitations', 'audit', 'users'].includes(view) ? adminRecordSelection() : null
   const profile = state.session ? (() => {
     return `<section class="profile-view" aria-labelledby="profile-title"><div class="profile-avatar-frame"><img class="profile-avatar" src="/favicon.png" alt="VulnLab项目图标" /></div><h3 id="profile-title" class="profile-name">${esc(state.session.userName)}</h3></section>`
   })() : ''
-  const content = view === 'system' ? adminSystemPanel() : view === 'labs' ? adminLabsPanel() : ['invitations', 'audit', 'users'].includes(view) ? adminRecordsPanel() : profile
+  const content = view === 'system' ? adminSystemPanel() : view === 'labs' ? adminLabsPanel() : recordSelection ? adminRecordsPanel(recordSelection) : profile
   const navItems = isAdmin ? [['profile', '个人中心'], ['system', '系统数据'], ['labs', '靶场管理'], ['users', '账号管理'], ['audit', '审计记录'], ['invitations', '邀请管理']] : [['profile', '个人中心']]
   const nav = navItems.map(([section, label]) => `<button class="admin-nav-button${view === section ? ' is-active' : ''}" type="button" data-action="open-admin-section" data-section="${section}" aria-label="${label}" aria-current="${view === section ? 'page' : 'false'}"><span>${label}</span></button>`).join('')
   const title = isAdmin ? '管理中心' : '个人中心'
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
+  const selectionActions = recordSelection?.selectionActions ?? ''
   const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
-  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div><button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div>${selectionActions}<button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+}
+
+function adminRecordSelection(panel = state.adminRecordsPanel) {
+  const isInvitationPanel = panel === 'invitations'
+  const isAuditPanel = panel === 'audit'
+  const isUserPanel = panel === 'users'
+  const records = isInvitationPanel ? state.invitations : isAuditPanel ? state.audit : state.users
+  const selectableRecords = records.filter(item => isAdminRecordSelectable(panel, item))
+  const recordId = item => isUserPanel ? item.userName : item.id
+  const selectedIds = (state.adminSelectedRecordIds[panel] ?? []).filter(id => selectableRecords.some(item => recordId(item) === id))
+  const selected = new Set(selectedIds)
+  const selectedUsers = isUserPanel ? records.filter(item => item.kind !== 'system' && selected.has(item.userName)) : []
+  const allSelectedUsersDisabled = selectedUsers.length > 0 && selectedUsers.every(item => item.disabled)
+  const allSelected = selectableRecords.length > 0 && selectedIds.length === selectableRecords.length
+  const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
+  const selectAllInput = selectableRecords.length ? `<input type="checkbox" data-admin-select-all="${panel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}>` : ''
+  const selectAllControl = selectAllInput ? `<label class="admin-select-all">${selectAllInput}</label>` : ''
+  const selectionCount = selectedIds.length ? `<span class="admin-selection-count" aria-live="polite">已选 ${selectedIds.length} 条</span>` : ''
+  const canManageAccountStatus = state.session?.role === 'admin' && state.session.userName.toLowerCase() === 'vulnlab'
+  const bulkStatusControl = isUserPanel && canManageAccountStatus && selectableRecords.length ? `<button class="button button-outline admin-bulk-status" type="button" data-action="set-selected-user-status" ${selectedIds.length ? '' : 'disabled'}>${allSelectedUsersDisabled ? '启用' : '禁用'}</button>` : ''
+  const bulkDeleteControl = selectableRecords.length ? `<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${panel}" ${selectedIds.length ? '' : 'disabled'}>删除</button>` : ''
+  const showSelectionActions = selectedIds.length > 0
+  const selectionActions = !state.adminLoading && !state.adminError && records.length && showSelectionActions
+    ? `<div class="admin-selection-actions">${selectionCount}${bulkStatusControl}${bulkDeleteControl}</div>`
+    : ''
+  return { records, selectableRecords, selectedIds, selected, allSelected, selectAllControl, selectionActions }
 }
 
 function adminLabsPanel() {
@@ -1036,7 +1129,7 @@ function adminSystemPanel() {
   </section>`
 }
 
-function adminRecordsPanel() {
+function adminRecordsPanel(selection) {
   if (!state.adminPanelOpen || !state.adminRecordsPanel) return ''
   const statusLabels = { active: '有效', expired: '已过期', used: '已使用', revoked: '已撤销' }
   const actionLabels = {
@@ -1067,41 +1160,27 @@ function adminRecordsPanel() {
   const isAuditPanel = state.adminRecordsPanel === 'audit'
   const isUserPanel = state.adminRecordsPanel === 'users'
   const title = isInvitationPanel ? '邀请管理' : isAuditPanel ? '审计记录' : '账号管理'
-  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><p class="invitation-one-time-note">邀请码明文仅在生成时展示，请立即复制保存。</p><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
-  const records = isInvitationPanel ? state.invitations : isAuditPanel ? state.audit : state.users
+  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><p class="invitation-one-time-note">本标签页生成的有效邀请码，也可点击列表中的“有效”标识复制。</p><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
+  const { records, selected, selectAllControl } = selection
   const registeredUsers = isUserPanel ? records.filter(item => item.kind !== 'system') : []
   const hasRegisteredUsers = registeredUsers.length > 0
-  const recordId = item => isUserPanel ? item.userName : item.id
-  const selectableRecords = records.filter(item => isAdminRecordSelectable(state.adminRecordsPanel, item))
-  const selectedIds = (state.adminSelectedRecordIds[state.adminRecordsPanel] ?? []).filter(id => selectableRecords.some(item => recordId(item) === id))
-  const selected = new Set(selectedIds)
-  const allSelected = selectableRecords.length > 0 && selectedIds.length === selectableRecords.length
   const recordLabel = isInvitationPanel ? '邀请码' : isAuditPanel ? '审计' : '账号'
   const nextCursor = state.adminNextCursors[state.adminRecordsPanel]
-  const selectionCount = selectedIds.length ? `<span class="admin-selection-count" aria-live="polite">已选 ${selectedIds.length} 条</span>` : ''
-  const selectAllControl = selectableRecords.length ? `<label class="admin-select-all"><input type="checkbox" data-admin-select-all="${state.adminRecordsPanel}" aria-label="全选已加载的${recordLabel}记录" ${allSelected ? 'checked' : ''}><span>全选</span></label>` : ''
-  const bulkDeleteControl = selectableRecords.length ? `<button class="button button-danger admin-bulk-delete" type="button" data-action="delete-selected-admin-records" data-panel="${state.adminRecordsPanel}" ${selectedIds.length ? '' : 'disabled'}>删除所选</button>` : ''
-  const selectionActions = selectableRecords.length ? `<div class="admin-selection-actions">${selectionCount}${bulkDeleteControl}</div>` : ''
-  const selectionToolbarItems = `${selectAllControl}${selectionActions}`
-  const selectionToolbar = selectionToolbarItems ? `<div class="admin-record-toolbar">${selectionToolbarItems}</div>` : ''
   const pagination = nextCursor ? `<div class="admin-record-pagination"><span class="sr-only">还有更多${recordLabel}记录</span><button class="button button-outline admin-load-more" type="button" data-action="load-more-admin-records" data-panel="${state.adminRecordsPanel}" ${busyFor('load-more-admin-records', state.adminRecordsPanel) ? 'disabled' : ''}>${busyFor('load-more-admin-records', state.adminRecordsPanel) ? '加载中…' : '加载更多'}</button></div>` : ''
   const auditActions = isAuditPanel ? Object.entries(actionLabels).sort((left, right) => left[0].localeCompare(right[0])).map(([value, label]) => `<button class="admin-action-option" type="button" data-action="filter-audit-action" data-value="${esc(value)}" aria-pressed="${state.adminAuditAction === value}">${esc(label)}</button>`).join('') : ''
-  const auditSelectionToolbar = !state.adminLoading && !state.adminError && records.length
-  const auditSelectAllControl = auditSelectionToolbar ? selectAllControl : ''
+  const auditSelectAllControl = isAuditPanel && !state.adminLoading && !state.adminError && records.length ? selectAllControl : ''
   const auditActionLabel = actionLabels[state.adminAuditAction] ?? '全部操作'
   const auditActionFilter = `<div class="admin-record-filter"><span>操作类型</span><details class="admin-action-select" data-audit-action-filter="${esc(state.adminAuditAction)}"><summary aria-label="按操作类型筛选审计记录" aria-controls="admin-audit-action-options"><span>${esc(auditActionLabel)}</span></summary><div class="admin-action-options" id="admin-audit-action-options" role="group" aria-label="操作类型"><button class="admin-action-option" type="button" data-action="filter-audit-action" data-value="" aria-pressed="${!state.adminAuditAction}">全部操作</button>${auditActions}</div></details></div>`
-  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计筛选与批量操作">${auditSelectAllControl}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button>${auditSelectionToolbar ? selectionActions : ''}</div>` : ''
+  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计记录筛选">${auditSelectAllControl}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button></div>` : ''
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const systemAdmin = isUserPanel ? records.find(item => item.kind === 'system') : null
-  const canManageAccountStatus = state.session?.role === 'admin' && state.session.userName.toLowerCase() === 'vulnlab'
   const systemAdminRow = systemAdmin ? `<div class="admin-user-entry admin-user-system" data-id="${esc(systemAdmin.userName)}" data-kind="system"><div class="admin-user-system-profile"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(systemAdmin.userName)}">${esc(systemAdmin.userName)}</strong><span class="admin-user-role">默认管理员</span></div></div></div></div>` : ''
   const userRows = isUserPanel ? registeredUsers.map(item => {
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
     const disabled = item.disabled === true
     const statusBadge = disabled ? '<span class="admin-user-disabled">已禁用</span>' : ''
-    const statusButton = canManageAccountStatus ? `<button class="admin-user-toggle" type="button" data-action="toggle-user-status" data-id="${esc(item.userName)}" data-disabled="${disabled}" aria-label="${disabled ? '启用' : '禁用'}账号 ${esc(item.userName)}" title="${disabled ? '启用' : '禁用'}账号" ${busyFor('set-user-status', item.userName) ? 'disabled' : ''}>${disabled ? '启用' : '禁用'}</button>` : ''
-    return `<div class="admin-user-entry${selected.has(item.userName) ? ' is-selected' : ''}${disabled ? ' is-disabled' : ''}" data-id="${esc(item.userName)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="users" data-id="${esc(item.userName)}" aria-label="选择账号 ${esc(item.userName)}" ${selected.has(item.userName) ? 'checked' : ''}></label><div class="admin-user-content"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong><span class="admin-user-role">管理员</span>${statusBadge}${current ? '<span class="admin-user-current">当前登录</span>' : ''}</div></div><time class="admin-user-time" datetime="${esc(item.createdAt)}"><span class="admin-user-time-label">注册于</span><span class="admin-user-date">${esc(timestamp.date)}</span><span class="admin-user-clock">${esc(timestamp.time)}</span></time></div><div class="admin-user-actions">${statusButton}<button class="record-delete" type="button" data-action="delete-user-record" data-id="${esc(item.userName)}" aria-label="删除账号 ${esc(item.userName)}" title="删除账号">${deleteRecordIcon()}</button></div></div>`
+    return `<div class="admin-user-entry${selected.has(item.userName) ? ' is-selected' : ''}${disabled ? ' is-disabled' : ''}" data-id="${esc(item.userName)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="users" data-id="${esc(item.userName)}" aria-label="选择账号 ${esc(item.userName)}" ${selected.has(item.userName) ? 'checked' : ''}></label><div class="admin-user-content"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(item.userName)}">${esc(item.userName)}</strong><span class="admin-user-role">管理员</span>${statusBadge}${current ? '<span class="admin-user-current">当前登录</span>' : ''}</div></div><time class="admin-user-time" datetime="${esc(item.createdAt)}"><span class="admin-user-time-label">注册于</span><span class="admin-user-date">${esc(timestamp.date)}</span><span class="admin-user-clock">${esc(timestamp.time)}</span></time></div><div class="admin-user-actions"><button class="record-delete" type="button" data-action="delete-user-record" data-id="${esc(item.userName)}" aria-label="删除账号 ${esc(item.userName)}" title="删除账号">${deleteRecordIcon()}</button></div></div>`
   }).join('') : ''
   const content = state.adminLoading
     ? '<div class="admin-loading" role="status">正在更新记录…</div>'
@@ -1109,10 +1188,10 @@ function adminRecordsPanel() {
       ? `<div class="admin-inline-error" role="alert"><span>${esc(state.adminError)}</span><button class="button button-outline admin-record-retry" type="button" data-action="retry-admin-records" data-panel="${esc(state.adminRecordsPanel)}">重试</button></div>`
       : records.length
         ? isInvitationPanel
-          ? `${selectionToolbar}<div class="invitation-history-head" aria-hidden="true"><span></span><span>状态</span><span>创建人 / 时间</span><span>使用账号 / 时间</span><span>有效期</span><span>操作</span></div><div class="admin-record-list invitation-history">${records.map(item => { const used = item.status === 'used'; const usedBy = used ? item.usedByUserName || '历史记录未记录使用者' : '—'; const createdAt = auditTimestamp(item.createdAt); const usedAt = item.usedAt ? auditTimestamp(item.usedAt) : null; const selection = used ? '<span class="invitation-row-spacer" aria-hidden="true"></span>' : `<label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label>`; return `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}">${selection}<div class="invitation-field invitation-field-status"><span class="invitation-field-label">状态</span><strong>${esc(statusLabels[item.status] ?? item.status)}</strong></div><div class="invitation-field invitation-field-created"><span class="invitation-field-label">创建人 / 时间</span><span class="invitation-field-value"><span title="${esc(item.createdBy)}">${esc(item.createdBy)}</span><time datetime="${esc(item.createdAt)}"><span>${esc(createdAt.date)}</span><span>${esc(createdAt.time)}</span></time></span></div><div class="invitation-field invitation-field-used"><span class="invitation-field-label">使用账号 / 时间</span><span class="invitation-field-value"><span class="invitation-used-by" title="${esc(usedBy)}">${esc(usedBy)}</span>${usedAt ? `<time datetime="${esc(item.usedAt)}"><span>${esc(usedAt.date)}</span><span>${esc(usedAt.time)}</span></time>` : '<span>—</span>'}</span></div><div class="invitation-field invitation-field-expiry"><span class="invitation-field-label">有效期</span><span class="invitation-field-value"><time datetime="${esc(item.expiresAt)}">${esc(date(item.expiresAt))}</time></span></div><div class="invitation-operation">${used ? '<span class="invitation-retained">已保留</span>' : `<button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button>`}</div></div>` }).join('')}</div>${pagination}`
+          ? `<div class="invitation-history-head">${selectAllControl || '<span class="invitation-row-spacer" aria-hidden="true"></span>'}<span>状态</span><span>创建人 / 时间</span><span>使用账号 / 时间</span><span>有效期</span><span>操作</span></div><div class="admin-record-list invitation-history">${records.map(item => { const used = item.status === 'used'; const usedBy = used ? item.usedByUserName || '历史记录未记录使用者' : '—'; const createdAt = auditTimestamp(item.createdAt); const usedAt = item.usedAt ? auditTimestamp(item.usedAt) : null; const selection = used ? '<span class="invitation-row-spacer" aria-hidden="true"></span>' : `<label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label>`; const status = item.status === 'active' ? `<button class="invitation-status-copy" type="button" data-action="copy-invitation-record" data-id="${esc(item.id)}" aria-label="点击复制邀请码" title="点击复制邀请码">有效</button>` : `<strong>${esc(statusLabels[item.status] ?? item.status)}</strong>`; return `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}">${selection}<div class="invitation-field invitation-field-status"><span class="invitation-field-label">状态</span>${status}</div><div class="invitation-field invitation-field-created"><span class="invitation-field-label">创建人 / 时间</span><span class="invitation-field-value"><span title="${esc(item.createdBy)}">${esc(item.createdBy)}</span><time datetime="${esc(item.createdAt)}"><span>${esc(createdAt.date)}</span><span>${esc(createdAt.time)}</span></time></span></div><div class="invitation-field invitation-field-used"><span class="invitation-field-label">使用账号 / 时间</span><span class="invitation-field-value"><span class="invitation-used-by" title="${esc(usedBy)}">${esc(usedBy)}</span>${usedAt ? `<time datetime="${esc(item.usedAt)}"><span>${esc(usedAt.date)}</span><span>${esc(usedAt.time)}</span></time>` : '<span>—</span>'}</span></div><div class="invitation-field invitation-field-expiry"><span class="invitation-field-label">有效期</span><span class="invitation-field-value"><time datetime="${esc(item.expiresAt)}">${esc(date(item.expiresAt))}</time></span></div><div class="invitation-operation">${used ? '<span class="invitation-retained">已保留</span>' : `<button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button>`}</div></div>` }).join('')}</div>${pagination}`
           : isAuditPanel
             ? `<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); const expanded = state.adminAuditExpandedId === item.id; const detailId = `audit-detail-${item.id}`; return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content" role="button" tabindex="0" data-action="toggle-audit-detail" data-audit-expand="${esc(item.id)}" data-id="${esc(item.id)}" aria-expanded="${expanded}" aria-controls="${esc(detailId)}"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div>${expanded ? `<div class="audit-entry-detail" id="${esc(detailId)}"><span class="audit-entry-detail-label">对象</span><span class="audit-entry-detail-value">${esc(item.target || '—')}</span><span class="audit-entry-detail-label">详情</span><span class="audit-entry-detail-value">${esc(item.detail || '—')}</span></div>` : ''}</div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
-            : `${systemAdminRow}${selectionToolbar}${hasRegisteredUsers ? '<div class="admin-user-table-head" aria-hidden="true"><span></span><span>账号</span><span>注册时间</span><span>操作</span></div><div class="admin-record-list user-history">' + userRows + '</div>' : '<p class="admin-user-empty" role="status">暂无注册账号</p>'}${pagination}`
+            : `${systemAdminRow}${hasRegisteredUsers ? `<div class="admin-user-table-head">${selectAllControl}<span>账号</span><span>注册时间</span><span>操作</span></div><div class="admin-record-list user-history">${userRows}</div>` : '<p class="admin-user-empty" role="status">暂无注册账号</p>'}${pagination}`
         : `<div class="admin-empty-state" role="status">${isAuditPanel && state.adminAuditDate && state.adminAuditAction === 'instance.start' ? '当天暂无启动记录。' : `暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '符合条件的审计' : '注册账号'}记录。`}</div>`
   return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${auditReturn}${auditFilters}${isInvitationPanel ? invitation : ''}${content}</section>`
 }
@@ -1230,7 +1309,7 @@ function restoreConfirmFocus() {
       return
     }
     const fallback = state.adminPanelOpen
-      ? document.querySelector('.admin-record-toolbar input, .admin-nav-button, .admin-dialog .dialog-close')
+      ? document.querySelector('.admin-user-table-head input, .admin-record-filters input[data-admin-select-all="audit"], .invitation-history-head input, .admin-nav-button, .admin-dialog .dialog-close')
       : null
     if (fallback) fallback.focus()
     else restoreModalFocus()
@@ -1260,6 +1339,7 @@ function clearAuthenticatedState() {
   clearLoginSuccessNoticeTimer()
   state.successNotice = null
   state.authNotice = ''
+  clearInvitationCodes()
   state.session = null
   state.csrfToken = ''
   state.labs = []
@@ -1542,16 +1622,21 @@ async function runAction(action, element) {
     beginBusy(action)
     try {
       state.invitation = await request('/api/auth/invitations', { method: 'POST' })
+      saveInvitationCode(state.invitation)
       state.adminLoading = true
       setToast('邀请码已生成。')
       await refreshAdminPanel()
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action); render() }
     return
   }
-  if (action === 'copy-invitation') {
-    if (!state.invitation?.code) return
+  if (action === 'copy-invitation' || action === 'copy-invitation-record') {
+    const code = action === 'copy-invitation-record' ? getInvitationCode(element.dataset.id) : state.invitation?.code
+    if (!code) {
+      setToast('该邀请码未在当前浏览器标签页生成，明文无法从记录恢复。', 'error')
+      return
+    }
     try {
-      await copyText(state.invitation.code)
+      await copyText(code)
       setToast('邀请码已复制。')
     } catch { setToast('复制失败，请手动复制邀请码。', 'error') }
     return
@@ -1576,29 +1661,6 @@ async function runAction(action, element) {
     openConfirm('删除账号', message, { action: 'confirm-delete-selected-admin-records', panel: 'users', ids: [element.dataset.id] }, '删除账号')
     return
   }
-  if (action === 'toggle-user-status') {
-    if (state.session?.role !== 'admin' || state.session.userName.toLowerCase() !== 'vulnlab') return
-    if (element.dataset.disabled === 'true') {
-      await runAction('set-user-status', { dataset: { id: element.dataset.id, disabled: 'false' } })
-    } else {
-      openConfirm('禁用账号', `禁用 ${element.dataset.id} 后，该账号将立即退出所有会话，且无法登录，直到重新启用。`, { action: 'set-user-status', id: element.dataset.id, disabled: 'true' }, '禁用账号')
-    }
-    return
-  }
-  if (action === 'set-user-status') {
-    if (state.session?.role !== 'admin' || state.session.userName.toLowerCase() !== 'vulnlab') return
-    const userName = element.dataset.id
-    const disabled = element.dataset.disabled === 'true'
-    if (!userName || !beginBusy(action, userName)) return
-    try {
-      await request(`/api/auth/users/${encodeURIComponent(userName)}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) })
-      state.adminLoading = true
-      state.adminSelectedRecordIds.users = state.adminSelectedRecordIds.users.filter(id => id !== userName)
-      setToast(disabled ? `账号 ${userName} 已禁用。` : `账号 ${userName} 已启用。`)
-      await refreshAdminUsers()
-    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, userName); render() }
-    return
-  }
   if (action === 'delete-selected-admin-records') {
     const panel = element.dataset.panel
     const ids = panel && state.adminSelectedRecordIds[panel]
@@ -1608,17 +1670,47 @@ async function runAction(action, element) {
     const message = currentIncluded
       ? `已选中的 ${ids.length} 个账号包含当前账号，确认后当前登录会话将立即退出，且删除后无法恢复。`
       : `确定删除已选中的 ${ids.length} 个${label}${panel === 'users' ? '' : '记录'}吗？删除后无法恢复。`
-    openConfirm(`删除选中的${label}${panel === 'users' ? '' : '记录'}`, message, { action: 'confirm-delete-selected-admin-records', panel, ids: [...ids] }, panel === 'users' ? '删除账号' : '删除所选')
+    openConfirm(`删除选中的${label}${panel === 'users' ? '' : '记录'}`, message, { action: 'confirm-delete-selected-admin-records', panel, ids: [...ids] }, panel === 'users' ? '删除账号' : '删除')
+    return
+  }
+  if (action === 'set-selected-user-status') {
+    if (state.session?.role !== 'admin' || state.session.userName.toLowerCase() !== 'vulnlab') return
+    const selectedUsers = state.users.filter(item => item.kind !== 'system' && state.adminSelectedRecordIds.users.includes(item.userName))
+    const userNames = selectedUsers.map(item => item.userName)
+    if (!userNames.length) return
+    const disabled = !selectedUsers.every(item => item.disabled)
+    const verb = disabled ? '禁用' : '启用'
+    const message = disabled
+      ? `确定禁用已选中的 ${userNames.length} 个账号？这些账号将立即退出所有登录会话，直到重新启用。`
+      : `确定启用已选中的 ${userNames.length} 个账号？`
+    openConfirm(`${verb}账号`, message, { action: 'apply-selected-user-status', userNames, disabled }, `${verb}账号`)
+    return
+  }
+  if (action === 'apply-selected-user-status') {
+    if (state.session?.role !== 'admin' || state.session.userName.toLowerCase() !== 'vulnlab') return
+    const userNames = Array.isArray(element.dataset.userNames) ? element.dataset.userNames : []
+    const disabled = element.dataset.disabled === true || element.dataset.disabled === 'true'
+    if (!userNames.length || userNames.some(userName => typeof userName !== 'string')) return
+    if (!beginBusy(action, 'users')) return
+    try {
+      const results = await Promise.allSettled(userNames.map(userName => request(`/api/auth/users/${encodeURIComponent(userName)}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) })))
+      const failedNames = userNames.filter((_, index) => results[index].status === 'rejected')
+      state.adminSelectedRecordIds.users = failedNames
+      state.adminLoading = true
+      await refreshAdminUsers()
+      const updatedCount = userNames.length - failedNames.length
+      setToast(failedNames.length ? `已${disabled ? '禁用' : '启用'} ${updatedCount} 个账号，${failedNames.length} 个未成功。` : `已${disabled ? '禁用' : '启用'} ${updatedCount} 个账号。`, failedNames.length ? 'error' : 'success')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, 'users'); render() }
     return
   }
   if (action === 'confirm-revoke-invitation') {
     beginBusy(action, element.dataset.id)
-    try { await request(`/api/auth/invitations/${element.dataset.id}`, { method: 'DELETE' }); state.invitation = null; state.adminLoading = true; setToast('邀请码已撤销。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
+    try { await request(`/api/auth/invitations/${element.dataset.id}`, { method: 'DELETE' }); forgetInvitationCode(element.dataset.id); if (state.invitation?.id === element.dataset.id) state.invitation = null; state.adminLoading = true; setToast('邀请码已撤销。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
     return
   }
   if (action === 'confirm-delete-invitation-record') {
     beginBusy(action, element.dataset.id)
-    try { await request(`/api/auth/invitations/${element.dataset.id}/record`, { method: 'DELETE' }); state.adminSelectedRecordIds.invitations = state.adminSelectedRecordIds.invitations.filter(id => id !== element.dataset.id); if (state.invitation?.id === element.dataset.id) state.invitation = null; state.adminLoading = true; setToast('邀请码记录已删除。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
+    try { await request(`/api/auth/invitations/${element.dataset.id}/record`, { method: 'DELETE' }); forgetInvitationCode(element.dataset.id); state.adminSelectedRecordIds.invitations = state.adminSelectedRecordIds.invitations.filter(id => id !== element.dataset.id); if (state.invitation?.id === element.dataset.id) state.invitation = null; state.adminLoading = true; setToast('邀请码记录已删除。'); await refreshAdminPanel() } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
     return
   }
   if (action === 'confirm-delete-audit-record') {
@@ -1639,7 +1731,10 @@ async function runAction(action, element) {
       if (result.deleted !== ids.length) throw new ApiError(`仅删除了 ${result.deleted ?? 0} 条记录，请刷新后重试。`, 409, 'RECORD_DELETE_INCOMPLETE')
       state.adminSelectedRecordIds[panel] = []
       if (panel === 'audit') state.adminAuditExpandedId = null
-      if (panel === 'invitations' && state.invitation && ids.includes(state.invitation.id)) state.invitation = null
+      if (panel === 'invitations') {
+        ids.forEach(forgetInvitationCode)
+        if (state.invitation && ids.includes(state.invitation.id)) state.invitation = null
+      }
       if (result.signedOut) {
         clearAuthenticatedState()
         return
@@ -1946,6 +2041,7 @@ app.addEventListener('submit', async event => {
       const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(values) })
       state.session = session
       state.csrfToken = session.csrfToken
+      restoreInvitationCodes()
       state.authNotice = ''
       await refresh()
       state.successNotice = { title: '登录成功', message: '身份验证通过，正在进入系统' }
