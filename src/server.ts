@@ -485,9 +485,13 @@ const validateImportedLab = async (lab: Lab, localPath: string) => {
   if (!rootStat?.isDirectory()) throw new ImporterError('靶场压缩包必须解包为项目目录。')
   const config = lab.runtimeConfig ?? { profile: 'static-php' as const }
   if (config.profile === 'static-php' || config.profile === 'mysql-php') {
-    const documentRoot = config.documentRoot ? runtimePath(localPath, config.documentRoot, 'PHP 文档根目录') : localPath
+    const documentRoot = config.documentRoot
+      ? runtimePath(localPath, config.documentRoot, 'PHP 文档根目录')
+      : lab.builtin && lab.slug === 'mutillidae'
+        ? runtimePath(localPath, 'src', 'PHP 文档根目录')
+        : localPath
     if (!(await isDirectory(documentRoot))) throw new ImporterError('PHP 文档根目录不存在。')
-    const entryPath = config.entryPath || 'index.php'
+    const entryPath = config.entryPath || (lab.builtin && lab.slug === 'sqli-labs' ? 'index.html' : 'index.php')
     const entry = runtimePath(documentRoot, entryPath, 'PHP 入口文件')
     if (!(await stat(entry).then(item => item.isFile()).catch(() => false))) throw new ImporterError(`PHP 入口文件不存在：${entryPath}。`)
     if (config.profile === 'mysql-php') {
@@ -732,16 +736,27 @@ const bootstrapBuiltinLabs = async () => {
     const claimed = database.claimJob(job.id)
     if (claimed) runImportJob(claimed.id, 'system')
   }
-  for (const lab of database.listLabs().filter(item => item.builtin && item.status === 'ready')) {
-    const job = database.listJobsParsed().find(item => item.labId === lab.id && item.status === 'completed' && item.manifest)
+  const jobs = database.listJobsParsed()
+  for (const lab of database.listLabs().filter(item => item.builtin && (item.status === 'ready' || item.status === 'error'))) {
+    const latestJob = jobs.find(item => item.labId === lab.id)
+    const recoverableError = lab.status === 'error'
+      && latestJob?.status === 'completed'
+      && Boolean(latestJob.manifest && lab.localPath && resolve(latestJob.manifest.localPath) === resolve(lab.localPath))
+    if (lab.status === 'error' && !recoverableError) continue
+    const job = recoverableError
+      ? latestJob
+      : jobs.find(item => item.labId === lab.id && item.status === 'completed' && item.manifest)
     try {
       if (job?.manifest) {
         await validateImportedManifest(lab, job.manifest)
-        const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
-        if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
+        if (!recoverableError) {
+          const manifest = await promoteBuiltinManifest(lab, job.id, job.manifest)
+          if (manifest.localPath !== job.manifest.localPath) database.completeJob(job.id, manifest)
+        }
       }
       await prepareInstalledLab(database.getLab(lab.id) ?? lab, undefined, nativeRuntime.pythonBinary, nativeRuntime.nodeBinary)
-      await cleanupOutdatedBuiltinVersions(database.getLab(lab.id) ?? lab)
+      if (recoverableError) database.restoreLabReady(lab.id)
+      else await cleanupOutdatedBuiltinVersions(database.getLab(lab.id) ?? lab)
     } catch (error) {
       const message = error instanceof Error ? error.message : '运行依赖准备失败。'
       database.updateLabStatus(lab.id, 'error')

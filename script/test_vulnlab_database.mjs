@@ -164,6 +164,11 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   const uploadJob = database.claimJob(database.createJob(lab.id, lab.sourceUrl).id)
   assert.ok(uploadJob)
   database.completeJob(uploadJob.id, manifestFor(lab, oldUploadPath))
+  const uploadImportedAt = database.getLab(lab.id)?.importedAt
+  database.updateLabStatus(lab.id, 'error')
+  database.restoreLabReady(lab.id)
+  assert.equal(database.getLab(lab.id)?.status, 'ready')
+  assert.equal(database.getLab(lab.id)?.importedAt, uploadImportedAt)
 
   const webgoat = database.getLabBySlug('webgoat')
   assert.ok(webgoat)

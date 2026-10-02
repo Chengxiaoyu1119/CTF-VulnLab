@@ -562,6 +562,10 @@ export class VulnLabDatabase {
     this.db.prepare('UPDATE labs SET status = ?, local_path = COALESCE(?, local_path), imported_at = COALESCE(?, imported_at), updated_at = ? WHERE id = ?').run(status, localPath, importedAt, now(), id)
   }
 
+  restoreLabReady(id: string) {
+    this.db.prepare("UPDATE labs SET status = 'ready', updated_at = ? WHERE id = ? AND status = 'error'").run(now(), id)
+  }
+
   listJobs(): ImportJob[] {
     return this.db.prepare('SELECT * FROM import_jobs ORDER BY created_at DESC').all().map(row => parseJob(row as Row))
   }
