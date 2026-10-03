@@ -888,15 +888,18 @@ function patchLabs() {
     for (const card of [...grid.children].filter(child => child.classList.contains('lab-card'))) cardGrid.append(card)
   }
   let overflowGrid = grid.querySelector('.lab-card-overflow')
-  const cards = new Map([...grid.querySelectorAll('.lab-card')].map(card => [card.querySelector('[data-id]')?.dataset.id, card]))
-  visibleLabs.forEach((lab, index) => {
-    if (index >= 9 && !overflowGrid) {
+  const ensureOverflowGrid = () => {
+    if (!overflowGrid) {
       overflowGrid = document.createElement('div')
       overflowGrid.className = 'lab-card-grid lab-card-overflow'
       overflowGrid.setAttribute('aria-label', '更多靶场')
       grid.append(overflowGrid)
     }
-    const destination = index < 9 ? cardGrid : overflowGrid
+    return overflowGrid
+  }
+  const cards = new Map([...grid.querySelectorAll('.lab-card')].map(card => [card.querySelector('[data-id]')?.dataset.id, card]))
+  visibleLabs.forEach((lab, index) => {
+    const destination = index < 9 ? cardGrid : ensureOverflowGrid()
     let card = cards.get(lab.id)
     if (!card) {
       const template = document.createElement('template')
@@ -919,17 +922,13 @@ function patchLabs() {
     else card.removeAttribute('aria-busy')
   })
   cards.forEach(card => card.remove())
-  if (overflowGrid && !overflowGrid.querySelector('.lab-card')) overflowGrid.remove()
+  if (overflowGrid && !overflowGrid.querySelector('.lab-card') && state.session?.role !== 'admin') overflowGrid.remove()
   if (state.session?.role === 'admin') {
-    if (!grid.querySelector('.lab-add-card')) grid.insertAdjacentHTML('beforeend', '<article class="lab-add-card"><button class="lab-add-card-button" type="button" data-action="open-admin-lab-form" aria-label="添加靶场"><span class="lab-add-card-icon" aria-hidden="true">+</span><span class="lab-add-card-label">添加靶场</span></button></article>')
-    const addCard = grid.querySelector('.lab-add-card')
-    if (grid.lastElementChild !== addCard) grid.append(addCard)
-    if (!grid.querySelector('.lab-grid-scroll-end')) grid.insertAdjacentHTML('beforeend', '<div class="lab-grid-scroll-end" aria-hidden="true"></div>')
-    const scrollEnd = grid.querySelector('.lab-grid-scroll-end')
-    if (grid.lastElementChild !== scrollEnd) grid.append(scrollEnd)
+    if (!ensureOverflowGrid().querySelector('.lab-add-card')) overflowGrid.insertAdjacentHTML('beforeend', '<article class="lab-add-card"><button class="lab-add-card-button" type="button" data-action="open-admin-lab-form" aria-label="添加靶场"><span class="lab-add-card-icon" aria-hidden="true">+</span><span class="lab-add-card-label">添加靶场</span></button></article>')
+    const addCard = overflowGrid.querySelector('.lab-add-card')
+    if (overflowGrid.lastElementChild !== addCard) overflowGrid.append(addCard)
   } else {
     grid.querySelector('.lab-add-card')?.remove()
-    grid.querySelector('.lab-grid-scroll-end')?.remove()
   }
 }
 
