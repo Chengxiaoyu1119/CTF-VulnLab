@@ -528,7 +528,7 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .lab-canvas.can-scroll-up::before, .lab-canvas.can-scroll-down::after { opacity: .56; }
 .lab-grid { flex: 1 1 auto; width: 100%; min-height: 100%; max-width: 1080px; display: flex; flex-direction: column; gap: 16px; margin: 0 auto; }
 .lab-card-grid { width: 100%; min-height: 100%; flex: 0 0 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; align-content: safe center; gap: 16px; margin: 0 auto; }
-.lab-card-grid.lab-card-overflow { height: auto; min-height: 0; flex: 0 0 auto; grid-template-rows: none; align-content: start; margin-top: 0; }
+.lab-card-grid.lab-card-overflow { height: auto; min-height: 0; flex: 0 0 auto; grid-template-rows: none; align-content: start; margin-top: 0; padding-bottom: 42px; }
 .lab-card-grid > .lab-add-card { width: auto; margin-top: 0; }
 
 @media (min-width: 1360px) {
