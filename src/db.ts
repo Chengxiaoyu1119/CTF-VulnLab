@@ -524,7 +524,7 @@ export class VulnLabDatabase {
     return { repaired: [...repaired], reset: [...reset] }
   }
 
-  listLabs(): Lab[] {
+  listLabs(includeDisabled = false): Lab[] {
     const seedOrder = new Map(seedLabs.map((item, index) => [item.slug, index]))
     return this.db.prepare("SELECT * FROM labs WHERE status != 'disabled'").all()
       .map(row => parseLab(row as Row))
@@ -557,9 +557,33 @@ export class VulnLabDatabase {
     return this.getLab(id) as Lab
   }
 
+  updateLabDetails(id: string, input: Pick<Lab, 'title' | 'category' | 'difficulty' | 'sourceType' | 'sourceUrl' | 'sourceRef' | 'license' | 'runtimeKind' | 'runtimeConfig' | 'summary' | 'tags'>, status?: LabStatus, clearImportedResource = false) {
+    this.db.prepare(`
+      UPDATE labs
+      SET title = ?, category = ?, difficulty = ?, source_type = ?, source_url = ?, source_ref = ?, license = ?, runtime_kind = ?, provider_id = ?, runtime_config_json = ?, summary = ?, tags_json = ?, status = COALESCE(?, status), local_path = CASE WHEN ? THEN NULL ELSE local_path END, imported_at = CASE WHEN ? THEN NULL ELSE imported_at END, updated_at = ?
+      WHERE id = ? AND builtin = 0
+    `).run(input.title, input.category, input.difficulty, input.sourceType, input.sourceUrl, input.sourceRef, input.license, input.runtimeKind, providerForRuntime(input.runtimeKind), JSON.stringify(input.runtimeConfig), input.summary, JSON.stringify(input.tags), status ?? null, clearImportedResource ? 1 : 0, clearImportedResource ? 1 : 0, now(), id)
+    return this.getLab(id)
+  }
+
   updateLabStatus(id: string, status: LabStatus, localPath: string | null = null) {
     const importedAt = status === 'ready' ? now() : null
     this.db.prepare('UPDATE labs SET status = ?, local_path = COALESCE(?, local_path), imported_at = COALESCE(?, imported_at), updated_at = ? WHERE id = ?').run(status, localPath, importedAt, now(), id)
+  }
+
+  restoreLabStatus(id: string) {
+    const lab = this.getLab(id)
+    if (!lab || lab.status !== 'disabled') return lab
+    const latestJob = this.db.prepare('SELECT status FROM import_jobs WHERE lab_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1').get(id) as { status?: string } | undefined
+    const status: LabStatus = !lab.localPath
+      ? 'cataloged'
+      : latestJob?.status === 'completed'
+      ? 'ready'
+      : latestJob?.status === 'error'
+        ? 'error'
+        : 'cataloged'
+    this.updateLabStatus(id, status)
+    return this.getLab(id)
   }
 
   restoreLabReady(id: string) {

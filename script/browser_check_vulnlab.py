@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import time
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -497,41 +498,47 @@ def main() -> None:
         expect(page.locator("#admin-lab-form")).to_be_visible()
         expect(page.locator("#admin-lab-form").get_by_role("button", name="添加靶场", exact=True)).to_be_visible()
         expect(page.locator('[data-admin-view="labs"] input[name="title"]')).to_be_visible()
-        expect(page.locator('[data-admin-view="labs"] select[name="runtimeKind"]')).to_be_visible()
-        expect(page.locator('[data-admin-view="labs"] select[name="sourceType"]')).to_be_visible()
-        expect(page.locator(".admin-lab-advanced")).not_to_have_attribute("open", "")
+        expect(page.locator('[data-admin-view="labs"] select[name="runtimeMode"]')).to_be_visible()
+        expect(page.locator('[data-admin-view="labs"] select[name="runtimeKind"]')).to_have_count(0)
+        expect(page.locator('[data-admin-view="labs"] select[name="runtimeProfile"]')).to_have_count(0)
+        expect(page.locator('[data-admin-view="labs"] [data-action="select-lab-source"]')).to_have_count(2)
+        expect(page.locator(".admin-lab-template-hint")).to_contain_text("PHP 入口文件")
+        runtime_advanced = page.locator(".admin-lab-advanced:not(.admin-lab-display-settings)")
+        expect(runtime_advanced).not_to_have_attribute("open", "")
         expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).not_to_be_visible()
-        page.locator(".admin-lab-advanced > summary").click()
+        runtime_advanced.locator("summary").click()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).to_be_visible()
-        page.locator(".admin-lab-advanced > summary").click()
+        runtime_advanced.locator("summary").click()
         assert page.locator("#admin-lab-form").evaluate("element => element.scrollWidth <= element.clientWidth")
-        page.locator('[data-admin-view="labs"] select[name="sourceType"]').select_option("archive")
+        page.locator('[data-action="select-lab-source"][data-source="archive"]').click()
         expect(page.locator('[data-admin-view="labs"] input[name="archiveFile"]')).to_be_visible()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceUrl"]')).to_have_count(0)
-        source_type_style = page.locator('[data-admin-view="labs"] select[name="sourceType"]').evaluate(
-            "element => ({ appearance: getComputedStyle(element).appearance, paddingRight: getComputedStyle(element).paddingRight, backgroundImage: getComputedStyle(element).backgroundImage, optionBackground: getComputedStyle(element.options[0]).backgroundColor })"
+        source_type_style = page.locator('[data-action="select-lab-source"][data-source="archive"]').evaluate(
+            "element => ({ pressed: element.getAttribute('aria-pressed'), background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderColor })"
         )
-        assert source_type_style["appearance"] == "none" and source_type_style["paddingRight"] == "30px" and "linear-gradient" in source_type_style["backgroundImage"] and source_type_style["optionBackground"] == "rgb(32, 32, 32)", source_type_style
-        page.locator('[data-admin-view="labs"] select[name="sourceType"]').focus()
+        assert source_type_style["pressed"] == "true" and source_type_style["background"] == "rgb(41, 41, 41)" and source_type_style["border"] == "rgb(101, 101, 101)", source_type_style
+        page.locator('[data-action="select-lab-source"][data-source="git"]').focus()
+        page.keyboard.press("Tab")
         page.wait_for_timeout(220)
-        source_type_focus = page.locator('[data-admin-view="labs"] select[name="sourceType"]').evaluate(
-            "element => ({ active: document.activeElement === element, matches: element.matches(':focus'), shadow: getComputedStyle(element).boxShadow, border: getComputedStyle(element).borderColor })"
+        source_type_focus = page.locator('[data-action="select-lab-source"][data-source="archive"]').evaluate(
+            "element => ({ active: document.activeElement === element, matches: element.matches(':focus'), outline: getComputedStyle(element).outlineStyle, border: getComputedStyle(element).borderColor })"
         )
         assert source_type_focus["active"] and source_type_focus["matches"], source_type_focus
-        assert source_type_focus["border"] == "rgb(85, 85, 85)" and source_type_focus["shadow"] == "rgba(255, 255, 255, 0.05) 0px 0px 0px 2px", source_type_focus
-        page.locator('[data-admin-view="labs"] select[name="sourceType"]').select_option("git")
+        assert source_type_focus["border"] == "rgb(101, 101, 101)" and source_type_focus["outline"] == "solid", source_type_focus
+        page.locator('[data-action="select-lab-source"][data-source="git"]').click()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceUrl"]')).to_be_visible()
-        page.locator('[data-admin-view="labs"] select[name="runtimeKind"]').select_option("native-node")
-        page.locator(".admin-lab-advanced > summary").click()
-        expect(page.locator('[data-admin-view="labs"] select[name="runtimeProfile"]')).to_have_value("prebuilt-node")
-        advanced_state = page.locator(".admin-lab-advanced").evaluate("element => ({ open: element.open, profile: element.querySelector('[name=runtimeProfile]')?.value, argsVisible: Boolean(element.querySelector('[name=nodeArgs]')?.getClientRects().length) })")
-        assert advanced_state == {"open": True, "profile": "prebuilt-node", "argsVisible": True}, advanced_state
+        page.locator('[data-admin-view="labs"] select[name="runtimeMode"]').select_option("node")
+        runtime_advanced = page.locator(".admin-lab-advanced:not(.admin-lab-display-settings)")
+        runtime_advanced.locator("summary").click()
+        advanced_state = runtime_advanced.evaluate("element => ({ open: element.open, argsVisible: Boolean(element.querySelector('[name=nodeArgs]')?.getClientRects().length) })")
+        assert advanced_state == {"open": True, "argsVisible": True}, advanced_state
+        expect(page.locator(".admin-lab-template-hint")).to_contain_text("package-lock.json")
         expect(page.locator('[data-admin-view="labs"] textarea[name="nodeArgs"]')).to_be_visible()
-        page.locator(".admin-lab-advanced > summary").click()
-        page.locator('[data-admin-view="labs"] select[name="runtimeKind"]').select_option("native-php")
-        expect(page.locator(".admin-lab-advanced")).not_to_have_attribute("open", "")
-        page.locator(".admin-lab-advanced > summary").click()
-        expect(page.locator(".admin-lab-advanced")).to_have_attribute("open", "")
+        runtime_advanced.locator("summary").click()
+        page.locator('[data-admin-view="labs"] select[name="runtimeMode"]').select_option("php-static")
+        expect(runtime_advanced).not_to_have_attribute("open", "")
+        runtime_advanced.locator("summary").click()
+        expect(runtime_advanced).to_have_attribute("open", "")
         for width, height in [(1440, 900), (768, 1024), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
             page.set_viewport_size({"width": width, "height": height})
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
@@ -543,7 +550,7 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "admin-add-lab-advanced-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         page.screenshot(path=str(OUTPUT_DIR / "admin-add-lab-advanced-mobile.png"), full_page=True)
-        page.locator(".admin-lab-advanced > summary").click()
+        page.locator(".admin-lab-advanced:not(.admin-lab-display-settings) > summary").click()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).not_to_be_visible()
         page.set_viewport_size({"width": 1440, "height": 900})
         page.locator('[data-action="open-admin-section"][data-section="profile"]').click()
@@ -609,6 +616,47 @@ def main() -> None:
                 for launch in range(count):
                     stats_db.execute("INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)", (f"system-fixture-{index}-{launch}", "vulnlab", "instance.start", initial_labs_payload[index]["title"], "system-fixture-instance" if index == 0 else "", stats_stamp))
         try:
+            overview_routes = []
+
+            def pause_overview(route):
+                overview_routes.append(route)
+
+            page.route("**/api/overview", pause_overview)
+            page.evaluate("""() => {
+                window.__overviewRefreshNodes = {
+                    dialog: document.querySelector('[data-overlay-slot="admin"] .admin-dialog'),
+                    content: document.querySelector('[data-overlay-slot="admin"] .admin-dialog-content'),
+                    view: document.querySelector('[data-overlay-slot="admin"] .admin-system-view'),
+                }
+            }""")
+            refresh_button = page.get_by_role("button", name="刷新系统数据", exact=True)
+            refresh_width = refresh_button.evaluate("element => element.getBoundingClientRect().width")
+            refresh_button.click()
+            expect(refresh_button).to_have_attribute("aria-busy", "true")
+            expect(refresh_button).to_have_class(re.compile("is-loading"))
+            expect(refresh_button.locator("svg")).to_have_count(0)
+            page.wait_for_timeout(80)
+            assert refresh_button.inner_text() == "刷新"
+            assert refresh_button.evaluate("element => element.getBoundingClientRect().width") == refresh_width == 60
+            assert len(overview_routes) == 1
+            assert page.evaluate("""() => {
+                const before = window.__overviewRefreshNodes
+                return before.dialog === document.querySelector('[data-overlay-slot="admin"] .admin-dialog')
+                    && before.content === document.querySelector('[data-overlay-slot="admin"] .admin-dialog-content')
+                    && before.view === document.querySelector('[data-overlay-slot="admin"] .admin-system-view')
+            }""")
+            overview_routes.pop().continue_()
+            expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
+            expect(refresh_button).to_have_attribute("aria-busy", "false")
+            expect(refresh_button).to_be_focused()
+            assert refresh_button.evaluate("element => element.getBoundingClientRect().width") == refresh_width
+            assert page.evaluate("""() => {
+                const before = window.__overviewRefreshNodes
+                return before.dialog === document.querySelector('[data-overlay-slot="admin"] .admin-dialog')
+                    && before.content === document.querySelector('[data-overlay-slot="admin"] .admin-dialog-content')
+                    && before.view !== document.querySelector('[data-overlay-slot="admin"] .admin-system-view')
+            }""")
+            page.unroute("**/api/overview", pause_overview)
             page.get_by_role("button", name="刷新系统数据", exact=True).click()
             expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
             expect(page.locator('[data-system-stat="running"]')).to_have_text("1 / 8")
@@ -621,6 +669,23 @@ def main() -> None:
             expect(populated_day).to_have_class(re.compile("is-level-4"))
             populated_day.press("ArrowUp")
             expect(page.locator(".admin-activity-selection")).to_contain_text("0 次启动")
+
+            silent_routes = []
+
+            def pause_silent_overview(route):
+                silent_routes.append(route)
+
+            page.route("**/api/overview", pause_silent_overview)
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_timeout(100)
+            assert len(silent_routes) == 1
+            silent_refresh_button = page.get_by_role("button", name="刷新系统数据", exact=True)
+            expect(silent_refresh_button).to_have_attribute("aria-busy", "false")
+            expect(silent_refresh_button).not_to_have_class(re.compile("is-loading"))
+            silent_routes.pop().continue_()
+            expect(silent_refresh_button).to_have_attribute("aria-busy", "false")
+            page.unroute("**/api/overview", pause_silent_overview)
+
             with page.expect_response(lambda response: "/api/audit?" in response.url and f"date={last_activity_date}" in response.url and "action=instance.start" in response.url and response.request.method == "GET") as filtered_audit_response_info:
                 populated_day.click()
             assert filtered_audit_response_info.value.headers.get("x-vulnlab-record-total") == "19"
@@ -667,6 +732,7 @@ def main() -> None:
             expect(action_picker.locator("summary")).to_be_focused()
             expect(page.locator(".admin-action-select[open]")).to_have_count(0)
             expect(page.locator(".audit-entry")).to_have_count(19)
+            expect(page.locator('[data-action="clear-audit-filters"]')).to_be_visible()
             expect(page.locator('.audit-entry[data-id="system-fixture-0-0"]')).to_have_count(1)
             audit_summary = page.locator('.audit-entry[data-id="system-fixture-0-0"]').locator('[data-action="toggle-audit-detail"]')
             audit_summary.press("Enter")
@@ -680,8 +746,10 @@ def main() -> None:
             page.locator('[data-action="clear-audit-filters"]').click()
             expect(page.locator('[data-audit-filter="date"]')).to_have_value("")
             expect(page.locator(".admin-action-select")).to_have_attribute("data-audit-action-filter", "")
+            expect(page.locator('[data-action="clear-audit-filters"]')).to_have_count(0)
             with page.expect_response(lambda response: "/api/audit?" in response.url and "date=2000-01-01" in response.url and response.request.method == "GET"):
                 page.locator('[data-audit-filter="date"]').fill("2000-01-01")
+            expect(page.locator('[data-action="clear-audit-filters"]')).to_be_visible()
             expect(page.locator(".audit-entry")).to_have_count(0)
             selected_date_style = page.locator('[data-audit-filter="date"]').evaluate(
                 "element => ({ outlineStyle: getComputedStyle(element).outlineStyle, borderColor: getComputedStyle(element).borderColor, boxShadow: getComputedStyle(element).boxShadow })"
@@ -704,6 +772,7 @@ def main() -> None:
             page.set_viewport_size({"width": 1440, "height": 900})
             page.locator('[data-action="clear-audit-filters"]').click()
             expect(page.locator('[data-audit-filter="date"]')).to_have_value("")
+            expect(page.locator('[data-action="clear-audit-filters"]')).to_have_count(0)
             expect(page.locator(".audit-entry").first).to_be_visible()
             page.locator('[data-action="return-to-system-data"]').click()
             expect(page.locator('[data-admin-dialog-view="system"]')).to_be_visible()
@@ -808,11 +877,11 @@ def main() -> None:
         generated_invitation_code = invitation_code.inner_text()
         generated_invitation_id = page.locator('.invitation-history-card[data-status="active"]').first.get_attribute("data-id")
         assert generated_invitation_id
-        expect(page.locator(".invitation-one-time-note")).to_have_text("本标签页生成的有效邀请码，也可点击列表中的“有效”标识复制。")
+        expect(page.locator(".invitation-one-time-note")).to_have_text("本标签页生成的邀请码明文可在此查看；未过期且未使用的记录显示为“可邀请”，点击即可复制。")
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
         expect(page.locator(".invitation-history-card")).to_have_count(50)
         invitation_copy_button = page.locator(f'.invitation-history-card[data-id="{generated_invitation_id}"] .invitation-status-copy')
-        expect(invitation_copy_button).to_have_text("有效")
+        expect(invitation_copy_button).to_have_text("可邀请")
         page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE_URL)
         invitation_copy_button.click()
         expect(page.get_by_role("status")).to_contain_text("邀请码已复制")
@@ -1007,14 +1076,20 @@ def main() -> None:
         )
         assert all(item["registerStatus"] == 200 and item["registration"].get("ok") and item["cleanupStatus"] == 409 for item in registration_results), registration_results
         legacy_invitation_id = f"legacy-used-{os.getpid()}-{time.time_ns()}"
+        expired_invitation_id = f"expired-{os.getpid()}-{time.time_ns()}"
         with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as invitation_db:
             legacy_stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             invitation_db.execute(
                 "INSERT INTO invitations (id, code_hash, created_by, expires_at, used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)",
                 (legacy_invitation_id, f"{legacy_invitation_id}-hash", "vulnlab", (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"), legacy_stamp, legacy_stamp),
             )
+            invitation_db.execute(
+                "INSERT INTO invitations (id, code_hash, created_by, expires_at, used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?)",
+                (expired_invitation_id, f"{expired_invitation_id}-hash", "vulnlab", (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"), legacy_stamp),
+            )
         invitation_button.click()
         expect(page.locator(".invitation-history-card[data-status='used']")).to_have_count(len(account_names) + 1)
+        expect(page.locator(".invitation-history-card[data-status='expired']")).to_have_count(1)
         expect(page.locator(".invitation-history-card[data-status='used'] [data-admin-record-select='invitations'], .invitation-history-card[data-status='used'] .record-delete")).to_have_count(0)
         for user_name in account_names:
             used_invitation_row = page.locator('.invitation-history-card[data-status="used"]').filter(has_text=user_name)
@@ -1024,6 +1099,12 @@ def main() -> None:
             expect(used_invitation_row.locator(".invitation-retained")).to_have_text("已保留")
         legacy_invitation_row = page.locator(f'.invitation-history-card[data-id="{legacy_invitation_id}"]')
         expect(legacy_invitation_row).to_contain_text("历史记录未记录使用者")
+        for status in ("expired", "used"):
+            status_badge = page.locator(f'.invitation-history-card[data-status="{status}"] .invitation-field-status strong').first
+            badge_geometry = status_badge.evaluate(
+                "element => { const badge = element.getBoundingClientRect(); const field = element.parentElement.getBoundingClientRect(); return { fontSize: getComputedStyle(element).fontSize, left: badge.left, right: badge.right, fieldLeft: field.left, fieldRight: field.right } }"
+            )
+            assert badge_geometry["fontSize"] == "10px" and badge_geometry["left"] >= badge_geometry["fieldLeft"] - 1 and badge_geometry["right"] <= badge_geometry["fieldRight"] + 1, (status, badge_geometry)
         page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-used-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
@@ -1301,16 +1382,18 @@ def main() -> None:
         assert page.locator(".admin-action-select").evaluate("element => getComputedStyle(element).width") == "116px"
         expect(page.locator('.admin-record-filters [data-admin-select-all="audit"]')).to_have_count(1)
         expect(page.locator(".admin-record-filters .admin-select-all > span")).to_have_count(0)
+        expect(page.locator('[data-action="clear-audit-filters"]')).to_have_count(0)
         audit_filter_spacing = page.locator(".admin-record-filters").evaluate(
             "filters => { const checkbox = filters.querySelector('[data-admin-select-all=\"audit\"]').getBoundingClientRect(); const date = filters.querySelector('[data-audit-filter=\"date\"]').closest('.admin-record-filter').getBoundingClientRect(); return { gap: date.left - checkbox.right, borderBottomWidth: getComputedStyle(filters).borderBottomWidth }; }"
         )
         assert audit_filter_spacing["gap"] >= 11 and audit_filter_spacing["borderBottomWidth"] == "0px", audit_filter_spacing
         if page.locator('[data-action="clear-audit-filters"]:not([disabled])').count():
             page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
+        expect(page.locator('[data-action="clear-audit-filters"]')).to_have_count(0)
         audit_dialog_box = page.locator('.admin-dialog:visible').bounding_box()
         assert audit_dialog_box and round(audit_dialog_box["width"]) == 640 and round(audit_dialog_box["height"]) == 480, audit_dialog_box
         assert page.locator(".admin-record-filters").evaluate(
-            "filters => ['[data-admin-select-all=\"audit\"]', '[data-audit-filter=\"date\"]', '.admin-action-select', '[data-action=\"clear-audit-filters\"]'].every(selector => filters.contains(filters.querySelector(selector))) && getComputedStyle(filters).position === 'sticky'"
+            "filters => ['[data-admin-select-all=\"audit\"]', '[data-audit-filter=\"date\"]', '.admin-action-select'].every(selector => filters.contains(filters.querySelector(selector))) && getComputedStyle(filters).position === 'sticky'"
         )
         expect(page.locator(".audit-entry")).to_have_count(50)
         expect(page.get_by_role("button", name="加载更多", exact=True)).to_be_visible()
@@ -1428,7 +1511,7 @@ def main() -> None:
         )
         assert abs(audit_checkbox_alignment["selectAll"] - audit_checkbox_alignment["firstRow"]) <= 1, audit_checkbox_alignment
         audit_filter_centers = page.locator(".admin-record-filters").evaluate(
-            """element => ['[data-admin-select-all="audit"]', '[data-audit-filter="date"]', '.admin-action-select > summary', '[data-action="clear-audit-filters"]']
+            """element => ['[data-admin-select-all="audit"]', '[data-audit-filter="date"]', '.admin-action-select > summary']
                 .map(selector => {
                     const item = element.querySelector(selector)
                     const rect = item?.getBoundingClientRect()
@@ -2290,6 +2373,73 @@ def main() -> None:
         expect(page.locator(".lab-canvas")).not_to_have_class(re.compile(r"can-scroll-down"))
         page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-scroll-bottom.png"), full_page=True)
         page.unroute("**/api/labs", labs_with_expanded_catalog)
+        page.evaluate("() => { const canvas = document.querySelector('.lab-canvas'); if (canvas) canvas.scrollTop = 0 }")
+        page.get_by_role("button", name="管理中心", exact=True).click()
+        page.locator('[data-action="open-admin-section"][data-section="labs"]').click()
+        valid_archive_path = OUTPUT_DIR / "custom-admin-lab.zip"
+        invalid_archive_path = OUTPUT_DIR / "custom-admin-lab-invalid.zip"
+        with zipfile.ZipFile(valid_archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("index.php", "<?php echo 'browser-custom-lab';")
+        with zipfile.ZipFile(invalid_archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("README.md", "missing PHP entry")
+        form = page.locator("#admin-lab-form")
+        form.locator('[name="title"]').fill("浏览器自定义靶场")
+        page.locator('[data-action="select-lab-source"][data-source="archive"]').click()
+        form.locator('[name="archiveFile"]').set_input_files(str(invalid_archive_path))
+        form.get_by_role("button", name="检查项目结构").click()
+        expect(page.locator(".admin-lab-inspection")).to_contain_text("index.php")
+        expect(page.locator(".admin-lab-inspection-actions")).to_contain_text("只读")
+        form.get_by_role("button", name="添加靶场", exact=True).click()
+        page.wait_for_function(
+            """async () => (await (await fetch('/api/labs')).json()).some(lab => lab.title === '浏览器自定义靶场' && lab.status === 'error')""",
+            timeout=20_000,
+        )
+        failed_row = page.locator('.admin-lab-row[data-lab-id]')
+        expect(failed_row).to_contain_text("准备失败")
+        expect(failed_row).to_contain_text("PHP 入口文件不存在")
+        custom_lab_id = failed_row.get_attribute("data-lab-id")
+        assert custom_lab_id
+        page.locator('[data-action="retry-custom-lab"]').click()
+        page.wait_for_function(
+            """async labId => {
+                const labs = await (await fetch('/api/labs')).json()
+                const jobs = await (await fetch('/api/import-jobs')).json()
+                return labs.some(lab => lab.id === labId && lab.status === 'error') && jobs.filter(job => job.labId === labId).length >= 2 && jobs.filter(job => job.labId === labId).every(job => job.status === 'error')
+            }""",
+            arg=custom_lab_id,
+            timeout=20_000,
+        )
+        expect(page.locator('[data-action="retry-custom-lab"]')).to_be_visible()
+        page.locator('[data-action="edit-custom-lab"]').click()
+        expect(page.locator("#admin-lab-form")).to_contain_text("留空保留当前压缩包")
+        page.locator('#admin-lab-form [name="archiveFile"]').set_input_files(str(valid_archive_path))
+        page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
+        page.wait_for_function(
+            """async () => (await (await fetch('/api/labs')).json()).some(lab => lab.title === '浏览器自定义靶场' && lab.status === 'ready')""",
+            timeout=20_000,
+        )
+        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已就绪")
+        page.locator('[data-action="edit-custom-lab"]').click()
+        page.locator('#admin-lab-form [name="title"]').fill("已编辑的浏览器靶场")
+        page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
+        expect(page.locator('.admin-lab-row[data-lab-id] .admin-lab-row-copy strong')).to_have_text("已编辑的浏览器靶场")
+        page.locator('[data-action="toggle-custom-lab"]').click()
+        page.get_by_role("button", name="停用靶场", exact=True).last.click()
+        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已停用")
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
+        page.locator('[data-action="edit-custom-lab"]').click()
+        page.locator('#admin-lab-form [name="title"]').fill("停用中已编辑的靶场")
+        page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
+        expect(page.locator('.admin-lab-row[data-lab-id] .admin-lab-row-copy strong')).to_have_text("停用中已编辑的靶场")
+        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已停用")
+        page.locator('[data-action="toggle-custom-lab"]').click()
+        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已就绪")
+        expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count + 1)
+        page.locator('[data-action="copy-custom-lab-config"]').click()
+        expect(page.locator('#admin-lab-form [name="title"]')).to_have_value("")
+        expect(page.locator('#admin-lab-form [name="sourceUrl"]')).to_have_value("")
+        expect(page.locator('#admin-lab-form [name="sourceType"]')).to_have_value("git")
+        expect(page.locator('#admin-lab-form [name="runtimeMode"]')).to_have_value("php-static")
         assert not console_errors, console_errors
         browser.close()
     print("VulnLab browser check passed.")

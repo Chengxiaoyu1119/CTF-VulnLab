@@ -20,6 +20,7 @@ let importPollTimer = null
 let detailPollTimer = null
 let systemPollTimer = null
 let systemRequestVersion = 0
+let systemRefreshReturnFocus = false
 let modalReturnFocus = null
 let confirmReturnFocus = null
 let loginSuccessNoticeTimer = null
@@ -61,8 +62,13 @@ const state = {
   adminPanelOpen: false,
   adminView: 'profile',
   adminLabAdvancedOpen: false,
+  adminLabDisplayOpen: false,
+  adminLabEditId: null,
+  adminLabInspection: null,
+  adminLabInspectionLoading: false,
+  adminLabInspectionError: '',
   adminLabDraft: {
-    title: '', sourceType: 'git', sourceUrl: '', sourceRef: '', archiveFileName: '', runtimeKind: 'native-php', runtimeProfile: 'static-php',
+    title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '', runtimeMode: 'php-static', runtimeKind: 'native-php', runtimeProfile: 'static-php',
     documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
     category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
   },
@@ -271,11 +277,16 @@ function resetAdminRecords() {
 
 function resetAdminLabDraft() {
   state.adminLabDraft = {
-    title: '', sourceType: 'git', sourceUrl: '', sourceRef: '', archiveFileName: '', runtimeKind: 'native-php', runtimeProfile: 'static-php',
+    title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '', runtimeMode: 'php-static', runtimeKind: 'native-php', runtimeProfile: 'static-php',
     documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
     category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
   }
   state.adminLabAdvancedOpen = false
+  state.adminLabDisplayOpen = false
+  state.adminLabEditId = null
+  state.adminLabInspection = null
+  state.adminLabInspectionLoading = false
+  state.adminLabInspectionError = ''
   state.adminLabArchiveFile = null
 }
 
@@ -329,12 +340,70 @@ async function setAuditFilters(dateValue, actionValue) {
   await refreshAdminAudit()
 }
 
-async function refreshAdminOverview() {
+function setSystemRefreshLoading(loading, preserveFocus = false) {
+  const button = document.querySelector('.admin-system-refresh')
+  const view = document.querySelector('.admin-system-view')
+  if (loading) systemRefreshReturnFocus = Boolean(button && (preserveFocus || document.activeElement === button))
+  view?.setAttribute('aria-busy', String(loading))
+  if (button) {
+    button.disabled = loading
+    button.classList.toggle('is-loading', loading)
+    button.setAttribute('aria-busy', String(loading))
+  }
+  if (!loading && systemRefreshReturnFocus) {
+    button?.focus({ preventScroll: true })
+    systemRefreshReturnFocus = false
+  }
+}
+
+function adminPanelKey() {
+  const adminRecordsKey = ['invitations', 'audit', 'users'].map(panel => `${state[panel].length}:${state.adminTotals[panel]}:${state.adminNextCursors[panel] ?? ''}`).join(':')
+  const activity = state.adminOverview?.activity
+  const adminOverviewKey = activity ? `${activity.rangeEnd}:${activity.launchCount}:${activity.activeDays}:${state.adminOverview.runningInstanceCount}` : ''
+  return state.adminPanelOpen ? `${state.adminView}:${state.invitation?.id ?? 'open'}:${state.adminLoading}:${adminRecordsKey}:${adminOverviewKey}:${state.adminError}:${state.adminSystemError}` : ''
+}
+
+function patchAdminSystemView() {
+  if (!state.adminPanelOpen || state.adminView !== 'system') return false
+  const slot = app.querySelector('[data-overlay-slot="admin"]')
+  const current = slot?.querySelector('.admin-system-view')
+  if (!slot || !current) return false
+
+  const scrollContainer = current.closest('.admin-dialog-content')
+  const scrollTop = scrollContainer?.scrollTop ?? 0
+  const active = current.contains(document.activeElement) ? {
+    action: document.activeElement.dataset.action ?? '',
+    id: document.activeElement.dataset.id ?? '',
+    activityDate: document.activeElement.dataset.activityDate ?? '',
+  } : null
+  const template = document.createElement('template')
+  template.innerHTML = adminSystemPanel()
+  const next = template.content.firstElementChild
+  if (!next) return false
+  next.style.setProperty('animation', 'none')
+  current.replaceWith(next)
+  if (scrollContainer) scrollContainer.scrollTop = scrollTop
+  if (active) {
+    const target = [...next.querySelectorAll('button')].find(button => button.dataset.action === active.action
+      && (button.dataset.id ?? '') === active.id
+      && (button.dataset.activityDate ?? '') === active.activityDate)
+    target?.focus({ preventScroll: true })
+  }
+
+  slot.__vulnlabKey = adminPanelKey()
+  slot.__vulnlabContent = adminPanel()
+  return true
+}
+
+async function refreshAdminOverview({ showLoading = true, trigger = null } = {}) {
   if (state.adminSystemLoading || !state.session || !state.adminPanelOpen || state.adminView !== 'system') return
   const version = systemRequestVersion
   state.adminSystemLoading = true
   state.adminSystemError = ''
-  render()
+  if (showLoading) {
+    if (state.adminOverview) setSystemRefreshLoading(true, trigger?.classList?.contains('admin-system-refresh'))
+    else if (!patchAdminSystemView()) render()
+  }
   try {
     const overview = await request('/api/overview', { cache: 'no-store' })
     if (!overview?.activity || overview.activity.daily?.length !== 365) throw new ApiError('系统数据暂时不可用，请重试。', 502)
@@ -344,7 +413,8 @@ async function refreshAdminOverview() {
   } finally {
     if (version === systemRequestVersion) {
       state.adminSystemLoading = false
-      render()
+      setSystemRefreshLoading(false)
+      if (!patchAdminSystemView() && state.adminPanelOpen && state.adminView === 'system') render()
     }
   }
 }
@@ -408,7 +478,7 @@ function scheduleSystemPolling() {
   if (systemPollTimer || state.adminSystemLoading) return
   systemPollTimer = window.setTimeout(() => {
     systemPollTimer = null
-    void refreshAdminOverview()
+    void refreshAdminOverview({ showLoading: false })
   }, 15000)
 }
 
@@ -863,7 +933,7 @@ function positionOpenAuditActionMenus() {
 
 function patchLabs() {
   const canvas = app.querySelector('.lab-canvas')
-  const visibleLabs = state.labs
+  const visibleLabs = state.labs.filter(lab => lab.status !== 'disabled')
   if (state.error && !visibleLabs.length) {
     const content = `<div class="empty-state lab-empty-state"><p>${esc(state.error)}</p><button class="button button-primary" type="button" data-action="refresh-labs">重新连接</button></div>`
     if (canvas.innerHTML !== content) canvas.innerHTML = content
@@ -930,6 +1000,7 @@ function patchLabs() {
   } else {
     grid.querySelector('.lab-add-card')?.remove()
   }
+  grid.classList.toggle('has-overflow', Boolean(overflowGrid?.querySelector('.lab-card') || state.session?.role === 'admin'))
 }
 
 function patchSlot(name, content, { focus = false, key = content } = {}) {
@@ -1024,60 +1095,103 @@ function adminRecordSelection(panel = state.adminRecordsPanel) {
   return { records, selectableRecords, selectedIds, selected, allSelected, selectAllControl, selectionActions }
 }
 
+const customRuntimeModes = {
+  'php-static': { kind: 'native-php', profile: 'static-php', label: 'PHP 网站' },
+  'php-mysql': { kind: 'native-php', profile: 'mysql-php', label: 'PHP + MySQL' },
+  node: { kind: 'native-node', profile: 'prebuilt-node', label: 'Node.js 项目' },
+  'java-jar': { kind: 'native-java', profile: 'java-jar', label: 'Java JAR' },
+  webgoat: { kind: 'native-java', profile: 'webgoat', label: 'WebGoat' },
+  python: { kind: 'native-python', profile: 'python-script', label: 'Python 脚本' },
+  django: { kind: 'native-python', profile: 'pygoat', label: 'Django 项目' },
+}
+
+function customRuntimeModeFor(lab) {
+  const match = Object.entries(customRuntimeModes).find(([, mode]) => mode.kind === lab.runtimeKind && mode.profile === lab.runtimeConfig?.profile)
+  return match?.[0] ?? ({ 'native-php': 'php-static', 'native-node': 'node', 'native-java': 'java-jar', 'native-python': 'python' })[lab.runtimeKind] ?? 'php-static'
+}
+
 function adminLabsPanel() {
   const draft = state.adminLabDraft
   const customLabs = state.labs.filter(lab => !lab.builtin)
-  const statusLabels = { cataloged: '未就绪', queued: '排队中', importing: '准备中', ready: '已就绪', error: '准备失败', disabled: '已停用' }
-  const runtimeLabels = { 'native-php': 'PHP', 'native-node': 'Node.js', 'native-java': 'Java', 'native-python': 'Python' }
+  const statusLabels = { cataloged: '待准备', queued: '排队中', importing: '准备中', ready: '已就绪', error: '准备失败', disabled: '已停用' }
   const option = (value, label, current) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`
-  const profiles = {
-    'native-php': [['static-php', '静态 PHP'], ['mysql-php', 'PHP + MySQL']],
-    'native-node': [['prebuilt-node', 'Node.js 项目']],
-    'native-java': [['webgoat', 'WebGoat'], ['java-jar', '通用 Java JAR']],
-    'native-python': [['pygoat', 'PyGoat'], ['python-script', '通用 Python 文件']],
-  }
-  const runtimeProfile = draft.runtimeProfile || profiles[draft.runtimeKind]?.[0]?.[0] || 'static-php'
-  const profileOptions = (profiles[draft.runtimeKind] ?? profiles['native-php']).map(([value, label]) => option(value, label, runtimeProfile)).join('')
+  const runtimeMode = customRuntimeModes[draft.runtimeMode] ? draft.runtimeMode : customRuntimeModeFor(draft)
+  const runtimeProfile = customRuntimeModes[runtimeMode].profile
+  const editingLab = state.adminLabEditId ? customLabs.find(lab => lab.id === state.adminLabEditId) : null
   const runtimeField = (name, label, value, placeholder, type = 'text') => `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`
   let runtimeFields = ''
   if (runtimeProfile === 'static-php' || runtimeProfile === 'mysql-php') {
-    runtimeFields = `${runtimeField('documentRoot', 'PHP 文档根目录（可选）', draft.documentRoot, '留空使用压缩包根目录')}${runtimeField('entryPath', 'PHP 入口文件', draft.entryPath || 'index.php', 'index.php')}${runtimeProfile === 'mysql-php' ? runtimeField('initSqlPath', 'MySQL 初始化 SQL', draft.initSqlPath || 'init.sql', 'init.sql') : ''}`
+    runtimeFields = `${runtimeField('documentRoot', 'PHP 网站目录（可选）', draft.documentRoot, '留空使用项目根目录')}${runtimeField('entryPath', '入口文件', draft.entryPath || 'index.php', 'index.php')}${runtimeProfile === 'mysql-php' ? runtimeField('initSqlPath', '数据库初始化文件', draft.initSqlPath || 'init.sql', 'init.sql') : ''}`
   } else if (runtimeProfile === 'prebuilt-node') {
-    runtimeFields = `${runtimeField('entryPath', 'Node.js 入口文件（可选）', draft.entryPath, '例如：server.js')}<label>Node.js 启动参数（可选）<textarea name="nodeArgs" rows="2" placeholder="每行一个参数，例如：--port / 3000">${esc(draft.nodeArgs)}</textarea></label>`
+    runtimeFields = `${runtimeField('entryPath', 'Node.js 入口文件（可选）', draft.entryPath, '例如：server.js')}<label>启动参数（可选）<textarea name="nodeArgs" rows="2" placeholder="每行一个参数">${esc(draft.nodeArgs)}</textarea></label>`
   } else if (runtimeProfile === 'webgoat') {
     runtimeFields = runtimeField('entryPath', 'Java JAR 入口文件', draft.entryPath || 'webgoat.jar', 'webgoat.jar')
   } else if (runtimeProfile === 'java-jar') {
-    runtimeFields = `${runtimeField('entryPath', 'Java JAR 运行文件', draft.entryPath || 'app.jar', 'app.jar')}${runtimeField('portArg', 'Java 端口参数（可选）', draft.portArg, '--server.port={port}')}<label>Java 启动参数（可选）<textarea name="javaArgs" rows="2" placeholder="每行一个参数，例如：--profile / demo">${esc(draft.javaArgs)}</textarea></label>`
+    runtimeFields = `${runtimeField('entryPath', 'Java JAR 文件', draft.entryPath || 'app.jar', 'app.jar')}${runtimeField('portArg', '端口参数（可选）', draft.portArg, '--server.port={port}')}<label>启动参数（可选）<textarea name="javaArgs" rows="2" placeholder="每行一个参数">${esc(draft.javaArgs)}</textarea></label>`
   } else if (runtimeProfile === 'python-script') {
-    runtimeFields = `${runtimeField('entryPath', 'Python 运行文件', draft.entryPath || 'app.py', 'app.py')}${runtimeField('portArg', 'Python 端口参数（可选）', draft.portArg, '--port={port}')}<label>Python 启动参数（可选）<textarea name="pythonArgs" rows="2" placeholder="每行一个参数，例如：--mode / lab">${esc(draft.pythonArgs)}</textarea></label>`
+    runtimeFields = `${runtimeField('entryPath', 'Python 入口文件', draft.entryPath || 'app.py', 'app.py')}${runtimeField('portArg', '端口参数（可选）', draft.portArg, '--port={port}')}<label>启动参数（可选）<textarea name="pythonArgs" rows="2" placeholder="每行一个参数">${esc(draft.pythonArgs)}</textarea></label>`
   } else {
-    runtimeFields = `${runtimeField('entryPath', 'Python manage.py 入口', draft.entryPath || 'manage.py', 'manage.py')}${runtimeField('settingsPath', 'Django 设置文件', draft.settingsPath || 'pygoat/settings.py', 'pygoat/settings.py')}`
+    runtimeFields = `${runtimeField('entryPath', 'Django 入口文件', draft.entryPath || 'manage.py', 'manage.py')}${runtimeField('settingsPath', 'Django 设置文件', draft.settingsPath || 'pygoat/settings.py', 'pygoat/settings.py')}`
   }
-  const sourceField = draft.sourceType === 'archive'
-     ? `<label>本地压缩包<input name="archiveFile" type="file" accept=".zip,application/zip,application/x-zip-compressed"><span class="admin-lab-file-hint" data-archive-file-name>${esc(draft.archiveFileName || '选择 ZIP 文件，最大 256 MiB')}</span></label>`
-    : `<label>来源地址<input name="sourceUrl" type="url" required value="${esc(draft.sourceUrl)}" placeholder="https://github.com/组织/项目"></label>`
+  const runtimeHelp = runtimeProfile === 'prebuilt-node'
+    ? '声明运行依赖时需提供 package-lock.json 或 npm-shrinkwrap.json；安装使用锁文件，且不执行项目安装脚本。'
+    : runtimeProfile === 'python-script' || runtimeProfile === 'pygoat'
+      ? '如包含 requirements.txt，需使用哈希锁定依赖，并提前准备本机离线 wheelhouse。'
+      : runtimeProfile === 'java-jar' || runtimeProfile === 'webgoat'
+        ? '项目需包含可运行的 JAR 文件。'
+        : runtimeProfile === 'mysql-php'
+          ? '项目需包含 PHP 入口和数据库初始化 SQL 文件。'
+          : runtimeProfile === 'static-php'
+            ? '项目需包含 PHP 入口文件。'
+            : '需包含 Django manage.py 与 settings.py；第三方依赖仅从本机离线 wheelhouse 安装。'
+  const sourceValueField = draft.sourceType === 'archive'
+    ? `<label>ZIP 文件<input name="archiveFile" type="file" accept=".zip,application/zip,application/x-zip-compressed"><span class="admin-lab-file-hint" data-archive-file-name>${esc(draft.archiveFileName || (editingLab?.sourceType === 'archive' ? '留空保留当前压缩包，可重新选择' : draft.sourceUploadUrl ? '已选择一个 ZIP，可重新选择' : '最大 256 MiB'))}</span></label>`
+    : `<label>公开仓库地址<input name="sourceUrl" type="url" required value="${esc(draft.sourceUrl)}" placeholder="https://github.com/组织/项目"></label>`
+  const inspection = state.adminLabInspection
+  const inspectionSuggestion = inspection?.suggestion
+  const inspectionLabel = inspectionSuggestion?.mode ? customRuntimeModes[inspectionSuggestion.mode]?.label ?? '未识别' : '未识别固定运行方式'
+  const inspectionView = inspection
+    ? `<div class="admin-lab-inspection" role="status"><div><strong>结构建议：${esc(inspectionLabel)}</strong><span>${inspectionSuggestion?.confidence === 'high' ? '特征明确' : inspectionSuggestion?.confidence === 'medium' ? '建议复核' : '请手动选择'}</span></div>${inspectionSuggestion?.signals?.length ? `<p>识别到：${inspectionSuggestion.signals.map(esc).join('、')}</p>` : ''}${inspectionSuggestion?.warnings?.length ? `<ul>${inspectionSuggestion.warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p>未发现明显缺项；准备阶段仍会按固定契约校验文件。</p>'}${inspectionSuggestion?.mode ? `<button class="button button-quiet" type="button" data-action="apply-lab-inspection" data-mode="${esc(inspectionSuggestion.mode)}">采用此建议</button>` : ''}</div>`
+    : state.adminLabInspectionError ? `<p class="admin-lab-inspection-error" role="alert">${esc(state.adminLabInspectionError)}</p>` : ''
+  const sourceRefField = draft.sourceType === 'git' ? `<label>分支 / 版本<input name="sourceRef" value="${esc(draft.sourceRef)}" placeholder="留空使用仓库默认分支"></label>` : ''
   const rows = customLabs.length
-    ? customLabs.map(lab => `<div class="admin-lab-row"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><span>${esc(lab.sourceType === 'git' ? 'Git 仓库' : '压缩包')} · ${esc(runtimeLabels[lab.runtimeKind] ?? lab.runtimeKind)}</span></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span></div>`).join('')
-    : '<div class="admin-empty-state">还没有自定义靶场，使用上方表单添加。</div>'
+    ? customLabs.map(lab => {
+      const latestJob = state.jobs.filter(job => job.labId === lab.id).sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0]
+      const progress = Math.max(0, Math.min(100, Number(latestJob?.progress ?? 0)))
+      const progressView = ['queued', 'importing'].includes(lab.status)
+        ? `<div class="admin-lab-row-progress" role="status" aria-label="${esc(latestJob?.message ?? '等待准备')}，${progress}%"><div><span>${esc(latestJob?.message ?? '等待准备')}</span><strong>${progress}%</strong></div><span class="admin-lab-progress-track"><i style="width:${progress}%"></i></span></div>`
+        : ''
+      const errorView = lab.status === 'error'
+        ? `<p class="admin-lab-row-error" title="${esc(latestJob?.error ?? latestJob?.message ?? '没有更多错误信息。')}">失败原因：${esc(latestJob?.error ?? latestJob?.message ?? '没有更多错误信息。')}</p>`
+        : ''
+      const running = state.instances.some(instance => instance.labId === lab.id && instance.status === 'running')
+      const sourceLabel = lab.sourceType === 'git'
+        ? (() => { try { const url = new URL(lab.sourceUrl); return `${url.hostname.replace(/^www\./, '')}/${url.pathname.replace(/^\/+|\/+$/g, '')}` } catch { return 'Git 仓库' } })()
+        : 'ZIP 压缩包'
+      const modeLabel = customRuntimeModes[customRuntimeModeFor(lab)]?.label ?? '固定运行方式'
+      const actions = `<div class="admin-lab-row-actions"><button class="button button-quiet" type="button" data-action="copy-custom-lab-config" data-id="${esc(lab.id)}">复制配置</button>${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-custom-lab" data-id="${esc(lab.id)}" ${busyFor('retry-custom-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-custom-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button><button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-custom-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button></div>`
+      return `<article class="admin-lab-row" data-lab-id="${esc(lab.id)}"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><span>${esc(modeLabel)} <i aria-hidden="true">·</i> ${esc(sourceLabel)}</span></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>${progressView}${errorView}${actions}</article>`
+    }).join('')
+    : '<div class="admin-empty-state">还没有自定义靶场。</div>'
   return `<section class="admin-lab-view" data-admin-view="labs" aria-label="靶场管理">
-    <div class="admin-lab-heading"><h3>添加靶场</h3></div>
+    <div class="admin-lab-heading"><h3>${editingLab ? '编辑靶场' : '添加靶场'}</h3></div>
     <form class="admin-lab-form" id="admin-lab-form">
       <div class="admin-lab-form-primary">
-        <div class="admin-lab-form-grid admin-lab-form-primary-grid"><label>名称<input name="title" required maxlength="80" value="${esc(draft.title)}" placeholder="例如：OWASP WebGoat"></label><label>运行环境<select name="runtimeKind">${option('native-php', 'PHP', draft.runtimeKind)}${option('native-node', 'Node.js', draft.runtimeKind)}${option('native-java', 'Java', draft.runtimeKind)}${option('native-python', 'Python', draft.runtimeKind)}</select></label></div>
-        <div class="admin-lab-form-grid admin-lab-source-grid"><label>来源类型<select name="sourceType">${option('git', 'Git 仓库', draft.sourceType)}${option('archive', '本地 ZIP 压缩包', draft.sourceType)}</select></label>${sourceField}</div>
+        <label>名称<input name="title" required maxlength="80" value="${esc(draft.title)}" placeholder="例如：OWASP WebGoat"></label>
+        <fieldset class="admin-lab-source-toggle"><legend>来源</legend><input type="hidden" name="sourceType" value="${esc(draft.sourceType)}"><div role="group" aria-label="来源类型"><button class="${draft.sourceType === 'git' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="git" aria-pressed="${draft.sourceType === 'git'}">Git 仓库</button><button class="${draft.sourceType === 'archive' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="archive" aria-pressed="${draft.sourceType === 'archive'}">ZIP 文件</button></div></fieldset>
+        <div class="admin-lab-source-value">${sourceValueField}</div>
+        <div class="admin-lab-inspection-actions"><button class="button button-quiet" type="button" data-action="inspect-custom-lab" ${state.adminLabInspectionLoading ? 'disabled' : ''}>${state.adminLabInspectionLoading ? '正在检查…' : '检查项目结构'}</button><span>只读文件特征，不会运行项目脚本</span></div>${inspectionView}
+        <label>运行方式<select name="runtimeMode">${Object.entries(customRuntimeModes).map(([value, mode]) => option(value, mode.label, runtimeMode)).join('')}</select><span class="admin-lab-template-hint">${runtimeHelp}</span></label>
       </div>
       <details class="admin-lab-advanced"${state.adminLabAdvancedOpen ? ' open' : ''}>
-        <summary><strong>高级设置</strong><span>分支、启动入口与展示信息</span></summary>
-        <div class="admin-lab-advanced-body">
-          <div class="admin-lab-form-grid"><label>版本 / 分支<input name="sourceRef" value="${esc(draft.sourceRef)}" placeholder="留空使用默认版本"></label><label>运行模板<select name="runtimeProfile">${profileOptions}</select></label></div>
-          <div class="admin-lab-form-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label></div>
-          <label>许可证<input name="license" value="${esc(draft.license)}" placeholder="留空标记为未声明"></label>
-          <div class="admin-lab-form-grid admin-lab-runtime-grid">${runtimeFields}</div>
-          <label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label>
-          <label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label>
-        </div>
+        <summary><strong>高级运行参数</strong><span>分支、入口与启动参数</span></summary>
+        <div class="admin-lab-advanced-body">${sourceRefField}<div class="admin-lab-form-grid admin-lab-runtime-grid">${runtimeFields}</div></div>
       </details>
-      <div class="admin-lab-form-actions"><button class="button button-primary" type="submit" ${busyFor('create-lab') ? 'disabled' : ''}>${busyFor('create-lab') ? '添加中…' : '添加靶场'}</button></div>
+      <details class="admin-lab-advanced admin-lab-display-settings"${state.adminLabDisplayOpen ? ' open' : ''}>
+        <summary><strong>展示资料</strong><span>分类、难度与简介</span></summary>
+        <div class="admin-lab-advanced-body"><div class="admin-lab-form-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label></div><label>许可证<input name="license" value="${esc(draft.license)}" placeholder="未声明"></label><label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label><label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label></div>
+      </details>
+      <div class="admin-lab-form-actions">${editingLab ? '<button class="button button-quiet" type="button" data-action="cancel-custom-lab-edit">取消</button>' : ''}<button class="button button-primary" type="submit" ${busyFor('save-lab') ? 'disabled' : ''}>${busyFor('save-lab') ? '保存中…' : editingLab ? '保存修改' : '添加靶场'}</button></div>
     </form>
     <section class="admin-lab-list" aria-label="自定义靶场列表"><div class="admin-system-card-heading"><h3>已添加</h3></div>${rows}</section>
   </section>`
@@ -1086,7 +1200,7 @@ function adminLabsPanel() {
 function adminSystemPanel() {
   const overview = state.adminOverview
   const activity = overview?.activity
-  const refreshButton = `<button class="admin-system-refresh" type="button" data-action="refresh-system-data" aria-label="刷新系统数据" ${state.adminSystemLoading ? 'disabled' : ''}>${state.adminSystemLoading ? '更新中…' : '刷新'}</button>`
+  const refreshButton = '<button class="admin-system-refresh" type="button" data-action="refresh-system-data" aria-label="刷新系统数据" title="刷新系统数据" aria-busy="false"><span>刷新</span></button>'
   if (!activity) {
     const status = state.adminSystemLoading
       ? '<div class="admin-loading" role="status">正在读取系统数据…</div>'
@@ -1115,7 +1229,7 @@ function adminSystemPanel() {
   }).join('')
   const rankingMax = Math.max(1, ...activity.ranking.map(item => item.count))
   const ranking = activity.ranking.map((item, index) => `<button class="admin-lab-ranking" type="button" data-action="open-system-lab" data-id="${esc(item.labId)}" aria-label="查看 ${esc(item.title)}，${item.count} 次启动${item.running ? '，运行中' : ''}"><span class="admin-lab-ranking-order">${String(index + 1).padStart(2, '0')}</span><span class="admin-lab-ranking-main"><strong>${esc(item.title)}</strong><span class="admin-lab-ranking-track" aria-hidden="true"><span style="width:${item.count / rankingMax * 100}%"></span></span></span><span class="admin-lab-ranking-meta">${item.running ? '<i>运行中</i>' : ''}<span>${number(item.count)} <small>次</small></span></span></button>`).join('')
-  return `<section class="admin-system-view" data-admin-view="system" aria-label="系统数据" aria-busy="${state.adminSystemLoading}">
+  return `<section class="admin-system-view" data-admin-view="system" aria-label="系统数据" aria-busy="false">
     ${state.adminSystemError ? `<div class="admin-inline-error" role="alert">更新失败，当前显示上次数据：${esc(state.adminSystemError)}</div>` : ''}
     <div class="admin-system-stats">${stat('labs', '靶场总数', number(overview.labCount))}${stat('ready', '已就绪', number(overview.readyCount))}${stat('running', '运行中 / 上限', `${number(overview.runningInstanceCount)} <small>/ ${number(overview.maxInstances)}</small>`)}${stat('launches', '365天启动', number(activity.launchCount))}</div>
     <section class="admin-activity-card" aria-labelledby="admin-activity-title" style="--activity-weeks:${weeks}"><div class="admin-activity-heading"><h3 id="admin-activity-title">靶场活动</h3><span>${esc(activity.rangeStart)} — ${esc(activity.rangeEnd)}</span>${refreshButton}</div>
@@ -1130,7 +1244,7 @@ function adminSystemPanel() {
 
 function adminRecordsPanel(selection) {
   if (!state.adminPanelOpen || !state.adminRecordsPanel) return ''
-  const statusLabels = { active: '有效', expired: '已过期', used: '已使用', revoked: '已撤销' }
+  const statusLabels = { active: '可邀请', expired: '已过期', used: '已使用', revoked: '已撤销' }
   const actionLabels = {
     'account.disable': '禁用账号',
     'account.enable': '启用账号',
@@ -1159,7 +1273,7 @@ function adminRecordsPanel(selection) {
   const isAuditPanel = state.adminRecordsPanel === 'audit'
   const isUserPanel = state.adminRecordsPanel === 'users'
   const title = isInvitationPanel ? '邀请管理' : isAuditPanel ? '审计记录' : '账号管理'
-  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><p class="invitation-one-time-note">本标签页生成的有效邀请码，也可点击列表中的“有效”标识复制。</p><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
+  const invitation = state.invitation ? `<div class="invitation-card"><div class="invitation-card-heading"><span>当前邀请码</span><time datetime="${esc(state.invitation.expiresAt)}">有效至 ${esc(date(state.invitation.expiresAt))}</time></div><p class="invitation-one-time-note">本标签页生成的邀请码明文可在此查看；未过期且未使用的记录显示为“可邀请”，点击即可复制。</p><code>${esc(state.invitation.code)}</code><div class="invitation-card-actions"><button class="button button-outline" type="button" data-action="copy-invitation">复制邀请码</button><button class="button button-quiet" type="button" data-action="revoke-invitation" data-id="${esc(state.invitation.id)}">撤销</button></div></div>` : ''
   const { records, selected, selectAllControl } = selection
   const registeredUsers = isUserPanel ? records.filter(item => item.kind !== 'system') : []
   const hasRegisteredUsers = registeredUsers.length > 0
@@ -1170,7 +1284,8 @@ function adminRecordsPanel(selection) {
   const auditSelectAllControl = isAuditPanel && !state.adminLoading && !state.adminError && records.length ? selectAllControl : ''
   const auditActionLabel = actionLabels[state.adminAuditAction] ?? '全部操作'
   const auditActionFilter = `<div class="admin-record-filter"><span>操作类型</span><details class="admin-action-select" data-audit-action-filter="${esc(state.adminAuditAction)}"><summary aria-label="按操作类型筛选审计记录" aria-controls="admin-audit-action-options"><span>${esc(auditActionLabel)}</span></summary><div class="admin-action-options" id="admin-audit-action-options" role="group" aria-label="操作类型"><button class="admin-action-option" type="button" data-action="filter-audit-action" data-value="" aria-pressed="${!state.adminAuditAction}">全部操作</button>${auditActions}</div></details></div>`
-  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计记录筛选">${auditSelectAllControl}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters" ${state.adminAuditDate || state.adminAuditAction ? '' : 'disabled'}>清除筛选</button></div>` : ''
+  const clearAuditFilters = state.adminAuditDate || state.adminAuditAction ? '<button class="button button-quiet admin-clear-filters" type="button" data-action="clear-audit-filters">清除筛选</button>' : ''
+  const auditFilters = isAuditPanel ? `<div class="admin-record-filters" aria-label="审计记录筛选">${auditSelectAllControl}<label class="admin-record-filter"><span>日期</span><input type="date" data-audit-filter="date" value="${esc(state.adminAuditDate)}" aria-label="按日期筛选审计记录"></label>${auditActionFilter}${clearAuditFilters}</div>` : ''
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const systemAdmin = isUserPanel ? records.find(item => item.kind === 'system') : null
   const systemAdminRow = systemAdmin ? `<div class="admin-user-entry admin-user-system" data-id="${esc(systemAdmin.userName)}" data-kind="system"><div class="admin-user-system-profile"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(systemAdmin.userName)}">${esc(systemAdmin.userName)}</strong><span class="admin-user-role">默认管理员</span></div></div></div></div>` : ''
@@ -1187,7 +1302,7 @@ function adminRecordsPanel(selection) {
       ? `<div class="admin-inline-error" role="alert"><span>${esc(state.adminError)}</span><button class="button button-outline admin-record-retry" type="button" data-action="retry-admin-records" data-panel="${esc(state.adminRecordsPanel)}">重试</button></div>`
       : records.length
         ? isInvitationPanel
-          ? `<div class="invitation-history-head">${selectAllControl || '<span class="invitation-row-spacer" aria-hidden="true"></span>'}<span>状态</span><span>创建人 / 时间</span><span>使用账号 / 时间</span><span>有效期</span><span>操作</span></div><div class="admin-record-list invitation-history">${records.map(item => { const used = item.status === 'used'; const usedBy = used ? item.usedByUserName || '历史记录未记录使用者' : '—'; const createdAt = auditTimestamp(item.createdAt); const usedAt = item.usedAt ? auditTimestamp(item.usedAt) : null; const selection = used ? '<span class="invitation-row-spacer" aria-hidden="true"></span>' : `<label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label>`; const status = item.status === 'active' ? `<button class="invitation-status-copy" type="button" data-action="copy-invitation-record" data-id="${esc(item.id)}" aria-label="点击复制邀请码" title="点击复制邀请码">有效</button>` : `<strong>${esc(statusLabels[item.status] ?? item.status)}</strong>`; return `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}">${selection}<div class="invitation-field invitation-field-status"><span class="invitation-field-label">状态</span>${status}</div><div class="invitation-field invitation-field-created"><span class="invitation-field-label">创建人 / 时间</span><span class="invitation-field-value"><span title="${esc(item.createdBy)}">${esc(item.createdBy)}</span><time datetime="${esc(item.createdAt)}"><span>${esc(createdAt.date)}</span><span>${esc(createdAt.time)}</span></time></span></div><div class="invitation-field invitation-field-used"><span class="invitation-field-label">使用账号 / 时间</span><span class="invitation-field-value"><span class="invitation-used-by" title="${esc(usedBy)}">${esc(usedBy)}</span>${usedAt ? `<time datetime="${esc(item.usedAt)}"><span>${esc(usedAt.date)}</span><span>${esc(usedAt.time)}</span></time>` : '<span>—</span>'}</span></div><div class="invitation-field invitation-field-expiry"><span class="invitation-field-label">有效期</span><span class="invitation-field-value"><time datetime="${esc(item.expiresAt)}">${esc(date(item.expiresAt))}</time></span></div><div class="invitation-operation">${used ? '<span class="invitation-retained">已保留</span>' : `<button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button>`}</div></div>` }).join('')}</div>${pagination}`
+          ? `<div class="invitation-history-head">${selectAllControl || '<span class="invitation-row-spacer" aria-hidden="true"></span>'}<span>状态</span><span>创建人 / 时间</span><span>使用账号 / 时间</span><span>有效期</span><span>操作</span></div><div class="admin-record-list invitation-history">${records.map(item => { const used = item.status === 'used'; const usedBy = used ? item.usedByUserName || '历史记录未记录使用者' : '—'; const createdAt = auditTimestamp(item.createdAt); const usedAt = item.usedAt ? auditTimestamp(item.usedAt) : null; const selection = used ? '<span class="invitation-row-spacer" aria-hidden="true"></span>' : `<label class="admin-record-select"><input type="checkbox" data-admin-record-select="invitations" data-id="${esc(item.id)}" aria-label="选择邀请码记录" ${selected.has(item.id) ? 'checked' : ''}></label>`; const status = item.status === 'active' ? `<button class="invitation-status-copy" type="button" data-action="copy-invitation-record" data-id="${esc(item.id)}" aria-label="点击复制邀请码" title="点击复制邀请码">可邀请</button>` : `<strong>${esc(statusLabels[item.status] ?? item.status)}</strong>`; return `<div class="invitation-history-card${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}" data-status="${esc(item.status)}">${selection}<div class="invitation-field invitation-field-status"><span class="invitation-field-label">状态</span>${status}</div><div class="invitation-field invitation-field-created"><span class="invitation-field-label">创建人 / 时间</span><span class="invitation-field-value"><span title="${esc(item.createdBy)}">${esc(item.createdBy)}</span><time datetime="${esc(item.createdAt)}"><span>${esc(createdAt.date)}</span><span>${esc(createdAt.time)}</span></time></span></div><div class="invitation-field invitation-field-used"><span class="invitation-field-label">使用账号 / 时间</span><span class="invitation-field-value"><span class="invitation-used-by" title="${esc(usedBy)}">${esc(usedBy)}</span>${usedAt ? `<time datetime="${esc(item.usedAt)}"><span>${esc(usedAt.date)}</span><span>${esc(usedAt.time)}</span></time>` : '<span>—</span>'}</span></div><div class="invitation-field invitation-field-expiry"><span class="invitation-field-label">有效期</span><span class="invitation-field-value"><time datetime="${esc(item.expiresAt)}">${esc(date(item.expiresAt))}</time></span></div><div class="invitation-operation">${used ? '<span class="invitation-retained">已保留</span>' : `<button class="record-delete" type="button" data-action="delete-invitation-record" data-id="${esc(item.id)}" aria-label="删除邀请码记录" title="删除邀请码记录">${deleteRecordIcon()}</button>`}</div></div>` }).join('')}</div>${pagination}`
           : isAuditPanel
             ? `<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); const expanded = state.adminAuditExpandedId === item.id; const detailId = `audit-detail-${item.id}`; return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content" role="button" tabindex="0" data-action="toggle-audit-detail" data-audit-expand="${esc(item.id)}" data-id="${esc(item.id)}" aria-expanded="${expanded}" aria-controls="${esc(detailId)}"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div>${expanded ? `<div class="audit-entry-detail" id="${esc(detailId)}"><span class="audit-entry-detail-label">对象</span><span class="audit-entry-detail-value">${esc(item.target || '—')}</span><span class="audit-entry-detail-label">详情</span><span class="audit-entry-detail-value">${esc(item.detail || '—')}</span></div>` : ''}</div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
             : `${systemAdminRow}${hasRegisteredUsers ? `<div class="admin-user-table-head">${selectAllControl}<span>账号</span><span>注册时间</span><span>操作</span></div><div class="admin-record-list user-history">${userRows}</div>` : '<p class="admin-user-empty" role="status">暂无注册账号</p>'}${pagination}`
@@ -1239,9 +1354,7 @@ function patchOverlays() {
   const successNotice = state.successNotice ? loginNoticeCard({ id: 'login-success-notice', title: state.successNotice.title, message: state.successNotice.message, action: 'dismiss-login-success', kind: 'success' }) : ''
   patchSlot('success', successNotice, { key: state.successNotice ?? '' })
   patchSlot('toast', state.toast ? `<div class="toast ${state.toast.type === 'error' ? 'toast-error' : ''}" role="status" aria-live="polite" aria-atomic="true">${esc(state.toast.message)}</div>` : '', { key: state.toast ?? '' })
-  const adminRecordsKey = ['invitations', 'audit', 'users'].map(panel => `${state[panel].length}:${state.adminTotals[panel]}:${state.adminNextCursors[panel] ?? ''}`).join(':')
-  const adminOverviewKey = state.adminOverview?.activity ? `${state.adminOverview.activity.rangeEnd}:${state.adminOverview.activity.launchCount}:${state.adminOverview.activity.activeDays}:${state.adminOverview.runningInstanceCount}` : ''
-  patchSlot('admin', adminPanel(), { focus: true, key: state.adminPanelOpen ? `${state.adminView}:${state.invitation?.id ?? 'open'}:${state.adminLoading}:${state.adminSystemLoading}:${adminRecordsKey}:${adminOverviewKey}:${state.adminError}:${state.adminSystemError}` : '' })
+  patchSlot('admin', adminPanel(), { focus: true, key: adminPanelKey() })
   patchSlot('detail', labDetailModal(), { focus: true })
   patchSlot('confirm', state.confirm ? `<div class="dialog-backdrop workspace-dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-message"><h2 id="dialog-title">${esc(state.confirm.title)}</h2><p id="dialog-message">${esc(state.confirm.message)}</p><div class="dialog-actions"><button class="button button-quiet" type="button" data-action="cancel-confirm">取消</button><button class="button button-danger" type="button" data-action="confirm-action">${esc(state.confirm.confirmLabel ?? '继续')}</button></div></section></div>` : '', { focus: true, key: state.confirm ?? '' })
 }
@@ -1280,7 +1393,7 @@ function restoreModalFocus() {
     render()
     const content = document.querySelector('.admin-dialog-content')
     if (content) content.scrollTop = state.adminSystemScrollTop
-    void refreshAdminOverview().then(() => {
+    void refreshAdminOverview({ showLoading: false }).then(() => {
       if (!state.adminPanelOpen || state.adminView !== 'system' || state.labDetailId) return
       const content = document.querySelector('.admin-dialog-content')
       if (content) content.scrollTop = state.adminSystemScrollTop
@@ -1373,7 +1486,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'edit-custom-lab', 'copy-custom-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1382,7 +1495,7 @@ async function runAction(action, element) {
     return
   }
   if (action === 'nav') { navigate(); return }
-  if (action === 'refresh-system-data') { await refreshAdminOverview(); return }
+  if (action === 'refresh-system-data') { await refreshAdminOverview({ trigger: element }); return }
   if (action === 'retry-admin-records') {
     const panel = element.dataset.panel
     if (!['invitations', 'audit', 'users'].includes(panel)) return
@@ -1392,6 +1505,177 @@ async function runAction(action, element) {
     if (panel === 'audit') await refreshAdminAudit()
     else if (panel === 'users') await refreshAdminUsers()
     else await refreshAdminPanel()
+    return
+  }
+  if (action === 'cancel-custom-lab-edit') {
+    if (!state.adminLabEditId) return
+    resetAdminLabDraft()
+    render()
+    return
+  }
+  if (action === 'select-lab-source') {
+    const sourceType = element.dataset.source === 'archive' ? 'archive' : 'git'
+    if (sourceType === state.adminLabDraft.sourceType) return
+    state.adminLabDraft.sourceType = sourceType
+    state.adminLabDraft.sourceUrl = ''
+    state.adminLabDraft.sourceUploadUrl = ''
+    state.adminLabDraft.sourceRef = ''
+    state.adminLabDraft.archiveFileName = ''
+    state.adminLabArchiveFile = null
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
+    render()
+    return
+  }
+  if (action === 'inspect-custom-lab') {
+    const form = app.querySelector('#admin-lab-form')
+    if (!form || state.adminLabInspectionLoading) return
+    const sourceType = state.adminLabDraft.sourceType
+    const sourceUrl = String(form.querySelector('[name="sourceUrl"]')?.value ?? '').trim()
+    const sourceRef = String(form.querySelector('[name="sourceRef"]')?.value ?? state.adminLabDraft.sourceRef).trim()
+    const selectedFile = state.adminLabArchiveFile
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
+    state.adminLabInspectionLoading = true
+    render()
+    try {
+      let inspectedSource = sourceUrl
+      if (sourceType === 'archive') {
+        if (selectedFile && !state.adminLabDraft.sourceUploadUrl) {
+          if (Number(selectedFile.size) > LAB_ARCHIVE_MAX_BYTES) throw new ApiError('压缩包不能超过 256 MiB。', 413)
+          const uploaded = await uploadLabArchive(selectedFile)
+          state.adminLabDraft.sourceUploadUrl = uploaded.sourceUrl
+          inspectedSource = uploaded.sourceUrl
+        } else {
+          inspectedSource = state.adminLabDraft.sourceUploadUrl || (state.adminLabEditId ? state.labs.find(lab => lab.id === state.adminLabEditId)?.sourceUrl ?? '' : '')
+        }
+        if (!inspectedSource) throw new ApiError('请先选择 ZIP 文件。', 400)
+      } else if (!sourceUrl) throw new ApiError('请填写公开 GitHub 或 GitLab 仓库地址。', 400)
+      const currentRuntimeMode = String(app.querySelector('#admin-lab-form [name="runtimeMode"]')?.value ?? state.adminLabDraft.runtimeMode)
+      const result = await request('/api/lab-source-inspections', { method: 'POST', body: JSON.stringify({ sourceType, sourceUrl: inspectedSource, sourceRef, runtimeMode: currentRuntimeMode }) })
+      const currentForm = app.querySelector('#admin-lab-form')
+      const currentSourceUrl = String(currentForm?.querySelector('[name="sourceUrl"]')?.value ?? '').trim()
+      const currentSourceRef = String(currentForm?.querySelector('[name="sourceRef"]')?.value ?? state.adminLabDraft.sourceRef).trim()
+      if (state.adminLabDraft.sourceType === sourceType && String(currentForm?.querySelector('[name="runtimeMode"]')?.value ?? '') === currentRuntimeMode && (sourceType === 'archive' ? state.adminLabArchiveFile === selectedFile : currentSourceUrl === sourceUrl) && currentSourceRef === sourceRef) {
+        state.adminLabInspection = result
+      }
+    } catch (error) {
+      state.adminLabInspectionError = error.message
+    } finally {
+      state.adminLabInspectionLoading = false
+      render()
+    }
+    return
+  }
+  if (action === 'apply-lab-inspection') {
+    if (!Object.hasOwn(customRuntimeModes, element.dataset.mode)) return
+    const mode = customRuntimeModes[element.dataset.mode]
+    state.adminLabDraft.runtimeMode = element.dataset.mode
+    state.adminLabDraft.runtimeKind = mode.kind
+    state.adminLabDraft.runtimeProfile = mode.profile
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
+    for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath']) state.adminLabDraft[field] = ''
+    state.adminLabAdvancedOpen = true
+    render()
+    return
+  }
+  if (action === 'edit-custom-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+    if (!lab) return
+    state.adminLabEditId = lab.id
+    state.adminLabAdvancedOpen = true
+    state.adminLabArchiveFile = null
+    state.adminLabDraft = {
+      title: lab.title,
+      sourceType: lab.sourceType,
+      sourceUrl: lab.sourceType === 'git' ? lab.sourceUrl : '',
+      sourceUploadUrl: lab.sourceType === 'archive' ? lab.sourceUrl : '',
+      sourceRef: lab.sourceType === 'git' && lab.sourceRef.includes('@') ? lab.sourceRef.slice(lab.sourceRef.indexOf('@') + 1) : lab.sourceRef,
+      archiveFileName: '',
+      runtimeKind: lab.runtimeKind,
+      runtimeProfile: lab.runtimeConfig?.profile ?? 'static-php',
+      runtimeMode: customRuntimeModeFor(lab),
+      documentRoot: lab.runtimeConfig?.documentRoot ?? '',
+      entryPath: lab.runtimeConfig?.entryPath ?? '',
+      initSqlPath: lab.runtimeConfig?.initSqlPath ?? '',
+      nodeArgs: (lab.runtimeConfig?.nodeArgs ?? []).join('\n'),
+      javaArgs: (lab.runtimeConfig?.javaArgs ?? []).join('\n'),
+      pythonArgs: (lab.runtimeConfig?.pythonArgs ?? []).join('\n'),
+      portArg: lab.runtimeConfig?.portArg ?? '',
+      settingsPath: lab.runtimeConfig?.settingsPath ?? '',
+      category: lab.category,
+      difficulty: lab.difficulty,
+      license: lab.license,
+      summary: lab.summary,
+      tags: lab.tags.join(', '),
+    }
+    state.adminLabAdvancedOpen = true
+    state.adminLabDisplayOpen = false
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
+    render()
+    const titleInput = app.querySelector('#admin-lab-form [name="title"]')
+    titleInput?.focus()
+    titleInput?.scrollIntoView({ block: 'nearest' })
+    return
+  }
+  if (action === 'copy-custom-lab-config') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+    if (!lab) return
+    state.adminLabEditId = null
+    state.adminLabArchiveFile = null
+    state.adminLabDraft = {
+      title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '',
+      runtimeMode: customRuntimeModeFor(lab), runtimeKind: lab.runtimeKind, runtimeProfile: lab.runtimeConfig?.profile ?? 'static-php',
+      documentRoot: lab.runtimeConfig?.documentRoot ?? '', entryPath: lab.runtimeConfig?.entryPath ?? '', initSqlPath: lab.runtimeConfig?.initSqlPath ?? '',
+      nodeArgs: (lab.runtimeConfig?.nodeArgs ?? []).join('\n'), javaArgs: (lab.runtimeConfig?.javaArgs ?? []).join('\n'), pythonArgs: (lab.runtimeConfig?.pythonArgs ?? []).join('\n'),
+      portArg: lab.runtimeConfig?.portArg ?? '', settingsPath: lab.runtimeConfig?.settingsPath ?? '',
+      category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
+    }
+    state.adminLabAdvancedOpen = true
+    state.adminLabDisplayOpen = false
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
+    render()
+    app.querySelector('#admin-lab-form [name="title"]')?.focus()
+    return
+  }
+  if (action === 'retry-custom-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin && item.status === 'error')
+    if (!lab || !beginBusy(action, lab.id)) return
+    try {
+      const result = await request(`/api/labs/${encodeURIComponent(lab.id)}/install`, { method: 'POST' })
+      if (!result.started && result.job?.status === 'error') throw new ApiError(result.job.error ?? result.job.message ?? '靶场重试未能开始。', 409)
+      await refresh()
+      setToast(result.started ? '已重新开始准备靶场。' : '靶场准备任务已提交。')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, lab.id); render() }
+    return
+  }
+  if (action === 'toggle-custom-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+    if (!lab) return
+    const disabled = element.dataset.disabled === 'true'
+    if (disabled) {
+      openConfirm('停用靶场', `停用“${lab.title}”后，它会从主页面隐藏，且无法启动；你可以随时恢复。`, { action: 'apply-custom-lab-status', id: lab.id, disabled: true }, '停用靶场')
+      return
+    }
+    if (!beginBusy(action, lab.id)) return
+    try {
+      await request(`/api/labs/${encodeURIComponent(lab.id)}/status`, { method: 'PATCH', body: JSON.stringify({ disabled: false }) })
+      await refresh()
+      setToast('靶场已恢复。')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, lab.id); render() }
+    return
+  }
+  if (action === 'apply-custom-lab-status') {
+    const labId = element.dataset.id
+    if (!labId || !beginBusy(action, labId)) return
+    try {
+      await request(`/api/labs/${encodeURIComponent(labId)}/status`, { method: 'PATCH', body: JSON.stringify({ disabled: true }) })
+      await refresh()
+      setToast('靶场已停用。')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, labId); render() }
     return
   }
   if (action === 'open-audit-for-date') {
@@ -1418,7 +1702,7 @@ async function runAction(action, element) {
   }
   if (action === 'return-to-system-data') {
     returnToSystemData()
-    void refreshAdminOverview()
+    void refreshAdminOverview({ showLoading: false })
     return
   }
   if (action === 'clear-audit-filters') {
@@ -1813,7 +2097,7 @@ for (const type of ['mouseover', 'focusin']) {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearSystemPolling()
-  else void refreshAdminOverview()
+  else void refreshAdminOverview({ showLoading: false })
 })
 
 document.addEventListener('pointerdown', event => {
@@ -1832,7 +2116,8 @@ app.addEventListener('toggle', event => {
   const details = event.target
   if (!(details instanceof HTMLDetailsElement)) return
   if (details.matches('.admin-lab-advanced')) {
-    state.adminLabAdvancedOpen = details.open
+    if (details.classList.contains('admin-lab-display-settings')) state.adminLabDisplayOpen = details.open
+    else state.adminLabAdvancedOpen = details.open
     return
   }
   if (!details.matches('.admin-action-select')) return
@@ -1847,29 +2132,23 @@ app.addEventListener('change', event => {
     const file = input.files?.[0] ?? null
     state.adminLabArchiveFile = file
     state.adminLabDraft.archiveFileName = file?.name ?? ''
+    state.adminLabDraft.sourceUploadUrl = ''
+    state.adminLabInspection = null
+    state.adminLabInspectionError = ''
     const hint = input.form.querySelector('[data-archive-file-name]')
     if (hint) hint.textContent = file ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB` : '选择 ZIP 文件，最大 256 MiB'
     return
   }
   if (input.form?.id === 'admin-lab-form' && Object.hasOwn(state.adminLabDraft, input.name)) {
-    state.adminLabAdvancedOpen = Boolean(input.form.querySelector('.admin-lab-advanced')?.open)
+    state.adminLabAdvancedOpen = Boolean(input.form.querySelector('.admin-lab-advanced:not(.admin-lab-display-settings)')?.open)
     state.adminLabDraft[input.name] = input.value
-    if (input.name === 'runtimeKind') {
-      state.adminLabDraft.runtimeProfile = ({ 'native-php': 'static-php', 'native-node': 'prebuilt-node', 'native-java': 'webgoat', 'native-python': 'pygoat' })[input.value] ?? 'static-php'
-      state.adminLabDraft.documentRoot = ''
-      state.adminLabDraft.entryPath = ''
-      state.adminLabDraft.initSqlPath = ''
-      state.adminLabDraft.nodeArgs = ''
-      state.adminLabDraft.javaArgs = ''
-      state.adminLabDraft.pythonArgs = ''
-      state.adminLabDraft.portArg = ''
-      state.adminLabDraft.settingsPath = ''
-      render()
-    }
-    if (input.name === 'runtimeProfile') render()
-    if (input.name === 'sourceType') {
-      state.adminLabArchiveFile = null
-      state.adminLabDraft.archiveFileName = ''
+    if (input.name === 'runtimeMode') {
+      const mode = Object.hasOwn(customRuntimeModes, input.value) ? customRuntimeModes[input.value] : customRuntimeModes['php-static']
+      state.adminLabDraft.runtimeKind = mode.kind
+      state.adminLabDraft.runtimeProfile = mode.profile
+      for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath']) state.adminLabDraft[field] = ''
+      state.adminLabInspection = null
+      state.adminLabInspectionError = ''
       render()
     }
     return
@@ -1907,9 +2186,14 @@ app.addEventListener('submit', async event => {
   event.preventDefault()
   const form = event.target
   if (form.id === 'admin-lab-form') {
-    if (!state.session || state.session.role !== 'admin' || busyFor('create-lab')) return
+    const editing = Boolean(state.adminLabEditId)
+    const editId = state.adminLabEditId ?? ''
+    const operation = editing ? 'save-lab' : 'create-lab'
+    if (!state.session || state.session.role !== 'admin' || busyFor(operation)) return
     const values = Object.fromEntries(new FormData(form).entries())
-    const sourceType = String(values.sourceType ?? 'git')
+    const sourceType = state.adminLabDraft.sourceType
+    const modeKey = String(values.runtimeMode ?? state.adminLabDraft.runtimeMode)
+    const mode = Object.hasOwn(customRuntimeModes, modeKey) ? customRuntimeModes[modeKey] : customRuntimeModes['php-static']
     const archiveValue = values.archiveFile
     const archiveFile = archiveValue && typeof archiveValue === 'object' && Number(archiveValue.size) > 0 ? archiveValue : state.adminLabArchiveFile
     const profile = String(values.runtimeProfile ?? '').trim() || ({ 'native-php': 'static-php', 'native-node': 'prebuilt-node', 'native-java': 'webgoat', 'native-python': 'pygoat' })[String(values.runtimeKind ?? 'native-php')] || 'static-php'
@@ -1944,9 +2228,10 @@ app.addEventListener('submit', async event => {
     const payload = {
       title: String(values.title ?? '').trim(),
       sourceType,
-      sourceUrl: String(values.sourceUrl ?? '').trim(),
-      sourceRef: String(values.sourceRef ?? '').trim(),
-      runtimeKind: String(values.runtimeKind ?? 'native-php'),
+      sourceUrl: sourceType === 'git' ? String(values.sourceUrl ?? '').trim() : '',
+      sourceRef: sourceType === 'git' ? String(values.sourceRef ?? '').trim() : '',
+      runtimeMode: modeKey,
+      runtimeKind: mode.kind,
       runtimeProfile: profile,
       profile,
       runtimeConfig,
@@ -1964,7 +2249,7 @@ app.addEventListener('submit', async event => {
       setToast('请填写靶场来源地址。', 'error')
       return
     }
-    if (sourceType === 'archive' && (!archiveFile || Number(archiveFile.size) === 0)) {
+    if (sourceType === 'archive' && !archiveFile && !state.adminLabDraft.sourceUploadUrl && (!editing || currentLab?.sourceType !== 'archive')) {
       setToast('请选择有效的 ZIP 压缩包。', 'error')
       return
     }
@@ -1973,13 +2258,14 @@ app.addEventListener('submit', async event => {
       return
     }
     state.adminLabDraft = { ...state.adminLabDraft, ...payload, tags: payload.tags.join(', ') }
-    beginBusy('create-lab')
+    beginBusy(operation, state.adminLabEditId ?? '')
     try {
-      if (sourceType === 'archive') {
+      if (sourceType === 'archive' && archiveFile && !state.adminLabDraft.sourceUploadUrl) {
         const uploaded = await uploadLabArchive(archiveFile)
-        payload.sourceUrl = uploaded.sourceUrl
+        state.adminLabDraft.sourceUploadUrl = uploaded.sourceUrl
       }
-      await request('/api/labs', { method: 'POST', body: JSON.stringify(payload), timeout: START_REQUEST_TIMEOUT_MS })
+      if (sourceType === 'archive') payload.sourceUrl = state.adminLabDraft.sourceUploadUrl || currentLab?.sourceUrl || ''
+      await request(editing ? `/api/labs/${encodeURIComponent(editId)}` : '/api/labs', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload), timeout: START_REQUEST_TIMEOUT_MS })
       await refresh()
       resetAdminLabDraft()
       state.adminView = 'labs'
@@ -2067,6 +2353,10 @@ app.addEventListener('input', event => {
   const input = event.target
   if (input.form?.id === 'admin-lab-form' && Object.hasOwn(state.adminLabDraft, input.name)) {
     state.adminLabDraft[input.name] = input.value
+    if (input.name === 'sourceUrl' || input.name === 'sourceRef') {
+      state.adminLabInspection = null
+      state.adminLabInspectionError = ''
+    }
     return
   }
   if (!input.form || input.form.id !== 'login-form') return
@@ -2120,7 +2410,7 @@ document.addEventListener('keydown', event => {
       return
     }
     if (state.confirm) { state.confirm = null; render(); restoreConfirmFocus(); return }
-    else if (state.adminRecordsPanel === 'audit' && state.adminAuditReturnToSystem) { returnToSystemData(); void refreshAdminOverview(); return }
+    else if (state.adminRecordsPanel === 'audit' && state.adminAuditReturnToSystem) { returnToSystemData(); void refreshAdminOverview({ showLoading: false }); return }
     else if (state.adminRecordsPanel) { state.adminRecordsPanel = null; state.adminView = 'profile'; render(); restoreAdminRecordsFocus(); return }
     else if (state.labDetailId) state.labDetailId = null
     else if (state.adminPanelOpen) { state.adminPanelOpen = false; state.adminView = 'profile'; render(); restoreModalFocus(); return }
