@@ -96,7 +96,7 @@ XVWA 使用官方固定 commit `fb30fa517d288e618b521d252f61107ef6a24797`。它�
 - 弹窗支持 `Escape`、焦点回收、Tab 循环和 `focus-visible`。
 - 封面使用 `loading="lazy"` 与 `decoding="async"`。
 - 位移和显隐动画以 `opacity`、`transform` 为主；左侧品牌原画不承担交互，颜色、阴影和封面滤镜只作短过渡，全部响应 `prefers-reduced-motion`。
-- 不新增运行时依赖，不把资源、数据库、日志或二进制写进 Git。
+- 不新增运行时依赖；不把运行时生成的数据、数据库、日志、缓存及可重建运行时/构建二进制写进 Git。固定输入资源按 [src/assets/README.md](src/assets/README.md) 登记。
 
 ## 验收场景
 

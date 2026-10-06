@@ -2106,6 +2106,7 @@ export class NativeProcessProvider implements LabProvider {
     settings = settings
       .replace(/^import django_heroku\s*$/m, '')
       .replace(/^django_heroku\.settings\(locals\(\)\)\s*$/m, '')
+      .replace(/^([ \t]*)'django\.contrib\.auth\.middleware\.AuthenticationMiddleware',$/m, "$&\n$1'allauth.account.middleware.AccountMiddleware',")
     const trustedOrigin = new URL(input.publicOrigin).origin
     settings += `\nALLOWED_HOSTS = ['*']\nCSRF_TRUSTED_ORIGINS = [${JSON.stringify(trustedOrigin)}]\n`
     await writeFile(settingsPath, settings, 'utf8')

@@ -16,6 +16,7 @@
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：十个内置靶场的版本、Provider 与自动安装策略（九个常规靶场及 OA Beta）。
 - `assets/labs/oa-vuln-labs/1.0.0-beta/`：随仓库发布的 OA `source.zip` 与 `docker.zip` 靶场资源。
+- `assets/`：固定输入资源；用途、版本、校验和生成方式见 [`assets/README.md`](assets/README.md)。
 - `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
 - `paths.ts`：统一生成 SQLite、靶场资源、下载缓存、运行实例和导入任务路径。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
@@ -70,7 +71,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 邀请码通过 `POST /api/auth/invitations` 创建，有效期 24 小时、单次使用；明文只在创建响应中返回，数据库只保存 SHA-256 哈希。注册与邀请码消费在同一 SQLite 事务中完成，注册成功后保存使用者账号快照，因此之后删除注册账号仍能追溯邀请码。旧记录没有使用者快照时，界面会明确标记为“历史记录未记录使用者”，不会猜测回填。注册账号当前统一为管理员；默认管理员 `vulnlab` 是独立配置账号，不伪装成注册账号。
 
-服务运行后，`npm run smoke:runtimes` 会依次验证九个常规内置靶场；OA 有独立的 `npm run smoke:oa` 与 `npm run smoke:oa:docker` 回归入口。
+服务运行后，`npm run smoke:runtimes` 会依次验证九个常规内置靶场；OA 有独立的 `npm run smoke:oa`、`npm run smoke:oa:docker` 与 `npm run smoke:oa:mysql` 回归入口。MariaDB smoke 需要预先准备项目私有 MariaDB 运行时，不会自动下载运行时。
 
 `/api/settings` 保存的监听地址和端口在下次服务启动时生效；监听 `0.0.0.0` 或 `::` 时必须同时设置可信的 `VULNLAB_PUBLIC_URL`，运行时入口不会使用请求头 `Host` 推导公共地址。
 
@@ -80,7 +81,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 运行时目录结构为 `toolchains/`、`manifests/`、`.staging/`、`php/` 和 `mysql/`。原始发行包只在准备阶段进入项目内 `.staging/`，校验和安装完成后清理，不作为运行时持久目录。PHP 使用项目生成的 `php.ini`；Windows 会启用发行包内存在的 `mysqli`、`pdo_mysql`、`mbstring`、`gd`、`curl`、`openssl` 扩展。MariaDB 只绑定 `127.0.0.1`，默认端口 `7330`，数据、日志、PID 和随机管理凭据均留在项目数据目录，服务关闭时回收进程。
 
-运行时二进制不提交进 Git。已下载的项目包优先级高于系统 `PATH`；显式环境变量和外部 MySQL 连接仍可覆盖。Juice Shop 使用项目 Node.js，PyGoat 直接用项目 Python 创建 `venv`，WebGoat 直接用项目 JRE 启动。用户点击“启动环境”后，服务自动完成依赖检查；失败原因通过启动操作提示返回。
+运行时二进制不提交进 Git；固定输入资源按 [`assets/README.md`](assets/README.md) 登记。`data/`、`dist/`、`node_modules/` 与 `bundle/` 分别用于运行状态、构建输出、依赖和可选离线包，不提交进 Git。已下载的项目包优先级高于系统 `PATH`；显式环境变量和外部 MySQL 连接仍可覆盖。Juice Shop 使用项目 Node.js，PyGoat 直接用项目 Python 创建 `venv`，WebGoat 直接用项目 JRE 启动。用户点击“启动环境”后，服务自动完成依赖检查；失败原因通过启动操作提示返回。
 
 ## 外部 MySQL 配置
 

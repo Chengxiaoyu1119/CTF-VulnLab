@@ -69,6 +69,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | [开发与运行手册](src/README.md) | 开发、运行时与验证 |
 | [设计说明](DESIGN.md) | 界面与响应式规则 |
 | [封面素材来源](src/public/covers/README.md) | 靶场图标及来源 |
+| [脚本目录索引](script/README.md) | 自动化测试、smoke 与工具入口 |
 
 <details>
   <summary><strong>开发验证</strong></summary>

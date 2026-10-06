@@ -2,15 +2,13 @@
 # PyYAML 6 保留源码显式使用 yaml.Loader 的不安全反序列化练习。
 argon2-cffi==21.3.0
 crispy-bootstrap4==2022.1
-Django==4.2
-# PyPI 仅发布 sdist；离线 wheelhouse 中的 wheel 由此哈希校验源码构建。
-# sdist SHA-256: e380661ceafe55734c40102819ae720403027036f28e9f9827f0faeddc24ed5f
-django-allauth==0.52.0
+Django==5.2.17
+django-allauth==65.19.7
 django-crispy-forms==2.3
-Pillow==9.4.0
-PyJWT==2.4.0
+Pillow==12.3.0
+PyJWT[crypto]==2.15.1
 PyYAML==6.0.2
 python3-openid==3.2.0
 pytz==2020.1
-requests==2.28.2
+requests==2.34.2
 whitenoise==6.2.0

@@ -434,7 +434,7 @@ export const createOaApi = async (options: OaApiOptions): Promise<FastifyInstanc
     const item = (await rows(`SELECT t.*,c.real_name AS creator,a.real_name AS assignee FROM tickets t LEFT JOIN users c ON c.id=t.creator_id LEFT JOIN users a ON a.id=t.assignee_id WHERE t.id=?`, [idParam(request)]))[0]
     if (!item) return fail('工单不存在。')
     item.comments = await rows('SELECT c.*,u.real_name,u.avatar FROM ticket_comments c LEFT JOIN users u ON u.id=c.user_id WHERE c.ticket_id=? ORDER BY c.id', [idParam(request)])
-    return ok(item)
+    return ok({ ...item, ticket: item })
   }
   app.get('/api/ticket/:id', getTicket)
   app.get('/api/ticket/detail/:id', getTicket)
