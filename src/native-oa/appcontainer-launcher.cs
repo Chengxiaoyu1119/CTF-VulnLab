@@ -277,6 +277,28 @@ internal static class AppContainerLauncher
         Directory.SetAccessControl(path, security);
     }
 
+    private static void GrantDirectoryTraversal(string path, SecurityIdentifier sid)
+    {
+        var directory = new DirectoryInfo(path);
+        var security = directory.GetAccessControl(AccessControlSections.Access);
+        security.AddAccessRule(new FileSystemAccessRule(
+            sid,
+            FileSystemRights.Traverse | FileSystemRights.ReadAttributes | FileSystemRights.ReadExtendedAttributes | FileSystemRights.ReadPermissions | FileSystemRights.Synchronize,
+            InheritanceFlags.None,
+            PropagationFlags.None,
+            AccessControlType.Allow));
+        directory.SetAccessControl(security);
+    }
+
+    private static string[] GetVolumeRoots(params string[] paths)
+    {
+        return paths
+            .Select(path => Path.GetPathRoot(path))
+            .Where(root => !String.IsNullOrEmpty(root))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static void RevokeTree(string path, SecurityIdentifier sid)
     {
         if (!File.Exists(path) && !Directory.Exists(path)) return;
@@ -295,15 +317,7 @@ internal static class AppContainerLauncher
 
     private static void GrantRuntimeDirectory(string path, SecurityIdentifier sid)
     {
-        var directory = new DirectoryInfo(path);
-        var security = directory.GetAccessControl(AccessControlSections.Access);
-        security.AddAccessRule(new FileSystemAccessRule(
-            sid,
-            FileSystemRights.Traverse | FileSystemRights.ReadAttributes | FileSystemRights.ReadExtendedAttributes | FileSystemRights.ReadPermissions | FileSystemRights.Synchronize,
-            InheritanceFlags.None,
-            PropagationFlags.None,
-            AccessControlType.Allow));
-        directory.SetAccessControl(security);
+        GrantDirectoryTraversal(path, sid);
         foreach (string file in Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly)) GrantTree(file, sid, FileSystemRights.ReadAndExecute);
     }
 
@@ -356,6 +370,9 @@ internal static class AppContainerLauncher
             string sidValue = SidText(sid);
             var securitySid = new SecurityIdentifier(sidValue);
             Console.Error.WriteLine("OA_SANDBOX:acl:start");
+            foreach (string volumeRoot in GetVolumeRoots(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot))
+                GrantDirectoryTraversal(volumeRoot, securitySid);
+            Console.Error.WriteLine("OA_SANDBOX:acl:volume-roots-complete");
             Directory.CreateDirectory(Path.Combine(runtimeRoot, ".tmp"));
             GrantTree(runtimeRoot, securitySid, FileSystemRights.ReadAndExecute);
             Console.Error.WriteLine("OA_SANDBOX:acl:runtime-complete");
@@ -437,6 +454,8 @@ internal static class AppContainerLauncher
             RevokeTree(runtimeRoot, securitySid);
             RevokeTree(uploadRoot, securitySid);
             RevokeTree(Path.Combine(runtimeRoot, ".tmp"), securitySid);
+            foreach (string volumeRoot in GetVolumeRoots(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot))
+                RevokeDirectory(volumeRoot, securitySid);
             RevokeRuntimeDirectory(Path.GetDirectoryName(nodePath), securitySid);
             RevokeTree(Path.GetDirectoryName(entryPath), securitySid);
             RevokeTree(moduleRoot, securitySid);
