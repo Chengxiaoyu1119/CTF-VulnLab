@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -290,13 +291,22 @@ internal static class AppContainerLauncher
         directory.SetAccessControl(security);
     }
 
-    private static string[] GetVolumeRoots(params string[] paths)
+    private static string[] GetTraversalDirectories(params string[] paths)
     {
-        return paths
-            .Select(path => Path.GetPathRoot(path))
-            .Where(root => !String.IsNullOrEmpty(root))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string path in paths)
+        {
+            string current = Directory.Exists(path) ? Path.GetFullPath(path) : Path.GetDirectoryName(Path.GetFullPath(path));
+            while (!String.IsNullOrEmpty(current))
+            {
+                current = Path.GetFullPath(current);
+                if (!directories.Add(current)) break;
+                DirectoryInfo parent = Directory.GetParent(current);
+                if (parent == null) break;
+                current = parent.FullName;
+            }
+        }
+        return directories.OrderBy(directory => directory.Length).ToArray();
     }
 
     private static void RevokeTree(string path, SecurityIdentifier sid)
@@ -370,9 +380,9 @@ internal static class AppContainerLauncher
             string sidValue = SidText(sid);
             var securitySid = new SecurityIdentifier(sidValue);
             Console.Error.WriteLine("OA_SANDBOX:acl:start");
-            foreach (string volumeRoot in GetVolumeRoots(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot))
-                GrantDirectoryTraversal(volumeRoot, securitySid);
-            Console.Error.WriteLine("OA_SANDBOX:acl:volume-roots-complete");
+            foreach (string directory in GetTraversalDirectories(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot))
+                GrantDirectoryTraversal(directory, securitySid);
+            Console.Error.WriteLine("OA_SANDBOX:acl:path-complete");
             Directory.CreateDirectory(Path.Combine(runtimeRoot, ".tmp"));
             GrantTree(runtimeRoot, securitySid, FileSystemRights.ReadAndExecute);
             Console.Error.WriteLine("OA_SANDBOX:acl:runtime-complete");
@@ -454,8 +464,8 @@ internal static class AppContainerLauncher
             RevokeTree(runtimeRoot, securitySid);
             RevokeTree(uploadRoot, securitySid);
             RevokeTree(Path.Combine(runtimeRoot, ".tmp"), securitySid);
-            foreach (string volumeRoot in GetVolumeRoots(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot))
-                RevokeDirectory(volumeRoot, securitySid);
+            foreach (string directory in GetTraversalDirectories(runtimeRoot, uploadRoot, nodePath, entryPath, moduleRoot).OrderByDescending(path => path.Length))
+                RevokeDirectory(directory, securitySid);
             RevokeRuntimeDirectory(Path.GetDirectoryName(nodePath), securitySid);
             RevokeTree(Path.GetDirectoryName(entryPath), securitySid);
             RevokeTree(moduleRoot, securitySid);
