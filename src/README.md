@@ -8,13 +8,14 @@
 - `db.ts`：SQLite schema、内置靶场、安装任务、实例、设置与审计。
 - `builtin-assets.ts`：Juice Shop、WebGoat 官方发行包下载、校验和安全解包。
 - `importer.ts`：GitHub / GitLab 固定版本下载、归档哈希、路径检查和清单生成。
-- `providers.ts`：`native-php`、`native-node`、`native-java`、`native-python` 生命周期；XVWA 与其他 PHP 靶场共用 `native-php`。
+- `providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 支持本地 AppContainer 与 Docker Compose 两种 Provider；XVWA 与其他 PHP 靶场共用 `native-php`。
 - `runtime-prep.ts`：PyGoat 私有 Python 环境与依赖准备。
 - `runtime-status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
 - `runtime-toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
-- `seed.ts`：九个固定靶场的版本、Provider 与自动安装策略。
+- `seed.ts`：十个内置靶场的版本、Provider 与自动安装策略（九个常规靶场及 OA Beta）。
+- `assets/labs/oa-vuln-labs/1.0.0-beta/`：随仓库发布的 OA `source.zip` 与 `docker.zip` 靶场资源。
 - `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
 - `paths.ts`：统一生成 SQLite、靶场资源、下载缓存、运行实例和导入任务路径。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
@@ -33,7 +34,7 @@ npm run dev
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，先把原始包写入项目内 `data/imports/<job>/staging` 或 `data/runtime/.staging`，完成体积、路径和固定 SHA-256 校验后才写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后删除暂存目录；服务启动时还会清理超过 24 小时的项目内遗留暂存目录。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
+`seed.ts` 保存十个内置靶场，其中九个常规靶场使用固定版本，OA Beta 使用仓库内的 `source.zip` / `docker.zip`。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备常规靶场资源，完成体积、路径和固定 SHA-256 校验后再安装。设置 `VULNLAB_OFFLINE=1` 后只使用 bundle 和已有缓存；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
 
 离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
@@ -50,6 +51,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 - Java：为 WebGoat 与 WebWolf 分配两个端口，并把数据目录限制在实例副本。
 - Python：复制源码、复用项目私有解释器、迁移 SQLite 后启动 Django。
 - XVWA：启动时创建独立 MySQL 资源，修正上游初始化脚本后通过 PHP 内置服务器提供 `/xvwa/`。
+- OA-Vuln-Labs：初始靶场账号为 `admin / ZSD@admin2025!`，无需先找漏洞获得账号；本地模式依赖 Windows AppContainer，Docker 模式依赖可用的本机 Docker Engine。
 
 进程状态写入运行目录；正常停止、过期回收、服务关闭和服务重启都执行资源回收。点击“启动环境”时，实例 API 会先准备资源和项目运行时，再调用 Provider；确实无法满足的依赖以 `RUNTIME_DEPENDENCY_MISSING` 返回。
 
@@ -68,7 +70,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 邀请码通过 `POST /api/auth/invitations` 创建，有效期 24 小时、单次使用；明文只在创建响应中返回，数据库只保存 SHA-256 哈希。注册与邀请码消费在同一 SQLite 事务中完成，注册成功后保存使用者账号快照，因此之后删除注册账号仍能追溯邀请码。旧记录没有使用者快照时，界面会明确标记为“历史记录未记录使用者”，不会猜测回填。注册账号当前统一为管理员；默认管理员 `vulnlab` 是独立配置账号，不伪装成注册账号。
 
-服务运行后，`npm run smoke:runtimes` 会依次启动九个已安装的内置靶场，检查各自入口和 WebGoat 的 WebWolf，再验证重复启动、续期、停止、入口失效和重新启动。
+服务运行后，`npm run smoke:runtimes` 会依次验证九个常规内置靶场；OA 有独立的 `npm run smoke:oa` 与 `npm run smoke:oa:docker` 回归入口。
 
 `/api/settings` 保存的监听地址和端口在下次服务启动时生效；监听 `0.0.0.0` 或 `::` 时必须同时设置可信的 `VULNLAB_PUBLIC_URL`，运行时入口不会使用请求头 `Host` 推导公共地址。
 
