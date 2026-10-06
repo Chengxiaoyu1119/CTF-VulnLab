@@ -13,11 +13,11 @@ if (process.platform !== 'win32') {
 const appDir = resolve(import.meta.dirname, '..', 'src')
 const dataRoot = join(appDir, 'data')
 const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
-const moduleRoot = await realpath(join(appDir, 'node_modules'))
 const testRoot = join(dataRoot, `.oa-appcontainer-test-${randomUUID()}`)
 await mkdir(testRoot, { recursive: true })
 const tempRoot = await mkdtemp(join(testRoot, 'sandbox-'))
 const runtimeRoot = join(tempRoot, 'runtime')
+const moduleRoot = join(tempRoot, 'modules')
 const nodeBinary = join(runtimeRoot, 'node.exe')
 const uploadRoot = join(runtimeRoot, 'uploads')
 const scriptPath = join(runtimeRoot, 'probe.mjs')
@@ -50,6 +50,7 @@ try {
     console.log('VulnLab OA AppContainer test skipped: Windows profile API returned 0x800706D9; no system service was changed.')
   } else {
   await mkdir(uploadRoot, { recursive: true })
+  await mkdir(moduleRoot, { recursive: true })
   await copyFile(await realpath(process.execPath), nodeBinary)
   await writeFile(outsidePath, 'host-secret')
   await writeFile(scriptPath, `
