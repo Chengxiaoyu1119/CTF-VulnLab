@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -12,14 +12,13 @@ if (process.platform !== 'win32') {
 
 const appDir = resolve(import.meta.dirname, '..', 'src')
 const dataRoot = join(appDir, 'data')
-const projectNodeRoot = await realpath(join(dataRoot, 'runtime', 'toolchains', 'node'))
-const nodeBinary = await realpath(join(projectNodeRoot, '22.23.1', 'win32-x64', 'node.exe'))
 const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
 const moduleRoot = await realpath(join(appDir, 'node_modules'))
 const testRoot = join(dataRoot, `.oa-appcontainer-test-${randomUUID()}`)
 await mkdir(testRoot, { recursive: true })
 const tempRoot = await mkdtemp(join(testRoot, 'sandbox-'))
 const runtimeRoot = join(tempRoot, 'runtime')
+const nodeBinary = join(runtimeRoot, 'node.exe')
 const uploadRoot = join(runtimeRoot, 'uploads')
 const scriptPath = join(runtimeRoot, 'probe.mjs')
 const outsidePath = join(tempRoot, 'outside-secret.txt')
@@ -51,6 +50,7 @@ try {
     console.log('VulnLab OA AppContainer test skipped: Windows profile API returned 0x800706D9; no system service was changed.')
   } else {
   await mkdir(uploadRoot, { recursive: true })
+  await copyFile(await realpath(process.execPath), nodeBinary)
   await writeFile(outsidePath, 'host-secret')
   await writeFile(scriptPath, `
     import { readFileSync, writeFileSync } from 'node:fs';
