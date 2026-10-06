@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 
-export const OA_LAUNCHER_SHA256 = 'eb70db9059615455f0b9eb15f5208a0c0a2156203894ae176d9ff91a31678453'
+export const OA_LAUNCHER_SHA256 = 'e922e049364166286890c3e49e9438cba267b3ef69878e50ae710ba4ade4a9b1'
 
 export const probeOaAppContainer = (launcherPath: string) => new Promise<{ available: boolean; detail: string }>(resolveProbe => {
   const profile = `VulnLab.OA.Probe.${randomUUID()}`

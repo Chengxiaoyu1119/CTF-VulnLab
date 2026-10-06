@@ -127,6 +127,8 @@ internal static class AppContainerLauncher
     private static extern bool CreateProcessW(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags, byte[] environment, string currentDirectory, ref StartupInfoEx startupInfo, out ProcessInformation processInformation);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GetStdHandle(int handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetFullPathNameW", SetLastError = true)]
+    private static extern uint GetFullPathName(string path, uint bufferLength, StringBuilder buffer, IntPtr filePart);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -297,10 +299,15 @@ internal static class AppContainerLauncher
     private static byte[] RestrictedEnvironment()
     {
         var allowed = new System.Collections.Generic.SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string currentDirectory = Environment.CurrentDirectory;
-        string currentDrive = Path.GetPathRoot(currentDirectory);
-        if (!String.IsNullOrEmpty(currentDrive) && currentDrive.Length >= 2 && currentDrive[1] == ':')
-            allowed["=" + currentDrive.Substring(0, 2)] = currentDirectory;
+        string[] currentDirectories = { Environment.CurrentDirectory, Environment.SystemDirectory };
+        foreach (string directory in currentDirectories)
+        {
+            string drive = Path.GetPathRoot(directory);
+            if (String.IsNullOrEmpty(drive) || drive.Length < 2 || drive[1] != ':') continue;
+            var path = new StringBuilder(32768);
+            uint length = GetFullPathName(drive.Substring(0, 2), (uint)path.Capacity, path, IntPtr.Zero);
+            if (length > 0 && length < path.Capacity) allowed["=" + drive.Substring(0, 2)] = path.ToString();
+        }
         string[] names = { "SystemRoot", "WINDIR", "TEMP", "TMP", "NODE_ENV", "VULNLAB_OA_FRONTEND_ROOT", "VULNLAB_OA_INVITE_CODE", "VULNLAB_OA_JWT_SECRET", "VULNLAB_OA_RUNTIME_ROOT", "VULNLAB_OA_UPLOAD_ROOT" };
         foreach (string name in names)
         {
