@@ -6,17 +6,14 @@
   <p><strong>网络攻防靶场管理系统</strong></p>
   <p>Windows x64 · 10 个常规靶场 · OA-Vuln-Labs Beta · 独立实例</p>
 
-  <img src="https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
-  <img src="https://img.shields.io/badge/NODE.JS-22%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 22+">
-  <img src="https://img.shields.io/badge/LABS-10%20%2B%201%20BETA-ff7f2a?style=for-the-badge&logo=owasp&logoColor=white" alt="10 个常规靶场与 1 个 OA Beta">
-  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/CTF-VulnLab/vulnlab-ci.yml?style=for-the-badge&logo=githubactions&label=CI" alt="VulnLab CI"></a>
+  <img src="https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows x64">
+  <img src="https://img.shields.io/badge/NODE.JS-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 22+">
+  <img src="https://img.shields.io/badge/LABS-10%20%2B%201%20BETA-ff7f2a?style=flat-square&logo=owasp&logoColor=white" alt="10 个常规靶场与 1 个 OA Beta">
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/CTF-VulnLab/vulnlab-ci.yml?style=flat-square&logo=githubactions&label=CI" alt="VulnLab CI"></a>
 </div>
 
 <p align="center">
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#支持的靶场">支持的靶场</a> ·
-  <a href="#启动流程">启动流程</a> ·
-  <a href="#文档">文档</a>
+  <img src=".github/assets/vulnlab-workspace-showcase.png" alt="VulnLab 攻防控制台与靶场工作台" width="100%">
 </p>
 
 ## 快速开始
@@ -35,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | --- | --- | --- |
 | [DVWA](https://github.com/digininja/DVWA) | 常见 Web 漏洞 | `admin / password` |
 | [Pikachu](https://github.com/zhuifengshaonianhanlu/pikachu) | 中文漏洞练习 | `admin / 123456`、`pikachu / 000000`、`test / abc123` |
-| [XSS-Labs](https://github.com/do0dl3/xss-labs) | XSS 反射与过滤绕过 | 首页直接进入 · 第 14 关原外链使用空白占位 · 第 17–20 关依赖 Flash |
+| [XSS-Labs](https://github.com/do0dl3/xss-labs) | XSS 反射与过滤绕过 | 首页直接进入 · 第 17–20 关需要 Flash |
 | [SQLi-Labs](https://github.com/Audi-1/sqli-labs) | SQL 注入 | 首页直接进入；部分关卡含登录练习 |
 | [Upload-Labs](https://github.com/c0ny1/upload-labs) | 文件上传 | 首页直接进入 |
 | [XVWA](https://github.com/s4n7h0/xvwa) | 综合 Web 漏洞 | `admin / admin`、`xvwa / xvwa`、`user / vulnerable` |
@@ -45,11 +42,7 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | [OWASP PyGoat](https://github.com/adeyosemanputra/pygoat) | Django / OWASP | 注册并登录后进入课程 |
 | OA-Vuln-Labs (Beta) | 企业 OA · 25 个漏洞点 · 4 条攻击链 | 初始账号 `admin / ZSD@admin2025!`；登录后练习 |
 
-> OA-Vuln-Labs 使用初始账号即可登录，无需先通过漏洞获取凭据。SQLi-Labs、Upload-Labs、XSS-Labs 与 OA-Vuln-Labs 的上游均未声明资源许可。
-
-## 运行特性
-
-固定版本与 SHA-256 校验 · 运行时按需准备 · 每次启动使用独立实例 · 停止或过期后自动回收
+许可未声明：SQLi-Labs、Upload-Labs、XSS-Labs、OA-Vuln-Labs。
 
 ## 启动流程
 
@@ -77,17 +70,5 @@ sequenceDiagram
 | [设计说明](DESIGN.md) | 界面与响应式规则 |
 | [靶场封面来源](src/public/covers/README.md) | 图片来源与维护 |
 | [脚本索引](script/README.md) | 测试、smoke 与工具入口 |
-
-<details>
-  <summary><strong>开发验证</strong></summary>
-
-  ```powershell
-  cd src
-  npm ci
-  npm run check
-  npm test
-  npm run test:browser
-  ```
-</details>
 
 <p align="center"><strong>如果这个项目对你有帮助，欢迎在 GitHub 上点亮一个 Star⭐。</strong></p>
