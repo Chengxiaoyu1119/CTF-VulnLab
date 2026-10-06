@@ -392,6 +392,48 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
   } finally {
     migratedDatabase.close()
   }
+
+  const legacyVulnhubDataDir = join(dataDir, 'legacy-vulnhub')
+  const legacyVulnhubDatabase = new VulnLabDatabase(legacyVulnhubDataDir)
+  let legacyVulnhubJobId
+  try {
+    const legacyVulnhub = legacyVulnhubDatabase.createLab({
+      slug: 'vulnhub',
+      title: 'VulnHub Machines',
+      category: 'VM',
+      difficulty: '困难',
+      sourceType: 'catalog',
+      sourceUrl: 'https://www.vulnhub.com/',
+      sourceRef: 'vulnhub.com',
+      license: '按机器核验',
+      runtimeKind: 'vm',
+      summary: '旧版虚拟机目录',
+      tags: ['VM'],
+      status: 'disabled',
+      builtin: true,
+      version: 'catalog-v1',
+    })
+    const legacyVulnhubJob = legacyVulnhubDatabase.createJob(legacyVulnhub.id, legacyVulnhub.sourceUrl)
+    legacyVulnhubJobId = legacyVulnhubJob.id
+    legacyVulnhubDatabase.db.prepare("UPDATE import_jobs SET status = 'completed' WHERE id = ?").run(legacyVulnhubJob.id)
+    legacyVulnhubDatabase.addAudit('vulnlab', 'lab.disable', legacyVulnhub.title, 'legacy fixture')
+  } finally {
+    legacyVulnhubDatabase.close()
+  }
+  const cleanedVulnhubDatabase = new VulnLabDatabase(legacyVulnhubDataDir)
+  try {
+    assert.equal(cleanedVulnhubDatabase.getLabBySlug('vulnhub'), null)
+    assert.equal(cleanedVulnhubDatabase.getJob(legacyVulnhubJobId), null)
+    assert.ok(cleanedVulnhubDatabase.listAudit(firstRecordPage).items.some(item => item.detail === 'legacy fixture'))
+  } finally {
+    cleanedVulnhubDatabase.close()
+  }
+  const restartedVulnhubDatabase = new VulnLabDatabase(legacyVulnhubDataDir)
+  try {
+    assert.equal(restartedVulnhubDatabase.getLabBySlug('vulnhub'), null)
+  } finally {
+    restartedVulnhubDatabase.close()
+  }
 } finally {
   database.close()
   await rm(dataDir, { recursive: true, force: true })

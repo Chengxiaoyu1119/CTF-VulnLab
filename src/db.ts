@@ -434,7 +434,7 @@ export class VulnLabDatabase {
         })
       }
       const activeSlugs = new Set(items.map(item => item.slug))
-      for (const slug of ['vulnhub', 'vulhub', 'crapi']) {
+      for (const slug of ['vulhub', 'crapi']) {
         if (!activeSlugs.has(slug)) this.db.prepare("UPDATE labs SET status = 'disabled', updated_at = ? WHERE slug = ?").run(now(), slug)
       }
       const legacyInstances = this.db.prepare("SELECT instances.id, instances.logs_json FROM instances JOIN labs ON labs.id = instances.lab_id WHERE instances.status = 'running' AND (labs.slug IN ('vulnhub', 'vulhub') OR instances.provider = 'qemu-vm')").all() as Array<{ id: string; logs_json: string }>
@@ -445,6 +445,10 @@ export class VulnLabDatabase {
         try { logs = JSON.parse(instance.logs_json) as string[] } catch { /* preserve migration progress even if old logs are malformed */ }
         logs.push(`${timestamp} 旧版虚拟机运行记录已停用`)
         disableInstance.run(JSON.stringify(logs), instance.id)
+      }
+      // Drop the obsolete built-in VM catalog entry from databases created by older releases.
+      if (!activeSlugs.has('vulnhub')) {
+        this.db.prepare("DELETE FROM labs WHERE slug = 'vulnhub' AND builtin = 1 AND source_type = 'catalog' AND runtime_kind = 'vm'").run()
       }
     })
     transaction(seedLabs)
