@@ -1128,11 +1128,12 @@ function adminPanel() {
   const title = isAdmin ? '管理中心' : '个人中心'
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
+  const labAddAction = isAdmin && view === 'labs' && !state.adminLabEditorOpen ? '<button class="button button-primary" type="button" data-action="start-custom-lab-create">添加靶场</button>' : ''
   const selectionActions = recordSelection?.selectionActions ?? ''
   const logoutAction = view === 'profile' ? `<button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button>` : ''
   const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
-  const footerActions = footer || selectionActions || logoutAction
-    ? `<div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div>${selectionActions}${logoutAction}</div>`
+  const footerActions = footer || selectionActions || logoutAction || labAddAction
+    ? `<div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div>${selectionActions}${labAddAction}${logoutAction}</div>`
     : ''
   return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div>${footerActions}</div></div></section></div>`
 }
@@ -1180,13 +1181,13 @@ function customRuntimeModeFor(lab) {
 
 function adminLabsPanel() {
   const draft = state.adminLabDraft
-  const customLabs = state.labs.filter(lab => !lab.builtin)
+  const labs = state.labs
   const editorOpen = state.adminLabEditorOpen
   const statusLabels = { cataloged: '待准备', queued: '排队中', importing: '准备中', ready: '已就绪', error: '准备失败', disabled: '已停用' }
   const option = (value, label, current) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`
   const runtimeMode = customRuntimeModes[draft.runtimeMode] ? draft.runtimeMode : customRuntimeModeFor(draft)
   const runtimeProfile = customRuntimeModes[runtimeMode]?.profile
-  const editingLab = state.adminLabEditId ? customLabs.find(lab => lab.id === state.adminLabEditId) : null
+  const editingLab = state.adminLabEditId ? labs.find(lab => lab.id === state.adminLabEditId && !lab.builtin) : null
   const runtimeField = (name, label, value, placeholder, type = 'text') => `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`
   let runtimeFields = ''
   if (runtimeProfile === 'static-php' || runtimeProfile === 'mysql-php') {
@@ -1225,27 +1226,35 @@ function adminLabsPanel() {
     ? `<div class="admin-lab-inspection" role="status"><div><strong>结构建议：${esc(inspectionLabel)}</strong><span>${inspectionSuggestion?.confidence === 'high' ? '特征明确' : inspectionSuggestion?.confidence === 'medium' ? '建议复核' : '请手动选择'}</span></div>${inspectionSuggestion?.signals?.length ? `<p>识别到：${inspectionSuggestion.signals.map(esc).join('、')}</p>` : ''}${inspectionSuggestion?.warnings?.length ? `<ul>${inspectionSuggestion.warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p>未发现明显缺项；准备阶段仍会按固定契约校验文件。</p>'}${inspectionSuggestion?.mode ? `<button class="button button-quiet" type="button" data-action="apply-lab-inspection" data-mode="${esc(inspectionSuggestion.mode)}">采用此建议</button>` : ''}</div>`
     : state.adminLabInspectionError ? `<p class="admin-lab-inspection-error" role="alert">${esc(state.adminLabInspectionError)}</p>` : ''
   const sourceRefField = draft.sourceType === 'git' ? `<label>分支 / 版本<input name="sourceRef" value="${esc(draft.sourceRef)}" placeholder="留空使用仓库默认分支"></label>` : ''
-  const rows = customLabs.length
-    ? customLabs.map(lab => {
+  const rows = labs.length
+    ? labs.map(lab => {
       const latestJob = state.jobs.filter(job => job.labId === lab.id).sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0]
       const progress = Math.max(0, Math.min(100, Number(latestJob?.progress ?? 0)))
       const progressView = ['queued', 'importing'].includes(lab.status)
         ? `<div class="admin-lab-row-progress" role="status" aria-label="${esc(latestJob?.message ?? '等待准备')}，${progress}%"><div><span>${esc(latestJob?.message ?? '等待准备')}</span><strong>${progress}%</strong></div><span class="admin-lab-progress-track"><i style="width:${progress}%"></i></span></div>`
         : ''
       const errorView = lab.status === 'error'
-        ? `<p class="admin-lab-row-error" title="${esc(latestJob?.error ?? latestJob?.message ?? '没有更多错误信息。')}">失败原因：${esc(latestJob?.error ?? latestJob?.message ?? '没有更多错误信息。')}</p>`
+        ? `<details class="admin-lab-row-error"><summary>查看失败原因</summary><p>${esc(latestJob?.error ?? latestJob?.message ?? '没有更多错误信息。')}</p></details>`
         : ''
       const running = state.instances.some(instance => instance.labId === lab.id && instance.status === 'running')
-      const sourceLabel = lab.sourceType === 'git'
-        ? (() => { try { const url = new URL(lab.sourceUrl); return `${url.hostname.replace(/^www\./, '')}/${url.pathname.replace(/^\/+|\/+$/g, '')}` } catch { return 'Git 仓库' } })()
-        : 'ZIP 压缩包'
+      const sourceLabel = lab.sourceUrl.startsWith('bundle://')
+        ? '项目资源包'
+        : lab.sourceType === 'catalog'
+          ? '官方目录'
+          : lab.sourceType === 'git'
+          ? (() => { try { const url = new URL(lab.sourceUrl); return `${url.hostname.replace(/^www\./, '')}/${url.pathname.replace(/^\/+|\/+$/g, '')}` } catch { return 'Git 仓库' } })()
+          : 'ZIP 压缩包'
       const runtimeMode = customRuntimeModeFor(lab)
-      const modeLabel = customRuntimeModes[runtimeMode]?.label ?? (String(lab.runtimeKind) === 'container' ? 'Compose（当前未接入）' : '未识别运行方式')
+      const modeLabel = lab.runtimeConfig?.profile === 'oa-project' ? 'OA 靶场' : customRuntimeModes[runtimeMode]?.label ?? (String(lab.runtimeKind) === 'container' ? 'Compose（当前未接入）' : String(lab.runtimeKind) === 'vm' ? '虚拟机目录（当前未接入）' : '未识别运行方式')
       const addedAt = auditTimestamp(lab.createdAt)
-      const actions = `<div class="admin-lab-row-actions"><button class="button button-quiet" type="button" data-action="copy-custom-lab-config" data-id="${esc(lab.id)}">复制配置</button>${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-custom-lab" data-id="${esc(lab.id)}" ${busyFor('retry-custom-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-custom-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button><button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-custom-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button><details class="admin-lab-more"><summary class="button button-quiet" aria-label="${esc(lab.title)}更多操作">更多</summary><div class="admin-lab-more-menu"><button class="button button-danger" type="button" data-action="delete-custom-lab" data-id="${esc(lab.id)}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>删除</button></div></details></div>`
-      return `<article class="admin-lab-row" data-lab-id="${esc(lab.id)}"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><div class="admin-lab-row-meta"><span>${esc(modeLabel)} <i aria-hidden="true">·</i> ${esc(sourceLabel)}</span><time class="admin-lab-row-created" datetime="${esc(lab.createdAt)}" title="添加于 ${esc(addedAt.date)} ${esc(addedAt.time)}">添加于 ${esc(addedAt.date)} ${esc(addedAt.time.slice(0, 5))}</time></div></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>${progressView}${errorView}${actions}</article>`
+      const stateView = `<span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>`
+      const actions = `<div class="admin-lab-row-actions">${runtimeMode ? `<button class="button button-quiet" type="button" data-action="copy-admin-lab-config" data-id="${esc(lab.id)}">复制配置</button>` : ''}${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-admin-lab" data-id="${esc(lab.id)}" ${busyFor('retry-admin-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-admin-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}${lab.builtin ? '' : `<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button>`}<button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-admin-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button>${lab.builtin ? '' : `<button class="button button-danger" type="button" data-action="delete-custom-lab" data-id="${esc(lab.id)}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>删除</button>`}</div>`
+      const createdView = lab.builtin ? '' : `<time class="admin-lab-row-created" datetime="${esc(lab.createdAt)}" title="添加于 ${esc(addedAt.date)} ${esc(addedAt.time)}">添加于 ${esc(addedAt.date)} ${esc(addedAt.time.slice(0, 5))}</time>`
+      const kindView = `<span class="admin-lab-row-kind">${lab.builtin ? '项目内置' : '自定义'}</span>`
+      const runtimeSource = `${modeLabel} · ${sourceLabel}`
+      return `<article class="admin-lab-row" data-lab-id="${esc(lab.id)}" data-builtin="${lab.builtin}"><div class="admin-lab-row-copy"><div class="admin-lab-row-heading"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong>${stateView}${kindView}</div><div class="admin-lab-row-meta"><span class="admin-lab-row-runtime" title="${esc(runtimeSource)}">${esc(modeLabel)} <i aria-hidden="true">·</i> ${esc(sourceLabel)}</span>${createdView}</div></div>${progressView}${errorView}${actions}</article>`
     }).join('')
-    : '<div class="admin-empty-state">还没有自定义靶场。</div>'
+    : '<div class="admin-empty-state">暂无靶场记录。</div>'
   const form = `<form class="admin-lab-form" id="admin-lab-form">
       <div class="admin-lab-form-primary">
         <label>名称<input name="title" required maxlength="80" value="${esc(draft.title)}" placeholder="例如：OWASP WebGoat"></label>
@@ -1257,9 +1266,10 @@ function adminLabsPanel() {
       <section class="admin-lab-section admin-lab-display-settings" aria-labelledby="admin-lab-display-title"><div class="admin-lab-section-heading"><div><h4 id="admin-lab-display-title">展示资料</h4><p>用于主页面靶场卡片和详情</p></div></div><div class="admin-lab-display-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label><label>许可证<input name="license" value="${esc(draft.license)}" placeholder="未声明"></label><label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label><label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label></div></section>
       <div class="admin-lab-form-actions"><button class="button button-quiet" type="button" data-action="cancel-custom-lab-editor">取消</button><button class="button button-primary" type="submit" ${busyFor('save-lab') ? 'disabled' : ''}>${busyFor('save-lab') ? '保存中…' : editingLab ? '保存修改' : '添加靶场'}</button></div>
     </form>`
-  const list = `<section class="admin-lab-list" aria-label="自定义靶场列表">${rows}</section>`
-  return `<section class="admin-lab-view" data-admin-view="labs" aria-label="靶场管理">
-    <div class="admin-lab-heading"><h3>${editorOpen ? editingLab ? '编辑靶场' : '添加靶场' : '靶场管理'}</h3>${editorOpen ? '' : '<button class="button button-primary" type="button" data-action="start-custom-lab-create">添加靶场</button>'}</div>
+  const list = `<section class="admin-lab-list" aria-label="靶场列表"><p class="admin-lab-note">项目内置靶场可停用或恢复；自定义靶场可编辑或删除。</p>${rows}</section>`
+  const heading = editorOpen ? `<div class="admin-lab-heading"><h3>${editingLab ? '编辑靶场' : '添加靶场'}</h3></div>` : ''
+  return `<section class="admin-lab-view" data-admin-view="labs" data-editor-open="${editorOpen}" aria-label="靶场管理">
+    ${heading}
     ${editorOpen ? form : list}
   </section>`
 }
@@ -1562,7 +1572,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'start-custom-lab-create', 'cancel-custom-lab-editor', 'edit-custom-lab', 'copy-custom-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'start-custom-lab-create', 'cancel-custom-lab-editor', 'edit-custom-lab', 'copy-admin-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1698,8 +1708,8 @@ async function runAction(action, element) {
     focusAdminLabTitle()
     return
   }
-  if (action === 'copy-custom-lab-config') {
-    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+  if (action === 'copy-admin-lab-config') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && customRuntimeModeFor(item))
     if (!lab) return
     state.adminLabEditId = null
     state.adminLabEditorOpen = true
@@ -1718,8 +1728,8 @@ async function runAction(action, element) {
     focusAdminLabTitle()
     return
   }
-  if (action === 'retry-custom-lab') {
-    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin && item.status === 'error')
+  if (action === 'retry-admin-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && item.status === 'error')
     if (!lab || !beginBusy(action, lab.id)) return
     try {
       const result = await request(`/api/labs/${encodeURIComponent(lab.id)}/install`, { method: 'POST' })
@@ -1729,12 +1739,12 @@ async function runAction(action, element) {
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, lab.id); render() }
     return
   }
-  if (action === 'toggle-custom-lab') {
-    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+  if (action === 'toggle-admin-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id)
     if (!lab) return
     const disabled = element.dataset.disabled === 'true'
     if (disabled) {
-      openConfirm('停用靶场', `停用“${lab.title}”后，它会从主页面隐藏，且无法启动；你可以随时恢复。`, { action: 'apply-custom-lab-status', id: lab.id, disabled: true }, '停用靶场')
+      openConfirm('停用靶场', `停用“${lab.title}”后，它会从主页面隐藏，且无法启动；你可以随时恢复。`, { action: 'apply-admin-lab-status', id: lab.id, disabled: true }, '停用靶场')
       return
     }
     if (!beginBusy(action, lab.id)) return
@@ -1761,7 +1771,7 @@ async function runAction(action, element) {
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, labId); render() }
     return
   }
-  if (action === 'apply-custom-lab-status') {
+  if (action === 'apply-admin-lab-status') {
     const labId = element.dataset.id
     if (!labId || !beginBusy(action, labId)) return
     try {
@@ -2220,8 +2230,8 @@ document.addEventListener('visibilitychange', () => {
 })
 
 document.addEventListener('pointerdown', event => {
-  if (event.target instanceof Element && event.target.closest('.admin-action-select, .admin-lab-more')) return
-  document.querySelectorAll('.admin-action-select[open], .admin-lab-more[open]').forEach(menu => { menu.open = false })
+  if (event.target instanceof Element && event.target.closest('.admin-action-select')) return
+  document.querySelectorAll('.admin-action-select[open]').forEach(menu => { menu.open = false })
 })
 
 window.addEventListener('resize', updateLabCanvasScrollState)
@@ -2534,13 +2544,6 @@ document.addEventListener('keydown', event => {
       event.preventDefault()
       actionMenu.open = false
       actionMenu.querySelector('summary')?.focus()
-      return
-    }
-    const labMoreMenu = dialog.querySelector('.admin-lab-more[open]')
-    if (labMoreMenu) {
-      event.preventDefault()
-      labMoreMenu.open = false
-      labMoreMenu.querySelector('summary')?.focus()
       return
     }
     if (state.confirm) { state.confirm = null; render(); restoreConfirmFocus(); return }

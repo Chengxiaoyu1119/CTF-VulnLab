@@ -544,7 +544,8 @@ const configurePikachuInstallerPort = async (root: string) => {
   contents = contents.replaceAll('mysqli_connect(DBHOST, DBUSER, DBPW)', 'mysqli_connect(DBHOST, DBUSER, DBPW, DBNAME, DBPORT)')
   contents = contents.replace(/\$drop_db\s*=\s*"drop database if exists[^;]*;/i, '$drop_db = "SELECT 1";')
   contents = contents.replace(/\$create_db\s*=\s*"CREATE DATABASE[^;]*;/i, '$create_db = "SELECT 1";')
-  if (contents === before) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Pikachu 初始化入口不包含可识别的 MySQL 连接代码。', 409)
+  const configuredConnection = /mysqli_connect\(\s*(?:\$dbhost|DBHOST)\s*,\s*(?:\$dbuser|DBUSER)\s*,\s*(?:\$dbpw|DBPW)\s*,\s*DBNAME\s*,\s*DBPORT\s*\)/i.test(contents)
+  if (contents === before && !configuredConnection) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Pikachu 初始化入口不包含可识别的 MySQL 连接代码。', 409)
   if (/drop database if exists|CREATE DATABASE/i.test(contents)) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'Pikachu 初始化脚本仍要求管理级数据库权限。', 409)
   await writeFile(installPath, contents, 'utf8')
 }

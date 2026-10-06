@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { prepareInstalledLab } from '../src/dist/runtime-prep.js'
+import { fileURLToPath } from 'node:url'
+import { prepareInstalledLab, pythonInstallConfig } from '../src/dist/runtime-prep.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-prep-'))
 const savedRequirements = process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE
@@ -11,10 +12,15 @@ const savedOffline = process.env.VULNLAB_OFFLINE
 try {
   delete process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE
   delete process.env.VULNLAB_PYTHON_WHEELHOUSE
-  await assert.rejects(
-    prepareInstalledLab({ slug: 'pygoat', localPath: root }),
-    /VULNLAB_PYTHON_REQUIREMENTS_FILE/,
-  )
+  const pygoatConfig = await pythonInstallConfig({ slug: 'pygoat', builtin: true, localPath: root })
+  const bundledPyGoat = fileURLToPath(new URL('../src/assets/python/pygoat/', import.meta.url))
+  assert.equal(pygoatConfig.requirementsPath, join(bundledPyGoat, 'requirements.txt'))
+  assert.equal(pygoatConfig.wheelhousePath, join(bundledPyGoat, 'wheelhouse'))
+  assert.match(await readFile(pygoatConfig.requirementsPath, 'utf8'), /^whitenoise==6\.2\.0 \\/m)
+  assert.ok((await readdir(pygoatConfig.wheelhousePath)).includes('whitenoise-6.2.0-py3-none-any.whl'))
+  process.env.VULNLAB_PYTHON_WHEELHOUSE = join(root, 'missing-wheelhouse')
+  await assert.rejects(pythonInstallConfig({ slug: 'pygoat', builtin: true, localPath: root }), /wheelhouse 目录不存在/)
+  delete process.env.VULNLAB_PYTHON_WHEELHOUSE
   await assert.rejects(stat(join(root, '.vulnlab-venv')))
 
   const pythonRoot = await mkdtemp(join(tmpdir(), 'vulnlab-python-prep-'))

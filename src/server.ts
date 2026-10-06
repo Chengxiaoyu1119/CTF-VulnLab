@@ -1335,7 +1335,7 @@ app.patch('/api/labs/:id/status', async (request, reply) => {
   if (!session) return
   const { id } = request.params as { id: string }
   const lab = database.getLab(id)
-  if (!lab || lab.builtin) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '自定义靶场不存在。' })
+  if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
   const disabled = requestBody(request).disabled
   if (typeof disabled !== 'boolean') return reply.code(400).send({ code: 'LAB_STATUS_INVALID', message: '靶场状态参数无效。' })
   if (disabled && lab.status !== 'disabled') {
@@ -1353,7 +1353,7 @@ app.patch('/api/labs/:id/status', async (request, reply) => {
   const restoredLab = database.getLab(id)
   const preparation = !disabled && restoredLab?.status === 'cataloged' ? startLabInstall(restoredLab, session.userName) : null
   const updated = database.getLab(id)
-  database.addAudit(session.userName, disabled ? 'lab.disable' : 'lab.enable', lab.title, disabled ? '已停用自定义靶场。' : '已恢复自定义靶场。')
+  database.addAudit(session.userName, disabled ? 'lab.disable' : 'lab.enable', lab.title, disabled ? '已停用靶场。' : '已恢复靶场。')
   return reply.code(preparation?.started ? 202 : 200).send({ ok: true, lab: updated, job: preparation?.job ?? null, started: preparation?.started ?? false })
 })
 

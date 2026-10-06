@@ -211,6 +211,47 @@ try {
   await rm(xvwaRoot, { recursive: true, force: true })
 }
 
+const pikachuRoot = await mkdtemp(join(tmpdir(), 'vulnlab-pikachu-provider-'))
+try {
+  const sourceRoot = join(pikachuRoot, 'labs', 'pikachu', 'fixture')
+  await mkdir(join(sourceRoot, 'inc'), { recursive: true })
+  await writeFile(join(sourceRoot, 'inc', 'config.inc.php'), "<?php\ndefine('DBHOST', getenv('DB_SERVER') ?: '127.0.0.1');\ndefine('DBUSER', getenv('DB_USER') ?: 'vulnlab');\ndefine('DBPW', getenv('DB_PASSWORD') ?: '');\ndefine('DBNAME', getenv('DB_DATABASE') ?: 'vulnlab');\ndefine('DBPORT', getenv('DB_PORT') ?: '3306');\n")
+  await writeFile(join(sourceRoot, 'install.php'), '<?php\nif(isset($_POST[\'submit\'])) {\n$link=mysqli_connect(DBHOST, DBUSER, DBPW, DBNAME, DBPORT);\n$drop_db = "SELECT 1";\n$create_db = "SELECT 1";\n}\n')
+  const ports = [6892, 6893]
+  const databaseCalls = []
+  const phpSpawn = (_binary, args, options) => {
+    const port = Number(args[args.indexOf('-S') + 1].split(':').at(-1))
+    const script = "const server=require('node:http').createServer((req,res)=>{res.writeHead(200,{'content-type':'text/html'});res.end(req.url==='/install.php'?'好了，可以开搞了':'Pikachu');});server.listen(Number(process.argv.at(-1)),'127.0.0.1');"
+    return spawn(process.execPath, ['-e', script, String(port)], options)
+  }
+  const pikachuProvider = new NativePhpProvider({
+    spawnImpl: phpSpawn,
+    allocatePort: async () => ports.shift(),
+    mysqlManager: {
+      provision: async () => ({ host: '127.0.0.1', port: 3306, user: 'app', password: 'generated', database: 'vulnlab_pikachu' }),
+      verify: async () => { databaseCalls.push('verify') },
+      destroy: async () => { databaseCalls.push('destroy') },
+      destroyForInstance: async () => undefined,
+    },
+  })
+  const pikachuLab = { ...lab, id: 'lab-pikachu', slug: 'pikachu', title: 'Pikachu', sourceRef: 'zhuifengshaonianhanlu/pikachu@fixture' }
+  const started = await pikachuProvider.start({
+    instanceId: 'pikachu-fixture', lab: { ...pikachuLab, localPath: sourceRoot }, publicOrigin: 'http://127.0.0.1:6711',
+    lifetimeMinutes: 5, dataDir: pikachuRoot,
+    runtime: { bindHost: '127.0.0.1', portStart: 6800, portEnd: 6899, phpBinary: 'php', mysql: mysqlConfig },
+  })
+  const configuredInstall = await readFile(join(pikachuRoot, 'runtime', 'pikachu-fixture', 'install.php'), 'utf8')
+  assert.match(configuredInstall, /mysqli_connect\(DBHOST, DBUSER, DBPW, DBNAME, DBPORT\)/)
+  assert.match(configuredInstall, /\$drop_db = "SELECT 1";/)
+  assert.match(configuredInstall, /\$create_db = "SELECT 1";/)
+  assert.equal((await fetch(pikachuProvider.getProxyTarget('pikachu-fixture'))).status, 200)
+  await pikachuProvider.stop({ lab: { ...pikachuLab, localPath: sourceRoot }, instance: { ...instance, id: 'pikachu-fixture', labId: pikachuLab.id, labTitle: 'Pikachu', endpoint: started.endpoint }, dataDir: pikachuRoot })
+  await assert.rejects(stat(join(pikachuRoot, 'runtime', 'pikachu-fixture')))
+  assert.deepEqual(databaseCalls, ['verify', 'destroy'])
+} finally {
+  await rm(pikachuRoot, { recursive: true, force: true })
+}
+
 const nativeRecoveryRoot = await mkdtemp(join(tmpdir(), 'vulnlab-native-recovery-'))
 try {
   const recoveryId = 'native-recovery'

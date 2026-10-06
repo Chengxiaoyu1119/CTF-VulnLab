@@ -22,6 +22,7 @@ const dependencies = [
 ]
 try {
   const labs = [lab('upload-labs', 'native-php'), lab('dvwa', 'native-php'), lab('xvwa', 'native-php'), lab('juice-shop', 'native-node'), lab('webgoat', 'native-java'), lab('pygoat', 'native-python')]
+  await Promise.all(labs.map(item => mkdir(item.localPath, { recursive: true })))
   let readiness = await runtimeReadinessByLab(labs, dependencies, root)
   assert.equal(readiness['upload-labs'].available, true)
   assert.deepEqual(readiness.dvwa.missing, ['PHP mysqli', 'PHP PDO MySQL', 'MySQL / MariaDB'])
@@ -29,6 +30,12 @@ try {
   assert.equal(readiness['juice-shop'].available, true)
   assert.equal(readiness.webgoat.available, true)
   assert.deepEqual(readiness.pygoat.missing, ['Python'])
+  const catalogedPyGoat = { ...labs.find(item => item.slug === 'pygoat'), status: 'cataloged' }
+  readiness = await runtimeReadinessByLab([catalogedPyGoat], dependencies, root)
+  assert.deepEqual(readiness.pygoat.missing, ['靶场资源未安装'])
+  await rm(catalogedPyGoat.localPath, { recursive: true, force: true })
+  readiness = await runtimeReadinessByLab([labs.find(item => item.slug === 'pygoat')], dependencies, root)
+  assert.ok(readiness.pygoat.missing.includes('靶场资源未安装'))
   await mkdir(join(root, 'labs', 'pygoat', 'fixture'), { recursive: true })
   await writeFile(join(root, 'labs', 'pygoat', 'fixture', '.vulnlab-python-ready'), 'ready')
   readiness = await runtimeReadinessByLab(labs, dependencies, root)
@@ -43,6 +50,7 @@ try {
   readiness = await runtimeReadinessByLab([customPython], dependencies, root)
   assert.equal(readiness['custom-python'].available, true)
   const oa = lab('oa-vuln-labs', 'native-oa')
+  await mkdir(oa.localPath, { recursive: true })
   const oaDependencies = [
     ...dependencies.filter(item => item.id !== 'mysql'),
     { id: 'mysql', label: 'MySQL / MariaDB', available: true, detail: 'connected' },

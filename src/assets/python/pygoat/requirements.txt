@@ -1,0 +1,98 @@
+argon2-cffi==21.3.0 \
+    --hash=sha256:8c976986f2c5c0e5000919e6de187906cfd81fb1c72bf9d88c01177e77da7f80
+    # via -r src/assets/python/pygoat/requirements.in
+argon2-cffi-bindings==26.1.0 \
+    --hash=sha256:2c36ff87b5dfaa477d0bd51e9d7f6abdae7c8955d2983c97419085d842154b3e
+    # via argon2-cffi
+asgiref==3.12.1 \
+    --hash=sha256:fe386d1c2bff7259ea95929266d12a8cf9a8b5a1c2598402967d8792e7a7c094
+    # via django
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+    # via requests
+cffi==2.1.1 \
+    --hash=sha256:42f6930c31dc7f50732c9ae793c2786c7b6b044195967bbdde40bb9be81c4cc0 \
+    --hash=sha256:a48d62ab9d6f4f98c983223a547af44be6ca3691074c31cecced6facd3ba2dc1
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
+charset-normalizer==3.5.2 \
+    --hash=sha256:1461ac396c4fdb983a675f20aa555624f0ee18ac83d832b9244ffff3d8055275 \
+    --hash=sha256:87e50a3e7cb90af586b6c5faf23e302a970415ac73bd7bd90a515a04b427ef96
+    # via requests
+crispy-bootstrap4==2022.1 \
+    --hash=sha256:5241ab1dc2188c95560aa786439bcbedec7416e6b0f5a52dded82380810367ec
+    # via -r src/assets/python/pygoat/requirements.in
+cryptography==50.0.2 \
+    --hash=sha256:4e81d95e5bafc2d6e34e4bed780e53e4d5b9a2f928573428aa4d35fbec1eb0de \
+    --hash=sha256:7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c
+    # via pyjwt
+defusedxml==0.7.1 \
+    --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+    # via python3-openid
+django==4.2 \
+    --hash=sha256:ad33ed68db9398f5dfb33282704925bce044bef4261cd4fb59e4e7f9ae505a78
+    # via
+    #   -r src/assets/python/pygoat/requirements.in
+    #   crispy-bootstrap4
+    #   django-allauth
+    #   django-crispy-forms
+django-allauth==0.52.0 \
+    --hash=sha256:76bd3b68c8ea8cc8ea9d5fe477bb0875f0442ff414f340ba60d17010eee388e6
+    # via -r src/assets/python/pygoat/requirements.in
+django-crispy-forms==2.3 \
+    --hash=sha256:efc4c31e5202bbec6af70d383a35e12fc80ea769d464fb0e7fe21768bb138a20
+    # via
+    #   -r src/assets/python/pygoat/requirements.in
+    #   crispy-bootstrap4
+idna==3.20 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+    # via requests
+oauthlib==4.0.0 \
+    --hash=sha256:624c28c13a0a59cabf9747dfa52af63be3e512a7f2714df16e91b5b3a145e6cd
+    # via requests-oauthlib
+pillow==9.4.0 \
+    --hash=sha256:ba6612b6548220ff5e9df85261bddc811a057b0b465a1226b39bfb8550616aee \
+    --hash=sha256:f6e78171be3fb7941f9910ea15b4b14ec27725865a73c15277bc39f5ca4f8391
+    # via -r src/assets/python/pygoat/requirements.in
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+    # via cffi
+pyjwt[crypto]==2.4.0 \
+    --hash=sha256:72d1d253f32dbd4f5c88eaf1fdc62f3a19f676ccbadb9dbc5d07e951b2b26daf
+    # via
+    #   -r src/assets/python/pygoat/requirements.in
+    #   django-allauth
+python3-openid==3.2.0 \
+    --hash=sha256:6626f771e0417486701e0b4daff762e7212e820ca5b29fcc0d05f6f8736dfa6b
+    # via
+    #   -r src/assets/python/pygoat/requirements.in
+    #   django-allauth
+pytz==2020.1 \
+    --hash=sha256:a494d53b6d39c3c6e44c3bec237336e14305e4f29bbf800b599253057fbb79ed
+    # via -r src/assets/python/pygoat/requirements.in
+pyyaml==6.0.2 \
+    --hash=sha256:a4d3091415f010369ae4ed1fc6b79def9416358877534caf6a0fdd2146c87a3e \
+    --hash=sha256:e10ce637b18caea04431ce14fabcf5c64a1c61ec9c56b071a4b7ca131ca52d44
+    # via -r src/assets/python/pygoat/requirements.in
+requests==2.28.2 \
+    --hash=sha256:64299f4909223da747622c030b781c0d7811e359c37124b4bd368fb8c6518baa
+    # via
+    #   -r src/assets/python/pygoat/requirements.in
+    #   django-allauth
+    #   requests-oauthlib
+requests-oauthlib==2.0.0 \
+    --hash=sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36
+    # via django-allauth
+sqlparse==0.6.0 \
+    --hash=sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f
+    # via django
+tzdata==2026.5 \
+    --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac
+    # via django
+urllib3==1.26.20 \
+    --hash=sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e
+    # via requests
+whitenoise==6.2.0 \
+    --hash=sha256:8e9c600a5c18bd17655ef668ad55b5edf6c24ce9bdca5bf607649ca4b1e8e2c2
+    # via -r src/assets/python/pygoat/requirements.in

@@ -119,6 +119,10 @@ try {
   const builtinLab = seedLabs.body.find(item => item.builtin)
   assert.ok(builtinLab)
   assert.equal((await request(`/api/labs/${builtinLab.id}`, { method: 'DELETE' })).status, 404)
+  const disableBuiltin = await request(`/api/labs/${builtinLab.id}/status`, { method: 'PATCH', body: { disabled: true } })
+  assert.equal(disableBuiltin.status, 200, JSON.stringify(disableBuiltin.body))
+  assert.equal(disableBuiltin.body.lab.status, 'disabled')
+  assert.ok((await request('/api/labs')).body.some(item => item.id === builtinLab.id && item.status === 'disabled'))
   assert.equal((await request('/api/labs/00000000-0000-0000-0000-000000000000', { method: 'DELETE', csrf: false })).status, 403)
   assert.equal((await request('/api/lab-archives', { method: 'POST', body: zip({ 'site/index.php': '<?php echo 1;' }), contentType: 'application/zip', csrf: false })).status, 403)
   assert.equal((await request('/api/labs', { method: 'POST', body: { title: '缺少 CSRF', sourceType: 'git', sourceUrl: 'https://github.com/example/project' }, csrf: false })).status, 403)
@@ -267,6 +271,7 @@ try {
   cookie = relogin.response.headers.getSetCookie()[0].split(';', 1)[0]
   labs = await request('/api/labs')
   assert.equal(labs.body.find(item => item.id === ready.id)?.status, 'ready')
+  assert.equal(labs.body.find(item => item.id === builtinLab.id)?.status, 'disabled')
   const secondStart = await request(`/api/labs/${ready.id}/instances`, { method: 'POST' })
   assert.equal(secondStart.status, 201, JSON.stringify(secondStart.body))
   assert.equal(await (await fetch(secondStart.body.endpoint)).text(), 'custom-lab-ok')

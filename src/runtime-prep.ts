@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Lab } from './types.js'
 
 export class RuntimePreparationError extends Error {
@@ -14,6 +15,12 @@ type Progress = (progress: number, stage: string, message: string) => void
 
 const exists = (path: string) => stat(path).then(item => item.isFile()).catch(() => false)
 const existingDirectory = (path: string) => stat(path).then(item => item.isDirectory()).catch(() => false)
+const bundledPyGoatDependencies = () => {
+  if (process.platform !== 'win32' || process.arch !== 'x64') return null
+  const moduleDir = dirname(fileURLToPath(import.meta.url))
+  const appRoot = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+  return join(appRoot, 'assets', 'python', 'pygoat')
+}
 
 const run = (binary: string, args: string[], cwd: string, timeoutMs = 10 * 60_000) => new Promise<void>((resolveRun, rejectRun) => {
   const child = spawn(binary, args, { cwd, env: process.env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false })
@@ -36,23 +43,26 @@ const run = (binary: string, args: string[], cwd: string, timeoutMs = 10 * 60_00
   }, timeoutMs)
 })
 
-const pythonInstallConfig = async (lab: Lab) => {
+export const pythonInstallConfig = async (lab: Lab) => {
   const builtin = lab.builtin || lab.slug === 'pygoat'
-  const requirements = builtin ? process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE?.trim() : join(lab.localPath as string, 'requirements.txt')
+  const bundled = lab.slug === 'pygoat' ? bundledPyGoatDependencies() : null
+  const requirements = builtin
+    ? process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE?.trim() || (bundled ? join(bundled, 'requirements.txt') : undefined)
+    : join(lab.localPath as string, 'requirements.txt')
   // 自定义脚本项目可以不带第三方依赖；只有声明 requirements.txt 时才要求离线 wheelhouse。
   if (!requirements) {
-    if (builtin) throw new RuntimePreparationError('Python 靶场需要哈希锁定的 requirements.txt（内置靶场使用 VULNLAB_PYTHON_REQUIREMENTS_FILE）和离线 VULNLAB_PYTHON_WHEELHOUSE。')
+    if (builtin) throw new RuntimePreparationError('内置 Python 靶场需要哈希锁定的 requirements.txt 和离线 wheelhouse。')
     return null
   }
   if (!builtin && !(await exists(requirements))) return null
-  const wheelhouse = process.env.VULNLAB_PYTHON_WHEELHOUSE?.trim()
+  const wheelhouse = process.env.VULNLAB_PYTHON_WHEELHOUSE?.trim() || (bundled ? join(bundled, 'wheelhouse') : undefined)
   if (!wheelhouse) throw new RuntimePreparationError(builtin
-    ? 'Python 靶场需要哈希锁定的 requirements.txt（内置靶场使用 VULNLAB_PYTHON_REQUIREMENTS_FILE）和离线 VULNLAB_PYTHON_WHEELHOUSE。'
+    ? '内置 Python 靶场需要哈希锁定的 requirements.txt 和离线 wheelhouse。'
     : 'Python 靶场需要离线 wheelhouse 目录。')
   const requirementsPath = resolve(requirements)
   const wheelhousePath = resolve(wheelhouse)
-  if (!(await exists(requirementsPath))) throw new RuntimePreparationError('Python 靶场哈希锁定依赖文件不存在。')
-  if (!(await existingDirectory(wheelhousePath))) throw new RuntimePreparationError('Python 靶场离线 wheelhouse 目录不存在。')
+  if (!(await exists(requirementsPath))) throw new RuntimePreparationError('Python 靶场哈希锁定依赖文件不存在；可通过 VULNLAB_PYTHON_REQUIREMENTS_FILE 指定。')
+  if (!(await existingDirectory(wheelhousePath))) throw new RuntimePreparationError('Python 靶场离线 wheelhouse 目录不存在；可通过 VULNLAB_PYTHON_WHEELHOUSE 指定。')
   return { requirementsPath, wheelhousePath }
 }
 

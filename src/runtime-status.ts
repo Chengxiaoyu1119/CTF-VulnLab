@@ -92,6 +92,7 @@ const databaseLabs = new Set(['dvwa', 'pikachu', 'sqli-labs', 'mutillidae', 'xvw
 export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDependencyStatus[], dataDir: string) => {
   const status = new Map(dependencies.map(item => [item.id, item]))
   const entries = await Promise.all(labs.map(async lab => {
+    const resourceExists = lab.localPath ? await stat(lab.localPath).then(() => true).catch(() => false) : false
     const customMysql = lab.runtimeConfig?.profile === 'mysql-php'
     const required: RuntimeDependencyStatus['id'][] = lab.runtimeKind === 'native-php'
       ? ['php', ...(databaseLabs.has(lab.slug) || customMysql ? ['php-mysqli' as const, 'php-pdo-mysql' as const, 'mysql' as const] : [])]
@@ -99,7 +100,11 @@ export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDe
         : lab.runtimeKind === 'native-java' ? ['java']
           : lab.runtimeKind === 'native-python' ? ['python']
           : lab.runtimeKind === 'native-oa' ? ['mysql', 'node-permission'] : []
-    const missing = required.filter(id => !status.get(id)?.available)
+    const missing: string[] = []
+    if (lab.status !== 'ready' || !resourceExists) {
+      missing.push(lab.status === 'disabled' ? '靶场已停用' : lab.status === 'importing' || lab.status === 'queued' ? '靶场资源正在准备' : lab.status === 'error' ? '靶场资源准备失败' : '靶场资源未安装')
+    }
+    missing.push(...required.filter(id => !status.get(id)?.available).map(id => status.get(id)?.label ?? id))
     if (lab.runtimeKind === 'native-python' && lab.status === 'ready') {
       const requirements = lab.builtin || lab.slug === 'pygoat'
         ? process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE?.trim()
@@ -108,10 +113,10 @@ export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDe
       if (needsIsolatedEnv) {
         const root = lab.localPath ?? dataPaths(dataDir).lab(lab.slug, lab.version)
         const marker = join(root, '.vulnlab-python-ready')
-        if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push('python')
+        if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push(status.get('python')?.label ?? 'python')
       }
     }
-    return [lab.slug, { available: missing.length === 0, missing: [...new Set(missing)].map(id => status.get(id)?.label ?? id) }]
+    return [lab.slug, { available: missing.length === 0, missing: [...new Set(missing)] }]
   }))
   return Object.fromEntries(entries)
 }

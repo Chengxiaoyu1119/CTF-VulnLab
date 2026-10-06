@@ -40,7 +40,7 @@ npm run dev
 
 管理员可以通过管理中心添加自定义靶场。来源支持公开 GitHub/GitLab 仓库和本地 ZIP；运行配置使用静态 PHP、PHP + MySQL、Node.js、Java JAR、Python 文件或 PyGoat Django 这几类固定模板。上传包先写入 `data/lab-uploads`，导入成功后再复制到 `data/labs`，SQLite 保存运行模板和永久路径，服务重启时会做路径对账。Node 项目必须带锁文件；带 `requirements.txt` 的自定义 Python 项目必须配置离线 wheelhouse；不符合模板的入口、路径或 ZIP 安全检查会直接拒绝。
 
-Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。PyGoat 依赖只允许通过 `VULNLAB_PYTHON_REQUIREMENTS_FILE` 指向的哈希锁定文件和 `VULNLAB_PYTHON_WHEELHOUSE` 指向的离线 wheelhouse 安装，安装过程不访问包索引。
+Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。PyGoat 默认使用 `assets/python/pygoat` 内的哈希锁定依赖和离线 wheelhouse，适配 Windows x64 上的 Python 3.10/3.11；安装过程不访问包索引。`VULNLAB_PYTHON_REQUIREMENTS_FILE` 与 `VULNLAB_PYTHON_WHEELHOUSE` 可覆盖默认资源路径。
 
 ## 运行模型
 

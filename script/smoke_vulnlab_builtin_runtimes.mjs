@@ -62,8 +62,9 @@ const probeInstance = async (instance, checks) => {
     if (check.webwolf) {
       const port = webWolfPort(instance)
       assert.ok(port > 0, 'WebGoat instance did not report a WebWolf port')
-      const webWolfResponse = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual', headers: cookie ? { cookie } : {} })
-      assert.ok(webWolfResponse.status >= 100 && webWolfResponse.status < 500, `WebWolf probe returned ${webWolfResponse.status}`)
+      const webWolfResponse = await fetch(`http://127.0.0.1:${port}/WebWolf/login`, { redirect: 'manual', headers: cookie ? { cookie } : {} })
+      assert.equal(webWolfResponse.status, 200, `WebWolf login probe returned ${webWolfResponse.status}`)
+      assert.match(await webWolfResponse.text(), /WebWolf|Login/i, 'WebWolf login page was not served')
     }
   }
   return results

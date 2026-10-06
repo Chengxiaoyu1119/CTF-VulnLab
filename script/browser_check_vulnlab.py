@@ -542,33 +542,73 @@ def main() -> None:
         labs_button.click()
         expect(page.locator('[data-admin-view="labs"]')).to_be_visible()
         assert_admin_logout_visibility(page, False)
+        admin_labs = page.evaluate("async () => (await (await fetch('/api/labs')).json())")
         expect(page.get_by_text("登记来源后，系统会在后台准备运行资源。", exact=True)).to_have_count(0)
         expect(page.get_by_text("仅显示自定义来源", exact=True)).to_have_count(0)
         expect(page.get_by_text(re.compile(r"^\d+ 个自定义靶场$"))).to_have_count(0)
         expect(page.locator("#admin-lab-form")).to_have_count(0)
-        expect(page.locator("[data-action='start-custom-lab-create']")).to_be_visible()
+        add_lab_button = page.locator(".dialog-actions [data-action='start-custom-lab-create']")
+        expect(add_lab_button).to_be_visible()
         expect(page.locator(".admin-lab-list")).to_be_visible()
-        expect(page.locator(".admin-lab-list > .admin-empty-state")).to_be_visible()
-        empty_state_style = page.locator(".admin-lab-list > .admin-empty-state").evaluate(
-            "element => { const style = getComputedStyle(element); return { borderStyle: style.borderTopStyle, textAlign: style.textAlign, background: style.backgroundColor }; }"
+        expect(page.locator(".admin-lab-list > .admin-empty-state")).to_have_count(0)
+        expect(page.get_by_text("还没有自定义靶场。", exact=True)).to_have_count(0)
+        expect(page.locator(".admin-lab-row")).to_have_count(len(admin_labs))
+        expect(page.locator(".admin-dialog-content .admin-lab-heading")).to_have_count(0)
+        list_scroll = page.locator(".admin-lab-list").evaluate(
+            "element => ({ overflowY: getComputedStyle(element).overflowY, parentOverflowY: getComputedStyle(element.parentElement.parentElement).overflowY })"
         )
-        assert empty_state_style == {"borderStyle": "none", "textAlign": "left", "background": "rgba(0, 0, 0, 0)"}, empty_state_style
-        for width, height in [(320, 568), (390, 844), (768, 1024), (1280, 720), (1440, 900)]:
+        assert list_scroll == {"overflowY": "visible", "parentOverflowY": "auto"}, list_scroll
+        footer_layout = page.locator(".admin-dialog-main > .dialog-actions").evaluate(
+            "footer => { const main = footer.parentElement; const content = main.querySelector('.admin-dialog-content'); const button = footer.querySelector('[data-action=start-custom-lab-create]'); const before = button.getBoundingClientRect(); const hasScroll = content.scrollHeight > content.clientHeight; content.scrollTop = content.scrollHeight; const after = button.getBoundingClientRect(); content.scrollTop = 0; return { outsideScroll: !content.contains(button), footerAfterContent: footer.getBoundingClientRect().top >= content.getBoundingClientRect().bottom - 1, buttonAtRight: Math.abs(button.getBoundingClientRect().right - footer.getBoundingClientRect().right) < 2, fixedWhileScrolling: !hasScroll || Math.abs(before.top - after.top) < 1, hasScroll, withinDialog: footer.getBoundingClientRect().bottom <= main.getBoundingClientRect().bottom }; }"
+        )
+        assert all(footer_layout[key] for key in ("outsideScroll", "footerAfterContent", "buttonAtRight", "fixedWhileScrolling", "withinDialog")), footer_layout
+        builtin_row = page.locator('.admin-lab-row[data-builtin="true"]').first
+        expect(builtin_row).to_be_visible()
+        expect(builtin_row.locator(".admin-lab-row-created")).to_have_count(0)
+        expect(builtin_row.locator(".admin-lab-row-heading .admin-lab-row-state")).to_be_visible()
+        expect(builtin_row.locator(".admin-lab-row-kind")).to_have_text("项目内置")
+        expect(builtin_row.locator('[data-action="toggle-admin-lab"]')).to_be_visible()
+        expect(builtin_row.locator('[data-action="edit-custom-lab"], [data-action="delete-custom-lab"]')).to_have_count(0)
+        catalog_row = page.locator('.admin-lab-row[data-builtin="true"]').filter(has_text="VulnHub Machines")
+        if catalog_row.count():
+            expect(catalog_row).to_contain_text("虚拟机目录（当前未接入）")
+            expect(catalog_row).to_contain_text("官方目录")
+        for width, height in [(320, 568), (390, 844), (640, 420), (768, 1024), (1280, 720), (1440, 900)]:
             page.set_viewport_size({"width": width, "height": height})
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
             list_layout = page.locator(".admin-lab-view").evaluate(
-                "element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, headerFits: (() => { const header = element.querySelector('.admin-lab-heading').getBoundingClientRect(); const button = element.querySelector('[data-action=start-custom-lab-create]').getBoundingClientRect(); return button.left >= header.left - 1 && button.right <= header.right + 1; })() })"
+                "element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })"
             )
             assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= height, (width, height, dialog_box)
-            assert list_layout["scrollWidth"] <= list_layout["clientWidth"] and list_layout["headerFits"], (width, list_layout)
+            assert list_layout["scrollWidth"] <= list_layout["clientWidth"], (width, list_layout)
+            assert page.locator(".dialog-actions [data-action='start-custom-lab-create']").is_visible(), (width, "bottom add action is hidden")
+            footer_button_right = page.locator(".dialog-actions [data-action='start-custom-lab-create']").evaluate("element => Math.abs(element.getBoundingClientRect().right - element.closest('.dialog-actions').getBoundingClientRect().right)")
+            assert footer_button_right < 2, (width, footer_button_right)
+            if width == 320:
+                mobile_footer_scroll = page.locator(".admin-dialog-main > .dialog-actions").evaluate(
+                    "footer => { const content = footer.parentElement.querySelector('.admin-dialog-content'); const button = footer.querySelector('[data-action=start-custom-lab-create]'); const before = button.getBoundingClientRect().top; const hasScroll = content.scrollHeight > content.clientHeight; content.scrollTop = content.scrollHeight; const after = button.getBoundingClientRect().top; content.scrollTop = 0; return { hasScroll, fixed: Math.abs(before - after) < 1, contentDoesNotCoverFooter: content.getBoundingClientRect().bottom <= footer.getBoundingClientRect().top }; }"
+                )
+                assert mobile_footer_scroll == {"hasScroll": True, "fixed": True, "contentDoesNotCoverFooter": True}, mobile_footer_scroll
+            assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+            row_width = builtin_row.evaluate("element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth })")
+            assert row_width["scrollWidth"] <= row_width["width"], (width, row_width)
+            heading_layout = builtin_row.locator(".admin-lab-row-heading").evaluate(
+                "element => { const title = element.querySelector('strong').getBoundingClientRect(); const status = element.querySelector('.admin-lab-row-state').getBoundingClientRect(); return { sameLine: Math.abs((title.top + title.height / 2) - (status.top + status.height / 2)) < 2, gap: status.left - title.right }; }"
+            )
+            assert heading_layout["sameLine"] and 0 <= heading_layout["gap"] <= 10, (width, heading_layout)
+            action_layout = builtin_row.locator(".admin-lab-row-actions").evaluate(
+                "element => { const row = element.getBoundingClientRect(); const items = [...element.querySelectorAll(':scope > button')].map(item => item.getBoundingClientRect()); return { fit: items.every(item => item.left >= row.left - 1 && item.right <= row.right + 1), oneRow: items.every(item => Math.abs(item.top - items[0].top) < 2) }; }"
+            )
+            assert action_layout == {"fit": True, "oneRow": True}, (width, action_layout)
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1440, "height": 900})
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.locator("[data-action='start-custom-lab-create']").click()
+        add_lab_button.click()
         expect(page.locator("#admin-lab-form")).to_be_visible()
+        expect(page.locator(".dialog-actions [data-action='start-custom-lab-create']")).to_have_count(0)
         title_input = page.locator('[data-admin-view="labs"] input[name="title"]')
         expect(title_input).to_be_visible()
         expect(title_input).to_be_focused()
@@ -670,7 +710,7 @@ def main() -> None:
         page.set_viewport_size({"width": 1440, "height": 900})
         page.locator('[data-action="cancel-custom-lab-editor"]').click()
         expect(page.locator("#admin-lab-form")).to_have_count(0)
-        expect(page.locator("[data-action='start-custom-lab-create']")).to_be_visible()
+        expect(page.locator(".dialog-actions [data-action='start-custom-lab-create']")).to_be_visible()
         page.locator('[data-action="open-admin-section"][data-section="profile"]').click()
         expect(page.locator('[data-admin-dialog-view="profile"]')).to_be_visible()
         with page.expect_response(lambda response: response.url.endswith("/api/auth/users") and response.request.method == "GET") as initial_users_response_info:
@@ -2636,19 +2676,14 @@ def main() -> None:
         )
         failed_row = page.locator('.admin-lab-row[data-lab-id]').filter(has_text="浏览器自定义靶场")
         expect(failed_row).to_contain_text("准备失败")
-        expect(failed_row).to_contain_text("PHP 入口文件不存在")
         expect(failed_row.locator(".admin-lab-row-created")).to_be_visible()
-        delete_menu = failed_row.locator(".admin-lab-more")
-        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
-        delete_menu.locator("summary").click()
-        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).to_be_visible()
-        page.keyboard.press("Escape")
-        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
-        expect(delete_menu.locator("summary")).to_be_focused()
-        delete_menu.locator("summary").click()
-        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).to_be_visible()
-        delete_menu.locator("summary").click()
-        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
+        failure_details = failed_row.locator(".admin-lab-row-error")
+        expect(failure_details.locator("summary")).to_have_text("查看失败原因")
+        failure_details.locator("summary").click()
+        expect(failure_details).to_contain_text("PHP 入口文件不存在")
+        failure_details.locator("summary").click()
+        delete_button = failed_row.locator('[data-action="delete-custom-lab"]')
+        expect(delete_button).to_be_visible()
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-failure-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-failure-mobile.png"), full_page=True)
@@ -2656,14 +2691,14 @@ def main() -> None:
         for width, height in ((320, 568), (390, 844), (768, 1024), (1280, 720), (1440, 900)):
             page.set_viewport_size({"width": width, "height": height})
             action_layout = failed_row.locator(".admin-lab-row-actions").evaluate(
-                "element => { const row = element.getBoundingClientRect(); const buttons = [...element.querySelectorAll(':scope > button, :scope > details > summary')].map(button => button.getBoundingClientRect()); return { fit: buttons.every(button => button.left >= row.left - 1 && button.right <= row.right + 1), oneRow: buttons.every(button => Math.abs(button.top - buttons[0].top) < 2) }; }"
+                "element => { const row = element.getBoundingClientRect(); const buttons = [...element.querySelectorAll(':scope > button')].map(button => button.getBoundingClientRect()); return { fit: buttons.every(button => button.left >= row.left - 1 && button.right <= row.right + 1), oneRow: buttons.every(button => Math.abs(button.top - buttons[0].top) < 2) }; }"
             )
             assert action_layout == {"fit": True, "oneRow": True}, (width, action_layout)
         page.set_viewport_size({"width": 1440, "height": 900})
         custom_lab_id = failed_row.get_attribute("data-lab-id")
         assert custom_lab_id
         failed_row = page.locator(f'.admin-lab-row[data-lab-id="{custom_lab_id}"]')
-        failed_row.locator('[data-action="retry-custom-lab"]').click()
+        failed_row.locator('[data-action="retry-admin-lab"]').click()
         page.wait_for_function(
             """async labId => {
                 const labs = await (await fetch('/api/labs')).json()
@@ -2673,7 +2708,7 @@ def main() -> None:
             arg=custom_lab_id,
             timeout=20_000,
         )
-        expect(failed_row.locator('[data-action="retry-custom-lab"]')).to_be_visible()
+        expect(failed_row.locator('[data-action="retry-admin-lab"]')).to_be_visible()
         failed_row.locator('[data-action="edit-custom-lab"]').click()
         expect(page.locator("#admin-lab-form")).to_contain_text("留空保留当前压缩包")
         page.locator('#admin-lab-form [name="archiveFile"]').set_input_files(str(valid_archive_path))
@@ -2687,7 +2722,7 @@ def main() -> None:
         page.locator('#admin-lab-form [name="title"]').fill("已编辑的浏览器靶场")
         page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
         expect(failed_row.locator('.admin-lab-row-copy strong')).to_have_text("已编辑的浏览器靶场")
-        failed_row.locator('[data-action="toggle-custom-lab"]').click()
+        failed_row.locator('[data-action="toggle-admin-lab"]').click()
         page.get_by_role("button", name="停用靶场", exact=True).last.click()
         expect(failed_row).to_contain_text("已停用")
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
@@ -2696,17 +2731,16 @@ def main() -> None:
         page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
         expect(failed_row.locator('.admin-lab-row-copy strong')).to_have_text("停用中已编辑的靶场")
         expect(failed_row).to_contain_text("已停用")
-        failed_row.locator('[data-action="toggle-custom-lab"]').click()
+        failed_row.locator('[data-action="toggle-admin-lab"]').click()
         expect(failed_row).to_contain_text("已就绪")
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count + 1)
-        failed_row.locator('[data-action="copy-custom-lab-config"]').click()
+        failed_row.locator('[data-action="copy-admin-lab-config"]').click()
         expect(page.locator('#admin-lab-form [name="title"]')).to_have_value("")
         expect(page.locator('#admin-lab-form [name="sourceUrl"]')).to_have_value("")
         expect(page.locator('#admin-lab-form [name="sourceType"]')).to_have_value("git")
         expect(page.locator('#admin-lab-form [name="runtimeMode"]')).to_have_value("php-static")
         page.locator('[data-action="cancel-custom-lab-editor"]').click()
         failed_row = page.locator(f'.admin-lab-row[data-lab-id="{custom_lab_id}"]')
-        failed_row.locator(".admin-lab-more > summary").click()
         failed_row.locator('[data-action="delete-custom-lab"]').click()
         expect(page.locator('.workspace-dialog-backdrop').last).to_contain_text("无法撤销")
         page.get_by_role("button", name="删除靶场", exact=True).last.click()

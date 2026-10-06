@@ -388,7 +388,7 @@ export class VulnLabDatabase {
         source_type = @sourceType, source_url = @sourceUrl, source_ref = @sourceRef,
         license = @license, runtime_kind = @runtimeKind, provider_id = @providerId,
         builtin = 1,
-        status = CASE WHEN version <> @version THEN 'cataloged' ELSE status END,
+        status = CASE WHEN status = 'disabled' THEN 'disabled' WHEN version <> @version THEN 'cataloged' ELSE status END,
         local_path = CASE WHEN version <> @version THEN NULL ELSE local_path END,
         imported_at = CASE WHEN version <> @version THEN NULL ELSE imported_at END,
         version = @version, summary = @summary, tags_json = @tagsJson,
