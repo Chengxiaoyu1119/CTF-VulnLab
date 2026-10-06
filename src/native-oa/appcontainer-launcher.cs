@@ -9,7 +9,6 @@ using System.Text;
 internal static class AppContainerLauncher
 {
     private const uint ExtendedStartupInfoPresent = 0x00080000;
-    private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint CreateSuspended = 0x00000004;
     private const uint StartfUseStdHandles = 0x00000100;
     private const uint ProcThreadAttributeSecurityCapabilities = 0x00020009;
@@ -127,8 +126,6 @@ internal static class AppContainerLauncher
     private static extern bool CreateProcessW(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags, byte[] environment, string currentDirectory, ref StartupInfoEx startupInfo, out ProcessInformation processInformation);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GetStdHandle(int handle);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetFullPathNameW", SetLastError = true)]
-    private static extern uint GetFullPathName(string path, uint bufferLength, StringBuilder buffer, IntPtr filePart);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -296,30 +293,6 @@ internal static class AppContainerLauncher
         RevokeDirectory(path, sid);
     }
 
-    private static byte[] RestrictedEnvironment()
-    {
-        var allowed = new System.Collections.Generic.SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string[] currentDirectories = { Environment.CurrentDirectory, Environment.SystemDirectory };
-        foreach (string directory in currentDirectories)
-        {
-            string drive = Path.GetPathRoot(directory);
-            if (String.IsNullOrEmpty(drive) || drive.Length < 2 || drive[1] != ':') continue;
-            var path = new StringBuilder(32768);
-            uint length = GetFullPathName(drive.Substring(0, 2), (uint)path.Capacity, path, IntPtr.Zero);
-            if (length > 0 && length < path.Capacity) allowed["=" + drive.Substring(0, 2)] = path.ToString();
-        }
-        string[] names = { "SystemRoot", "WINDIR", "TEMP", "TMP", "NODE_ENV", "VULNLAB_OA_FRONTEND_ROOT", "VULNLAB_OA_INVITE_CODE", "VULNLAB_OA_JWT_SECRET", "VULNLAB_OA_RUNTIME_ROOT", "VULNLAB_OA_UPLOAD_ROOT" };
-        foreach (string name in names)
-        {
-            string value = Environment.GetEnvironmentVariable(name);
-            if (!String.IsNullOrEmpty(value)) allowed[name] = value;
-        }
-        var block = new StringBuilder();
-        foreach (var pair in allowed) block.Append(pair.Key).Append('=').Append(pair.Value).Append('\0');
-        block.Append('\0');
-        return Encoding.Unicode.GetBytes(block.ToString());
-    }
-
     private static void GrantDirectory(string path, SecurityIdentifier sid, FileSystemRights rights)
     {
         var directory = new DirectoryInfo(path);
@@ -395,7 +368,7 @@ internal static class AppContainerLauncher
             ProcessInformation process;
             Console.Error.WriteLine("OA_SANDBOX:process:create-start");
             Check(CreateProcessW(nodePath, command, IntPtr.Zero, IntPtr.Zero, true,
-                ExtendedStartupInfoPresent | CreateSuspended | CreateUnicodeEnvironment, RestrictedEnvironment(),
+                ExtendedStartupInfoPresent | CreateSuspended, null,
                 null, ref startup, out process), "AppContainer process launch failed");
             bool isAppContainer;
             Check(IsProcessInAppContainer(process.Process, out isAppContainer), "AppContainer verification failed");
