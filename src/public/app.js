@@ -1289,6 +1289,14 @@ function adminRecordsPanel(selection) {
   const auditReturn = isAuditPanel && state.adminAuditReturnToSystem ? '<button class="admin-audit-return" type="button" data-action="return-to-system-data">返回系统数据</button>' : ''
   const systemAdmin = isUserPanel ? records.find(item => item.kind === 'system') : null
   const systemAdminRow = systemAdmin ? `<div class="admin-user-entry admin-user-system" data-id="${esc(systemAdmin.userName)}" data-kind="system"><div class="admin-user-system-profile"><img class="admin-user-avatar" src="/favicon.png" alt="" aria-hidden="true"><div class="admin-user-identity"><div class="admin-user-heading"><strong class="admin-user-name" title="${esc(systemAdmin.userName)}">${esc(systemAdmin.userName)}</strong><span class="admin-user-role">默认管理员</span></div></div></div></div>` : ''
+  const emptyClass = `admin-empty-state${isAuditPanel ? ' admin-audit-empty-state' : ''}`
+  const emptyMessage = isAuditPanel
+    ? state.adminAuditDate && state.adminAuditAction === 'instance.start'
+      ? '当天暂无启动记录。'
+      : state.adminAuditDate || state.adminAuditAction
+        ? '暂无符合条件的审计记录。'
+        : '暂无审计记录。'
+    : `暂无${isInvitationPanel ? '邀请码' : '注册账号'}记录。`
   const userRows = isUserPanel ? registeredUsers.map(item => {
     const timestamp = auditTimestamp(item.createdAt)
     const current = state.session?.userName?.toLowerCase() === item.userName.toLowerCase()
@@ -1306,7 +1314,7 @@ function adminRecordsPanel(selection) {
           : isAuditPanel
             ? `<div class="admin-record-list audit-history">${records.map(item => { const timestamp = auditTimestamp(item.createdAt); const expanded = state.adminAuditExpandedId === item.id; const detailId = `audit-detail-${item.id}`; return `<div class="audit-entry${selected.has(item.id) ? ' is-selected' : ''}" data-id="${esc(item.id)}"><label class="admin-record-select"><input type="checkbox" data-admin-record-select="audit" data-id="${esc(item.id)}" aria-label="选择审计记录" ${selected.has(item.id) ? 'checked' : ''}></label><div class="audit-entry-content" role="button" tabindex="0" data-action="toggle-audit-detail" data-audit-expand="${esc(item.id)}" data-id="${esc(item.id)}" aria-expanded="${expanded}" aria-controls="${esc(detailId)}"><strong>${esc(actionLabels[item.action] ?? item.action)}</strong><div class="audit-entry-meta"><span class="audit-entry-actor" title="用户：${esc(item.actor)}"><span class="audit-entry-actor-label">用户</span><span class="audit-entry-actor-name">${esc(item.actor)}</span></span><time class="audit-entry-time" datetime="${esc(item.createdAt)}"><span class="audit-entry-date">${esc(timestamp.date)}</span><span class="audit-entry-clock">${esc(timestamp.time)}</span></time></div>${expanded ? `<div class="audit-entry-detail" id="${esc(detailId)}"><span class="audit-entry-detail-label">对象</span><span class="audit-entry-detail-value">${esc(item.target || '—')}</span><span class="audit-entry-detail-label">详情</span><span class="audit-entry-detail-value">${esc(item.detail || '—')}</span></div>` : ''}</div><button class="record-delete" type="button" data-action="delete-audit-record" data-id="${esc(item.id)}" aria-label="删除审计记录" title="删除审计记录">${deleteRecordIcon()}</button></div>` }).join('')}</div>${pagination}`
             : `${systemAdminRow}${hasRegisteredUsers ? `<div class="admin-user-table-head">${selectAllControl}<span>账号</span><span>注册时间</span><span>操作</span></div><div class="admin-record-list user-history">${userRows}</div>` : '<p class="admin-user-empty" role="status">暂无注册账号</p>'}${pagination}`
-        : `<div class="admin-empty-state" role="status">${isAuditPanel && state.adminAuditDate && state.adminAuditAction === 'instance.start' ? '当天暂无启动记录。' : `暂无${isInvitationPanel ? '邀请码' : isAuditPanel ? '符合条件的审计' : '注册账号'}记录。`}</div>`
+        : `<div class="${emptyClass}" role="status">${emptyMessage}</div>`
   return `<section class="admin-record-view" data-admin-view="${state.adminRecordsPanel}" aria-label="${title}" aria-busy="${state.adminLoading ? 'true' : 'false'}">${auditReturn}${auditFilters}${isInvitationPanel ? invitation : ''}${content}</section>`
 }
 

@@ -1362,6 +1362,26 @@ def main() -> None:
         for user_name in account_names[3:]:
             expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
         account_context.close()
+
+        def empty_audit_records(route):
+            route.fulfill(status=200, content_type="application/json", headers={"X-VulnLab-Record-Total": "0"}, body="[]")
+
+        page.route("**/api/audit*", empty_audit_records)
+        audit_button.click()
+        expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+        empty_audit_state = page.locator(".admin-audit-empty-state")
+        expect(empty_audit_state).to_have_text("暂无审计记录。")
+        empty_audit_layout = empty_audit_state.evaluate(
+            "element => { const style = getComputedStyle(element); const filters = element.previousElementSibling.getBoundingClientRect(); const box = element.getBoundingClientRect(); return { border: style.borderStyle, textAlign: style.textAlign, width: box.width, height: box.height, nearFilters: box.top - filters.bottom, aligned: Math.abs(box.left - filters.left) <= 1 && Math.abs(box.right - filters.right) <= 1 }; }"
+        )
+        assert empty_audit_layout["border"] == "dashed" and empty_audit_layout["textAlign"] == "center" and empty_audit_layout["height"] == 36 and empty_audit_layout["nearFilters"] == 12 and empty_audit_layout["aligned"], empty_audit_layout
+        with page.expect_response(lambda response: "/api/audit?" in response.url and "date=2000-01-01" in response.url and response.request.method == "GET"):
+            page.locator('[data-audit-filter="date"]').fill("2000-01-01")
+        expect(page.locator(".admin-audit-empty-state")).to_have_text("暂无符合条件的审计记录。")
+        page.unroute("**/api/audit*", empty_audit_records)
+        page.locator('[data-action="clear-audit-filters"]').click()
+        expect(page.locator(".audit-entry")).to_have_count(50)
+        page.locator('[data-action="open-admin-section"][data-section="profile"]').click()
         def fail_audit_records(route):
             route.fulfill(status=503, content_type="application/json", body=json.dumps({"message": "测试审计服务暂不可用"}))
 
