@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { mysqlClientArguments, type MySqlRuntimeConfig } from './mysql.js'
-import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainId, type RuntimeToolchainStatus } from './runtime-toolchains.js'
+import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainId, type RuntimeToolchainStatus } from './runtime/toolchains.js'
 import { dataPaths, runtimePaths } from './paths.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'

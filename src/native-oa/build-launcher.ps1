@@ -4,7 +4,7 @@ $appRoot = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $PSScriptRoot 'appcontainer-launcher.cs'
 $outputDir = Join-Path $appRoot 'assets\native-oa'
 $output = Join-Path $outputDir 'appcontainer-launcher-sandbox.exe'
-$contract = Join-Path $appRoot 'oa-sandbox.ts'
+$contract = Join-Path $appRoot 'oa\sandbox.ts'
 $compilerPaths = @(
   (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
   (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')

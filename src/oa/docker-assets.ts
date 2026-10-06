@@ -12,7 +12,7 @@ export const OA_DOCKER_ASSET_SHA256 = '6402789609f547668c9c1d41a5aded1ef3dd644a7
 
 const assetRoot = () => {
   const moduleDir = dirname(fileURLToPath(import.meta.url))
-  const appRoot = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+  const appRoot = basename(dirname(moduleDir)) === 'dist' ? resolve(moduleDir, '..', '..') : resolve(moduleDir, '..')
   return join(appRoot, 'assets', 'labs', 'oa-vuln-labs', '1.0.0-beta', 'docker.zip')
 }
 

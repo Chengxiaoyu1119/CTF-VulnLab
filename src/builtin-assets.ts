@@ -4,7 +4,7 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'nod
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
-import { adaptOaSeed } from './oa-seed.js'
+import { adaptOaSeed } from './oa/seed.js'
 import type { ImportManifest, Lab } from './types.js'
 import { dataPaths } from './paths.js'
 import { readZipEntries } from './zip.js'

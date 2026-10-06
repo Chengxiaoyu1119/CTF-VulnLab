@@ -418,15 +418,7 @@ def main() -> None:
         assert xss_cover.evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.locator(".lab-detail-facts")).to_have_text("Web·中等")
         expect(page.locator(".lab-detail-summary").first).to_have_text("XSS 专项关卡，练习反射型输入与常见过滤绕过。")
-        xss_notes = page.locator(".lab-detail-notes")
-        expect(xss_notes.locator("summary")).to_have_text("版本与兼容性")
-        assert not xss_notes.evaluate("element => element.open")
-        xss_notes.locator("summary").click()
-        expect(xss_notes).to_contain_text("版本 c97bed6 · 许可证上游未声明")
-        expect(xss_notes).to_contain_text("第 14 关使用本地空白占位")
-        expect(xss_notes).to_contain_text("第 17–20 关依赖 Flash，现代浏览器不支持")
-        expect(xss_notes.get_by_role("link", name="上游仓库")).to_have_attribute("href", "https://github.com/do0dl3/xss-labs")
-        xss_notes.locator("summary").click()
+        expect(page.locator(".lab-detail-notes")).to_have_count(0)
         xss_detail_size = page.locator(".lab-detail-body").evaluate("element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })")
         assert xss_detail_size["scrollHeight"] <= xss_detail_size["clientHeight"], xss_detail_size
         page.get_by_role("button", name="关闭靶场信息").click()
@@ -448,6 +440,10 @@ def main() -> None:
         mutillidae_lab = next(lab for lab in initial_labs_payload if lab["slug"] == "mutillidae")
         mutillidae_index = next(index for index, lab in enumerate(initial_labs_payload) if lab["slug"] == "mutillidae")
         mutillidae_trigger = page.locator(".lab-card-media").nth(mutillidae_index)
+        mutillidae_card_cover_style = mutillidae_trigger.locator(".lab-card-cover").evaluate(
+            "element => ({ objectFit: getComputedStyle(element).objectFit, objectPosition: getComputedStyle(element).objectPosition })"
+        )
+        assert mutillidae_card_cover_style == {"objectFit": "cover", "objectPosition": "50% 25%"}, mutillidae_card_cover_style
         mutillidae_trigger.click()
         expect(page.get_by_role("heading", name="OWASP Mutillidae II", exact=True)).to_be_visible()
         detail_entry_animation = page.locator(".lab-detail-heading").evaluate(
@@ -469,7 +465,7 @@ def main() -> None:
         ).evaluate(
             "element => ({ objectFit: getComputedStyle(element).objectFit, objectPosition: getComputedStyle(element).objectPosition })"
         )
-        assert mutillidae_cover_style == {"objectFit": "cover", "objectPosition": "50% 0%"}, mutillidae_cover_style
+        assert mutillidae_cover_style == {"objectFit": "cover", "objectPosition": "50% 8%"}, mutillidae_cover_style
         page.get_by_role("button", name="关闭靶场信息").click()
         expect(mutillidae_trigger).to_be_focused()
         page.evaluate(

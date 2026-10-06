@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zipSync, strToU8 } from '../../src/node_modules/fflate/esm/index.mjs'
-import { RuntimeToolchainInstaller } from '../../src/dist/runtime-toolchains.js'
+import { RuntimeToolchainInstaller } from '../../src/dist/runtime/toolchains.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-toolchains-'))
 try {

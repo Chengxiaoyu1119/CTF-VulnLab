@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Lab } from './types.js'
+import type { Lab } from '../types.js'
 
 export class RuntimePreparationError extends Error {
   constructor(message: string) {
@@ -18,7 +18,7 @@ const existingDirectory = (path: string) => stat(path).then(item => item.isDirec
 const bundledPyGoatDependencies = () => {
   if (process.platform !== 'win32' || process.arch !== 'x64') return null
   const moduleDir = dirname(fileURLToPath(import.meta.url))
-  const appRoot = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+  const appRoot = basename(dirname(moduleDir)) === 'dist' ? resolve(moduleDir, '..', '..') : resolve(moduleDir, '..')
   return join(appRoot, 'assets', 'python', 'pygoat')
 }
 

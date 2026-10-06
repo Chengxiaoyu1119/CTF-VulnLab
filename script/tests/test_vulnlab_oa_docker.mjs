@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createOaDockerComposeConfig, DockerOaProvider, oaDockerProjectName } from '../../src/dist/providers.js'
-import { inspectOaDockerAsset, oaDockerAssetPath } from '../../src/dist/oa-docker-assets.js'
-import { inspectOaDockerRuntime } from '../../src/dist/oa-docker-runtime.js'
+import { inspectOaDockerAsset, oaDockerAssetPath } from '../../src/dist/oa/docker-assets.js'
+import { inspectOaDockerRuntime } from '../../src/dist/oa/docker-runtime.js'
 import { dataPaths } from '../../src/dist/paths.js'
 
 const projectName = oaDockerProjectName('oa-test-instance-123')

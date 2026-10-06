@@ -149,12 +149,6 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .lab-detail-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .lab-detail-tags span { border: 1px solid #373737; border-radius: 999px; padding: 3px 8px; color: #aaa; background-color: #242424; font-size: 10px; line-height: 1.2; }
 .lab-detail-tags span + span::before { display: none; }
-.lab-detail-notes { margin-top: 10px; color: #8f8f8f; font-size: 10px; line-height: 1.5; }
-.lab-detail-notes summary { width: fit-content; cursor: pointer; color: #969696; }
-.lab-detail-notes[open] { border-top: 1px solid var(--workspace-line); padding-top: 8px; }
-.lab-detail-notes p { margin: 6px 0 0; }
-.lab-detail-notes a { display: inline-block; margin-top: 6px; color: #aaa; text-decoration: underline; text-underline-offset: 2px; }
-.lab-detail-notes a:hover { color: var(--workspace-ink); }
 .lab-detail-runtime { margin-top: 15px; border-top: 1px solid var(--workspace-line); padding: 10px 0 2px; }
 .lab-detail-runtime-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .lab-detail-runtime-head > div { display: inline-flex; align-items: center; gap: 7px; color: var(--workspace-success); font-size: 11px; }
@@ -662,8 +656,8 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .lab-card-media[data-cover="sqli-labs"] .lab-card-cover { object-fit: contain; object-position: center; padding: 40px 12px; background-color: #050505; }
 .lab-card-media[data-cover="upload-labs"] .lab-card-cover { object-position: left 38%; }
 .lab-card-media[data-cover="webgoat"] .lab-card-cover { object-position: 40% 35%; }
-.lab-card-media[data-cover="mutillidae"] .lab-card-cover { object-fit: cover; padding: 0; }
-.lab-card-media.lab-detail-cover[data-cover="mutillidae"] .lab-card-cover { object-position: center top; }
+.lab-card-media[data-cover="mutillidae"] .lab-card-cover { object-fit: cover; object-position: center 25%; padding: 0; }
+.lab-card-media.lab-detail-cover[data-cover="mutillidae"] .lab-card-cover { object-position: center 8%; }
 .lab-card-media[data-cover="pygoat"] .lab-card-cover { object-fit: contain; padding: 19px 38px; background-color: #ededed; }
 .lab-card-media.cover-load-failed { background-color: #1b1b1b; }
 .lab-card-media.cover-load-failed::after { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; content: '封面暂不可用'; color: #8f8f8f; background: radial-gradient(circle at center, rgba(255, 127, 42, .08), transparent 48%); font-size: 11px; }

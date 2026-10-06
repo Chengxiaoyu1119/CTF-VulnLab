@@ -1,5 +1,5 @@
-import { RpcPeer } from './oa-ipc.js'
-import { createOaApi } from './oa-api.js'
+import { RpcPeer } from './ipc.js'
+import { createOaApi } from './api.js'
 
 if (!process.stdin.isTTY && process.stdin.readable && process.stdout.writable) {
   const peer = new RpcPeer(process.stdin, process.stdout, async (method, payload) => {

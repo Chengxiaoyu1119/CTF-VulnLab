@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mysqlDataDirectoryMatches, ProjectEnvironmentManager } from '../../src/dist/project-environment.js'
-import { RuntimeToolchainInstaller } from '../../src/dist/runtime-toolchains.js'
+import { RuntimeToolchainInstaller } from '../../src/dist/runtime/toolchains.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-project-environment-'))
 try {

@@ -4,14 +4,18 @@
 
 ## 模块边界
 
+启动入口、包配置和跨模块核心文件保留在根目录；独立功能组按领域放入一级目录，运行数据、依赖和构建产物不纳入源码整理。
+
 - `server.ts`：Fastify 服务、认证、API、运行入口与静态资源。
 - `db.ts`：SQLite schema、内置靶场、安装任务、实例、设置与审计。
 - `builtin-assets.ts`：Juice Shop、WebGoat 官方发行包下载、校验和安全解包。
 - `importer.ts`：GitHub / GitLab 固定版本下载、归档哈希、路径检查和清单生成。
 - `providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 支持本地 AppContainer 与 Docker Compose 两种 Provider；XVWA 与其他 PHP 靶场共用 `native-php`。
-- `runtime-prep.ts`：PyGoat 私有 Python 环境与依赖准备。
-- `runtime-status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
-- `runtime-toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
+- `oa/`：OA 专属 API、IPC、Docker、网络隔离与 AppContainer 模块。
+- `native-oa/`：OA 启动器源码和 Docker 构建文件；生成的启动器二进制放在 `assets/native-oa/`。
+- `runtime/prep.ts`：PyGoat 私有 Python 环境与依赖准备。
+- `runtime/status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
+- `runtime/toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA Beta）。

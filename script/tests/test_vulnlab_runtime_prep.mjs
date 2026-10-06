@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareInstalledLab, pythonInstallConfig } from '../../src/dist/runtime-prep.js'
+import { prepareInstalledLab, pythonInstallConfig } from '../../src/dist/runtime/prep.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-prep-'))
 const savedRequirements = process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE

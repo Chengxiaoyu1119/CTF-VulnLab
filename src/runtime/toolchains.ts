@@ -4,7 +4,7 @@ import { closeSync, createReadStream, mkdirSync, openSync, writeSync } from 'nod
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate'
-import { runtimePaths } from './paths.js'
+import { runtimePaths } from '../paths.js'
 
 export type RuntimeToolchainId = 'php' | 'mariadb' | 'node' | 'java' | 'python'
 export type RuntimeToolchainState = 'missing' | 'installing' | 'ready' | 'error'

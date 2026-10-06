@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import bcrypt from '../../src/node_modules/bcryptjs/umd/index.js'
 import { strFromU8, unzipSync } from '../../src/node_modules/fflate/esm/index.mjs'
-import { createOaApi } from '../../src/dist/oa-api.js'
+import { createOaApi } from '../../src/dist/oa/api.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-oa-api-'))
 const previousCwd = process.cwd()
@@ -205,7 +205,7 @@ try {
   assert.equal(JSON.parse(virtualCommand.body).data.rendered, 'vulnlab\\oa-instance\r\n')
   const deniedCommand = await request('POST', '/api/notification/template/preview', { content: '{{exec "powershell -Command whoami"}}' }, forgedToken)
   assert.match(JSON.parse(deniedCommand.body).data.rendered, /not available in the OA virtual command environment/)
-  assert.doesNotMatch(await readFile(join(previousCwd, 'oa-api.ts'), 'utf8'), /execFile|cmd\.exe/)
+  assert.doesNotMatch(await readFile(new URL('../../src/oa/api.ts', import.meta.url), 'utf8'), /execFile|cmd\.exe/)
 
   const otherRoot = join(root, 'other-instance')
   const otherFrontend = join(otherRoot, 'frontend')

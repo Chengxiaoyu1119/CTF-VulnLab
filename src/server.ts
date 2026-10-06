@@ -15,12 +15,12 @@ import { inspectPublicGitRepository, inspectUploadedArchive, supportedInspection
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
 import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
-import { prepareInstalledLab } from './runtime-prep.js'
-import { inspectOaRuntimeModes, inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
+import { prepareInstalledLab } from './runtime/prep.js'
+import { inspectOaRuntimeModes, inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime/status.js'
 import { autoInstallLabs } from './seed.js'
 import { dataPaths } from './paths.js'
 import type { AppSettings, Difficulty, ImportManifest, Lab, LabInstance, LabRuntimeConfig, RuntimeKind, SessionView, SourceType, SystemOverview } from './types.js'
-import type { RuntimeToolchainId } from './runtime-toolchains.js'
+import type { RuntimeToolchainId } from './runtime/toolchains.js'
 
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('VulnLab 当前仅支持 Windows x64。')
 
