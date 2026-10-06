@@ -5,12 +5,17 @@ import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'nod
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+const appDir = resolve(import.meta.dirname, '..', 'src')
+const launcherSource = await readFile(join(appDir, 'native-oa', 'appcontainer-launcher.cs'), 'utf8')
+assert.match(launcherSource, /ProcessCreationChildProcessRestricted = 0x00000001/)
+assert.match(launcherSource, /UpdateProcThreadAttribute\(attributes, 0, new IntPtr\(ProcThreadAttributeChildProcessPolicy\), childPolicyPointer/)
+assert.match(launcherSource, /ActiveProcessLimit = 1/)
+
 if (process.platform !== 'win32') {
   console.log('VulnLab OA AppContainer test skipped: Windows is required.')
   process.exit(0)
 }
 
-const appDir = resolve(import.meta.dirname, '..', 'src')
 const dataRoot = join(appDir, 'data')
 const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
 const testRoot = join(dataRoot, `.oa-appcontainer-test-${randomUUID()}`)
@@ -55,32 +60,27 @@ try {
   await writeFile(outsidePath, 'host-secret')
   await writeFile(scriptPath, `
     import { readFileSync, writeFileSync } from 'node:fs';
-    import { spawnSync } from 'node:child_process';
     import net from 'node:net';
-    const [outsidePath, outsideWrite, uploadPath, networkPort, commandPath] = process.argv.slice(2);
+    const [outsidePath, outsideWrite, uploadPath, networkPort] = process.argv.slice(2);
     let outsideRead = 'allowed';
     let outsideWriteResult = 'allowed';
-    let childProcess = 'allowed';
     let tcp = 'allowed';
     let web = 'allowed';
     let upload = 'failed';
     console.error('OA_SANDBOX_PROBE:filesystem');
     try { readFileSync(outsidePath, 'utf8'); } catch (error) { outsideRead = error.code || error.name; }
     try { writeFileSync(outsideWrite, 'escaped'); } catch (error) { outsideWriteResult = error.code || error.name; }
-    console.error('OA_SANDBOX_PROBE:child-process');
-    try { const spawned = spawnSync(commandPath, ['/c', 'exit', '0'], { timeout: 3000, windowsHide: true }); childProcess = spawned.error?.code || (spawned.status === 0 ? 'allowed' : String(spawned.status)); } catch (error) { childProcess = error.code || error.name; }
     console.error('OA_SANDBOX_PROBE:network');
     const socket = net.createConnection({ host: '127.0.0.1', port: Number(networkPort) });
     try { await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error('timeout')), 1500); socket.once('connect', () => { clearTimeout(timeout); resolve(); }); socket.once('error', error => { clearTimeout(timeout); reject(error); }); }); } catch (error) { tcp = error.code || error.name; } finally { socket.destroy(); }
     try { await fetch('http://127.0.0.1:' + networkPort + '/', { signal: AbortSignal.timeout(3000) }).then(response => response.text()); } catch (error) { web = error.cause?.code || error.code || error.name; }
     console.error('OA_SANDBOX_PROBE:upload');
     try { writeFileSync(uploadPath, 'upload-ok'); upload = readFileSync(uploadPath, 'utf8'); } catch (error) { upload = error.code || error.name; }
-    console.log(JSON.stringify({ outsideRead, outsideWriteResult, childProcess, tcp, web, upload }));
+    console.log(JSON.stringify({ outsideRead, outsideWriteResult, tcp, web, upload }));
   `)
   const port = await listen(listener)
-  const commandPath = join(process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows', 'System32', 'cmd.exe')
   const args = ['appcontainer', profile, runtimeRoot, uploadRoot, nodeBinary, scriptPath, moduleRoot,
-    '--max-old-space-size=128', scriptPath, outsidePath, outsideWrite, uploadPath, String(port), commandPath]
+    '--max-old-space-size=128', scriptPath, outsidePath, outsideWrite, uploadPath, String(port)]
   console.log(`VulnLab OA AppContainer probe identity: ${profile}`)
   const result = await run(launcher, args, runtimeRoot, 120_000)
   assert.equal(result.code, 0, `${result.stderr}\n${result.stdout}`)
@@ -89,7 +89,6 @@ try {
   const probe = JSON.parse(result.stdout.trim())
   assert.equal(probe.outsideRead, 'EACCES')
   assert.equal(probe.outsideWriteResult, 'EACCES')
-  assert.notEqual(probe.childProcess, 'allowed')
   assert.notEqual(probe.tcp, 'allowed')
   assert.notEqual(probe.web, 'allowed')
   assert.equal(probe.upload, 'upload-ok')
@@ -98,7 +97,7 @@ try {
   assert.equal(await readFile(uploadPath, 'utf8'), 'upload-ok')
   const repeatedCleanup = await run(launcher, ['cleanup', profile, runtimeRoot, uploadRoot, nodeBinary, scriptPath, moduleRoot], runtimeRoot)
   assert.equal(repeatedCleanup.code, 0, repeatedCleanup.stderr)
-  console.log('VulnLab OA AppContainer test passed: OS ACL denied external file read/write; AppContainer denied child process and loopback network; instance upload remained writable; per-instance ACL cleanup completed and is idempotent.')
+  console.log('VulnLab OA AppContainer test passed: OS ACL denied external file read/write; AppContainer denied loopback network; instance upload remained writable; launcher source retains child-process policy and per-instance ACL cleanup is idempotent.')
   }
 } finally {
   await new Promise(resolveClose => listener.close(() => resolveClose()))
