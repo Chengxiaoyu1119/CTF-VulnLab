@@ -3,20 +3,21 @@
 <div align="center">
   <img src="src/public/favicon.png" width="88" alt="VulnLab Logo">
   <h1>VulnLab</h1>
-  <p><strong>把主流 Web 安全训练环境装进一台真正可启动的本地工作台。</strong></p>
-  <p>固定版本资源 · 一键启动 · 生命周期管理 · 管理数据可追踪</p>
+  <p><strong>一台电脑，启动九类 Web 安全靶场。</strong></p>
+  <p>固定版本 · 一键启动 · 独立实例 · 到期回收</p>
 
-  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg" alt="VulnLab CI"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows&logoColor=white" alt="Windows x64">
-  <img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/CTF-VulnLab/vulnlab-ci.yml?style=for-the-badge&logo=githubactions&label=CI" alt="VulnLab CI"></a>
+  <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
+  <img src="https://img.shields.io/badge/Node.js-22%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 22+">
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/stargazers"><img src="https://img.shields.io/github/stars/Chengxiaoyu1119/CTF-VulnLab?style=for-the-badge&logo=github&label=Stars" alt="GitHub stars"></a>
 </div>
 
 <p align="center">
-  <a href="#快速开始">快速开始</a> ·
   <a href="#核心能力">核心能力</a> ·
+  <a href="#快速开始">快速开始</a> ·
   <a href="#内置靶场">内置靶场</a> ·
-  <a href="#运行链路">运行链路</a> ·
-  <a href="#文档">文档</a>
+  <a href="#文档">文档</a> ·
+  <a href="#架构时序">架构时序</a>
 </p>
 
 <p align="center">
@@ -54,21 +55,6 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 
 共 `9` 个固定版本训练环境。资源和对应运行时在首次启动时按需准备。
 
-## 运行链路
-
-```mermaid
-flowchart LR
-    A[选择靶场] --> B[获取固定资源]
-    B --> C[校验并准备运行时]
-    C --> D[创建独立运行副本]
-    D --> E[打开练习入口]
-    E --> F[续期或停止并回收]
-    classDef accent fill:#ff7f2a,stroke:#ffb400,color:#121212
-    classDef surface fill:#1e1e1e,stroke:#668099,color:#f5f5f5
-    class A,F accent
-    class B,C,D,E surface
-```
-
 <details>
   <summary><strong>开发与验证</strong></summary>
 
@@ -90,3 +76,30 @@ flowchart LR
 | [开发与运行手册](src/README.md) | 模块、配置、运行时、Provider 与验证命令 |
 | [设计说明](DESIGN.md) | 页面契约、视觉规则与响应式验收 |
 | [靶场封面来源](src/public/covers/README.md) | 上游图片、标识与来源链接 |
+
+## 架构时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Learner as 练习者
+    participant UI as VulnLab 工作台
+    participant API as 本地服务
+    participant Lab as 靶场实例
+    Learner->>UI: 选择靶场并启动
+    UI->>API: 请求启动实例
+    API->>API: 检查依赖并准备资源
+    API->>Lab: 创建独立副本并启动进程
+    Lab-->>API: 返回入口与运行状态
+    API-->>UI: 更新实例状态
+    UI-->>Learner: 打开练习页面
+    Learner->>UI: 停止实例
+    UI->>API: 请求结束实例
+    API->>Lab: 停止进程并回收资源
+    API-->>UI: 更新实例状态
+```
+
+<p align="center">
+  <strong>如果这个项目对你有帮助，欢迎点亮一个标星 ⭐</strong><br>
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/stargazers">⭐ Star VulnLab</a>
+</p>
