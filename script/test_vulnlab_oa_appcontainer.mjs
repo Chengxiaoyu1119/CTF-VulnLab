@@ -64,12 +64,16 @@ try {
     let tcp = 'allowed';
     let web = 'allowed';
     let upload = 'failed';
+    console.error('OA_SANDBOX_PROBE:filesystem');
     try { readFileSync(outsidePath, 'utf8'); } catch (error) { outsideRead = error.code || error.name; }
     try { writeFileSync(outsideWrite, 'escaped'); } catch (error) { outsideWriteResult = error.code || error.name; }
-    try { const spawned = spawnSync(commandPath, ['/c', 'exit', '0']); childProcess = spawned.error?.code || (spawned.status === 0 ? 'allowed' : String(spawned.status)); } catch (error) { childProcess = error.code || error.name; }
+    console.error('OA_SANDBOX_PROBE:child-process');
+    try { const spawned = spawnSync(commandPath, ['/c', 'exit', '0'], { timeout: 3000, windowsHide: true }); childProcess = spawned.error?.code || (spawned.status === 0 ? 'allowed' : String(spawned.status)); } catch (error) { childProcess = error.code || error.name; }
+    console.error('OA_SANDBOX_PROBE:network');
     const socket = net.createConnection({ host: '127.0.0.1', port: Number(networkPort) });
     try { await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error('timeout')), 1500); socket.once('connect', () => { clearTimeout(timeout); resolve(); }); socket.once('error', error => { clearTimeout(timeout); reject(error); }); }); } catch (error) { tcp = error.code || error.name; } finally { socket.destroy(); }
     try { await fetch('http://127.0.0.1:' + networkPort + '/', { signal: AbortSignal.timeout(3000) }).then(response => response.text()); } catch (error) { web = error.cause?.code || error.code || error.name; }
+    console.error('OA_SANDBOX_PROBE:upload');
     try { writeFileSync(uploadPath, 'upload-ok'); upload = readFileSync(uploadPath, 'utf8'); } catch (error) { upload = error.code || error.name; }
     console.log(JSON.stringify({ outsideRead, outsideWriteResult, childProcess, tcp, web, upload }));
   `)
