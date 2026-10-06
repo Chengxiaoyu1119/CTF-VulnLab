@@ -22,6 +22,10 @@ on:
       - "script/test_vulnlab_mysql.mjs"
       - "script/test_vulnlab_runtime_toolchains.mjs"
       - "script/test_vulnlab_project_environment.mjs"
+      - "script/test_vulnlab_oa_api.mjs"
+      - "script/test_vulnlab_oa_docker.mjs"
+      - "script/test_vulnlab_oa_startup_modes.mjs"
+      - "script/test_vulnlab_oa_process_boundary.mjs"
       - "script/test_vulnlab_oa_appcontainer.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
@@ -49,6 +53,10 @@ on:
       - "script/test_vulnlab_mysql.mjs"
       - "script/test_vulnlab_runtime_toolchains.mjs"
       - "script/test_vulnlab_project_environment.mjs"
+      - "script/test_vulnlab_oa_api.mjs"
+      - "script/test_vulnlab_oa_docker.mjs"
+      - "script/test_vulnlab_oa_startup_modes.mjs"
+      - "script/test_vulnlab_oa_process_boundary.mjs"
       - "script/test_vulnlab_oa_appcontainer.mjs"
       - "script/smoke_vulnlab_operational.mjs"
       - "script/browser_check_vulnlab.py"
@@ -155,7 +163,7 @@ jobs:
 
       - name: Install browser smoke dependencies
         run: |
-          python -m pip install --disable-pip-version-check playwright
+          python -m pip install --disable-pip-version-check playwright==1.55.0
           python -m playwright install chromium
 
       - name: Run browser and responsive smoke test
