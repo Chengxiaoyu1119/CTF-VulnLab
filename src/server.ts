@@ -11,6 +11,7 @@ import { VulnLabDatabase, type RecordCursor, type RecordPage, type RecordPageOpt
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
 import { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
 import { adapterFor } from './importers.js'
+import { inspectPublicGitRepository, inspectUploadedArchive, supportedInspectionModes } from './source-inspection.js'
 import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
 import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
