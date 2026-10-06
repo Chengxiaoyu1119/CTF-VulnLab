@@ -124,7 +124,6 @@ const makeRunner = ({ failFirstDown = false, failUp = false, deferUp = false } =
     const projectArg = args.indexOf('--project-name')
     assert.ok(projectArg >= 0)
     if (operation === 'up') {
-      upStarted = true
       const composeArg = args.indexOf('--file')
       const config = JSON.parse(await readFile(args[composeArg + 1], 'utf8'))
       assert.equal(config.networks['oa-internal'].internal, true)
@@ -134,7 +133,8 @@ const makeRunner = ({ failFirstDown = false, failUp = false, deferUp = false } =
         webServer.once('error', rejectListen)
         webServer.listen(port, '127.0.0.1', resolveListen)
       })
-      if (deferUp) await new Promise(resolveUp => { releaseUp = resolveUp })
+      if (deferUp) await new Promise(resolveUp => { releaseUp = resolveUp; upStarted = true })
+      else upStarted = true
       if (failUp) return { ok: false, stdout: '', stderr: 'image build failed', code: 1 }
       return { ok: true, stdout: 'started', stderr: '', code: 0 }
     }
