@@ -2,66 +2,41 @@
 
 <div align="center">
   <img src="src/public/favicon.png" width="88" alt="VulnLab Logo">
-  <h1>VulnLab · 攻防控制台</h1>
-  <p><strong>把主流开源安全训练环境装进一个真正可启动的单机工作台。</strong></p>
-  <p>固定版本资源 · 一键启动 · 原生进程运行 · 生命周期管理 · 管理数据可追踪</p>
+  <h1>VulnLab</h1>
+  <p><strong>把主流 Web 安全训练环境装进一台真正可启动的本地工作台。</strong></p>
+  <p>固定版本资源 · 一键启动 · 生命周期管理 · 管理数据可追踪</p>
 
-  [![VulnLab CI](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg)](https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml)
-  [![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows&logoColor=white)](#快速开始)
-  [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-  [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-  [![Fastify](https://img.shields.io/badge/Fastify-5-111111?logo=fastify&logoColor=white)](https://fastify.dev/)
-  [![SQLite](https://img.shields.io/badge/SQLite-单文件-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
-  [![License](https://img.shields.io/badge/license-Apache--2.0-2E7D32)](LICENSE)
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml/badge.svg" alt="VulnLab CI"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows&logoColor=white" alt="Windows x64">
+  <img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
 </div>
 
 <p align="center">
-  <a href="#工作台能力">工作台能力</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#核心能力">核心能力</a> ·
   <a href="#内置靶场">内置靶场</a> ·
-  <a href="#运行原理">运行原理</a> ·
-  <a href="#开发与验证">开发与验证</a> ·
-  <a href="#项目文档">项目文档</a>
+  <a href="#运行链路">运行链路</a> ·
+  <a href="#文档">文档</a>
 </p>
 
-<p align="center"><img src=".github/assets/vulnlab-workspace.png" alt="VulnLab 靶场工作台：九个安全训练环境" width="100%"></p>
+<p align="center">
+  <img src=".github/assets/vulnlab-workspace.png" alt="VulnLab 工作台：品牌区与九个安全训练环境" width="100%">
+</p>
 
-## 项目是什么
+> [!NOTE]
+> 当前以 Windows x64 本地运行链路为主。源码启动、按需准备运行时和靶场资源；尚未提供独立安装包。
 
-VulnLab 是面向个人学习和小团队训练的开源攻防控制台。桌面端以三列目录呈现内置和后续新增的训练环境；从靶场详情启动后，服务会准备固定版本资源与所需运行时，再启动独立运行副本。管理操作也留在同一工作台，不把训练流程拆散成多个后台页面。
-
-当前代码处于开发基线，当前版本为 `0.1.0`。主服务采用 Node.js 原生运行，当前只维护 Windows x64 本地运行链路。
-
-## 工作台能力
+## 核心能力
 
 <table>
   <tr>
-    <td align="center" width="25%"><strong>09</strong><br>内置训练环境</td>
-    <td align="center" width="25%"><strong>05</strong><br>按需准备的运行时</td>
-    <td align="center" width="25%"><strong>365 天</strong><br>启动活动与靶场排行</td>
-    <td align="center" width="25%"><strong>01 次</strong><br>邀请码使用并可追踪</td>
+    <td width="33%" valign="top"><strong>固定版本</strong><br>锁定上游来源与版本，下载、解包和目录进入运行区前均执行校验。</td>
+    <td width="33%" valign="top"><strong>一键启动</strong><br>按靶场按需准备 Node.js、PHP、MariaDB、Java 或 Python，不要求预先配置整套环境。</td>
+    <td width="33%" valign="top"><strong>可回收实例</strong><br>每次练习使用独立运行副本，支持打开、续期、停止与过期回收。</td>
   </tr>
 </table>
 
-| 训练工作台 | 管理中心 |
-| --- | --- |
-| 靶场目录、详情、准备状态、启动、访问、续期与停止；管理员可从管理中心添加自定义靶场 | 个人中心、系统数据、靶场管理、账号管理、审计记录、邀请管理 |
-| 固定版本来源，首次启动时按需准备资源 | 活动热力图可跳转到当天成功启动审计；邀请码记录使用账号与时间 |
-| PHP、Node.js、Java、Python 与 MariaDB 按靶场选择 | 分页、筛选、键盘操作与窄屏布局共用同一弹窗体验 |
-
-大型上游资源和运行时二进制不会提交进 Git 历史。仓库只保存固定版本、官方地址、可用的上游校验信息和安装逻辑；服务先把原始包写入项目内 `src/data/imports/<job>/staging` 或 `src/data/runtime/.staging`，完成体积、路径和 SHA-256 校验后才进入 `src/data`。靶场资源进入 `src/data/labs`，PHP/MariaDB 运行时进入 `src/data/runtime/toolchains`。整个数据目录已被 Git 忽略，既能随项目统一管理，也不会让仓库永久膨胀。
-
-项目支持半联网和离线准备：设置 `VULNLAB_BUNDLE_DIR` 指向本地发行包目录后，启动流程按“本地 bundle → 已有 data 缓存 → 官方网络来源”选择资源；设置 `VULNLAB_OFFLINE=1` 后禁止联网，只使用本地发行包和已有缓存。发行包目录不提交到 Git。
-
 ## 快速开始
-
-### 1. 准备基础环境
-
-- Windows x64 首次启动对应靶场时会自动准备固定版本 Node.js 22、PHP 8.3、MariaDB 11.4、Java 21 和 Python 3.11，不需要单独安装数据库、Java 或 Python。
-
-### 2. 启动
-
-Windows：
 
 ```powershell
 git clone https://github.com/Chengxiaoyu1119/CTF-VulnLab.git
@@ -69,182 +44,49 @@ cd CTF-VulnLab
 powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 ```
 
-打开 `http://127.0.0.1:6710/`。点击靶场封面进入详情弹窗，再点击“启动环境”；首次启动由服务自动准备该靶场所需资源和运行时，完成后即可打开页面。服务监听地址、端口和并发参数通过部署配置或环境变量维护，不设置独立的环境页面。
-
-### 3. 登录
-
-本地默认管理员账号：
-
-| 账号 | 密码 |
-| --- | --- |
-| `vulnlab` | `vulnlab` |
-
-管理员登录后点击工作台左上角的 `VulnLab` 可打开管理中心：个人中心展示当前账号；系统数据汇总靶场就绪与运行状态、最近 365 天成功启动热力图和使用排行；账号管理列出默认管理员与注册账号；审计记录支持日期和操作类型筛选；邀请管理可生成、复制、撤销邀请码并查看使用情况。热力图选中日期可直接进入当天的成功启动记录。
-
-邀请码有效 24 小时且只能使用一次，明文只在生成时展示一次。新注册成功后，邀请记录会保存使用者账号与时间；旧版已使用记录若没有使用者快照，会明确显示为历史记录，不会猜测补写。已使用的邀请码保留为追溯记录，不可删除。注册账号目前统一为管理员。生产部署必须设置至少 12 字符的 `VULNLAB_ADMIN_PASSWORD` 和至少 32 字符的 `VULNLAB_COOKIE_SECRET`；生产环境不使用本地默认密码。
+打开 `http://127.0.0.1:6710/`，使用本地默认账号 `vulnlab / vulnlab` 登录，选择靶场后点击“启动环境”。首次启动只准备当前靶场需要的资源。
 
 ## 内置靶场
 
-| 靶场 | 固定来源 | 启动前准备 | 运行方式 |
-| --- | --- | --- | --- |
-| DVWA | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| Pikachu | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| SQLi-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| Upload-Labs | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP |
-| XVWA | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| OWASP Juice Shop | 官方发行包 `20.2.0` | 页面按需固定 SHA-256 校验后解包 | Node.js |
-| OWASP WebGoat | 官方发行包 `2023.8` | 页面按需校验后安装 | Java |
-| OWASP Mutillidae II | 官方 Git 仓库 commit | 页面按需下载与安全解包 | PHP + MySQL |
-| OWASP PyGoat | 官方 Git 仓库 commit | 页面按需下载并建立独立 Python 环境 | Python / Django |
+| PHP | PHP / MySQL | Node.js | Java | Python |
+| --- | --- | --- | --- | --- |
+| Upload-Labs | DVWA · Pikachu · SQLi-Labs · XVWA · Mutillidae II | OWASP Juice Shop | OWASP WebGoat | OWASP PyGoat |
 
-九个靶场的目录、版本和运行方式内置在 VulnLab 中。源码和发行包在首次启动时由服务自动下载、校验并保存到项目数据目录；也可以设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 在服务启动时批量准备全部资源。离线包约定为 `<bundle>/runtime/<运行时文件名>`、`<bundle>/labs/<slug>/<version>/source.zip` 或内置发行包固定文件名。
+共 `9` 个固定版本训练环境。资源和对应运行时在首次启动时按需准备。
 
-### 自定义靶场
-
-管理员可以在管理中心的“靶场管理”中登记公开 GitHub/GitLab 仓库，或上传本地 ZIP。导入入口只接受四类固定运行契约：静态 PHP、PHP + MySQL、Node.js、Java JAR，以及通用 Python 文件（PyGoat 仍使用 Django 契约）。导入完成后资源复制到 `data/labs`，配置和任务状态写入 SQLite；因此服务重启后仍可见，已缓存资源不会重复下载。ZIP 导入会校验大小、路径穿越、Windows 路径冲突、入口文件和模板字段，导入失败会清理暂存目录。
-
-自定义项目的第三方依赖仍需项目自身提供锁定文件：Node.js 使用 `package-lock.json` / `npm-shrinkwrap.json`，Python `requirements.txt` 只从离线 wheelhouse 安装。当前版本不开放任意命令执行，无法匹配固定契约的项目会被拒绝。
-
-### 构建与发行
-
-`cd src; npm run build` 只是把 TypeScript 编译到 `src/dist`，不是 EXE，也不会把运行时或靶场资源打包进去。当前仓库按源码方式运行即可；后续若要发布 Windows 版本，优先制作包含启动器、Node/runtime、前端资源和可写 `data` 目录的便携式发行目录，再单独设计安装器或 EXE 阶段。
-
-## 运行依赖
-
-| 依赖 | 影响范围 | VulnLab 的处理方式 |
-| --- | --- | --- |
-| PHP CLI | PHP 靶场 | Windows x64 下载官方 PHP 8.3 到 `data/runtime/toolchains` |
-| PHP `mysqli`、`pdo_mysql` + MySQL/MariaDB | DVWA、Pikachu、SQLi-Labs、XVWA、Mutillidae | Windows x64 下载项目内 MariaDB 11.4；每次启动创建独立数据库和最小权限账号 |
-| Node.js 22+ | VulnLab 主服务、Juice Shop | Windows x64 使用项目内 Node.js 22 |
-| Java 17+ | WebGoat | Windows x64 下载项目内 Eclipse Temurin JRE 21，独立端口启动 WebGoat 与 WebWolf |
-| Python 3.10 / 3.11 | PyGoat | Windows x64 下载项目内 Python 3.11，再创建项目私有虚拟环境并执行迁移 |
-
-详情弹窗只提供“启动环境”主动作。运行依赖由服务在启动过程中自动检查和准备，失败原因通过操作提示反馈；用户不需要理解、选择或手动准备 Provider。
-
-## 运行原理
+## 运行链路
 
 ```mermaid
 flowchart LR
-    subgraph CLIENT[本地工作台]
-        UI[靶场目录与管理中心]
-    end
-    subgraph CONTROL[VulnLab 控制面]
-        API[Fastify API]
-        DB[(SQLite)]
-        PREP[资源准备与运行时校验]
-        PROVIDERS[Provider Registry]
-    end
-    subgraph LOCAL[项目数据目录]
-        SOURCES[固定版本靶场资源]
-        TOOLCHAINS[Node / PHP / MariaDB / Java / Python]
-        INSTANCES[运行副本与实例状态]
-    end
-    subgraph LABS[本机训练进程]
-        PHP[native-php]
-        NODE[native-node]
-        JAVA[native-java]
-        PY[native-python]
-        MYSQL[(每实例 MySQL 资源)]
-    end
-    UI --> API
-    API <--> DB
-    API --> PREP
-    PREP --> SOURCES
-    PREP --> TOOLCHAINS
-    API --> PROVIDERS
-    PROVIDERS --> INSTANCES
-    INSTANCES --> PHP
-    INSTANCES --> NODE
-    INSTANCES --> JAVA
-    INSTANCES --> PY
-    PHP --> MYSQL
-    classDef ui fill:#20272d,stroke:#668099,color:#f5f5f5
-    classDef control fill:#2b231c,stroke:#ff7f2a,color:#f5f5f5
-    classDef data fill:#202823,stroke:#62b889,color:#f5f5f5
-    classDef process fill:#222329,stroke:#8487a0,color:#f5f5f5
-    class UI ui
-    class API,PREP,PROVIDERS control
-    class DB,SOURCES,TOOLCHAINS,INSTANCES data
-    class PHP,NODE,JAVA,PY,MYSQL process
+    A[选择靶场] --> B[获取固定资源]
+    B --> C[校验并准备运行时]
+    C --> D[创建独立运行副本]
+    D --> E[打开练习入口]
+    E --> F[续期或停止并回收]
+    classDef accent fill:#ff7f2a,stroke:#ffb400,color:#121212
+    classDef surface fill:#1e1e1e,stroke:#668099,color:#f5f5f5
+    class A,F accent
+    class B,C,D,E surface
 ```
 
-- 后端：Node.js 22、TypeScript、Fastify。
-- 数据：SQLite 单文件数据库。
-- 前端：原生 JavaScript + CSS 工作区。
-- 安装：固定上游版本、下载大小限制、路径检查、校验记录、失败清理。
-- 运行：每个靶场声明 Provider；启动、续期、停止、过期回收采用统一生命周期。
-- 隔离：原生靶场使用独立运行副本；PHP 数据库靶场使用每实例数据库和最小权限账号。
+<details>
+  <summary><strong>开发与验证</strong></summary>
 
-## 项目结构
+  ```powershell
+  cd src
+  npm ci
+  npm run check
+  npm test
+  npm run test:browser
+  ```
 
-```text
-CTF-VulnLab/
-├─ src/
-│  ├─ public/                 页面、样式与封面
-│  ├─ builtin-assets.ts       官方发行包安装器
-│  ├─ importer.ts             GitHub / GitLab 下载与安全解包
-│  ├─ providers.ts            PHP / Node / Java / Python Provider
-│  ├─ runtime-prep.ts         PyGoat 私有运行环境准备
-│  ├─ runtime-status.ts       本机运行依赖检测与启动前校验
-│  ├─ runtime-toolchains.ts   Node.js / PHP / MariaDB / Java / Python 官方运行时下载、校验、安全解压与清单
-│  ├─ project-environment.ts  项目内 PHP 配置与 MariaDB 生命周期
-│  ├─ paths.ts                数据库、靶场、下载与运行实例路径管理
-│  ├─ db.ts                   SQLite 数据层
-│  └─ data/                   本地资源与状态，Git 忽略
-├─ bundle/                   可选离线发行包目录，不提交到 Git
-├─ script/                    启动、单元测试、冒烟与浏览器回归
-└─ .github/workflows/         持续集成
-```
+  完整运行时、离线 bundle、外部 MySQL 与发布边界见开发运行手册。
+</details>
 
-## 开发与验证
+## 文档
 
-```powershell
-cd src
-npm ci
-npm run check
-npm test
-cd ..
-node script/check_vulnlab_node.mjs
-```
-
-Windows x64 可额外验证真实官方下载链路；测试会下载约 230 MiB，完成后自动清理临时目录：
-
-```powershell
-cd src
-npm run smoke:toolchains
-```
-
-`npm test` 使用本地 fixture 覆盖固定版本导入、安全解包、官方发行包、ZIP/TGZ 下载校验、SQLite 生命周期、MySQL 资源、Provider 契约和按靶场依赖判断；它不会下载并启动九个真实靶场。
-
-服务启动后执行浏览器回归：
-
-```powershell
-node script/smoke_vulnlab.mjs
-node script/smoke_vulnlab_builtin_runtimes.mjs
-cd src
-npm run test:browser
-```
-
-运行冒烟会依次验证九个内置靶场的真实入口，并覆盖重复启动、续期、停止、入口失效和重新启动；浏览器回归验证当前界面、响应式布局、交互状态和控制台错误。`npm run test:browser` 使用 `src/data/browser-check-*` 启动独立服务，禁止自动安装和网络下载，完成后删除测试数据与截图，不会写入开发数据库。
-
-GitHub CI 当前在 Windows runner 上执行类型检查、构建、fixture 测试、API/服务生命周期冒烟和浏览器回归，不执行上述真实运行时下载与靶场启动冒烟。
-
-## 当前边界
-
-- 当前定位是单机和可信小团队，不是多租户集群调度平台。
-- Windows x64 已具备 Node.js、PHP、MariaDB、Java、Python 的项目内下载、校验和运行链路。
-- XVWA 使用官方固定 commit 导入，启动时在独立 PHP 副本内完成数据库初始化，并通过 `/xvwa/` 入口访问。
-- 原生进程提供练习副本和生命周期回收，但操作系统级隔离弱于虚拟机。
-
-## 项目文档
-
-| 文档 | 内容 |
+| 文档 | 用途 |
 | --- | --- |
-| [设计说明](DESIGN.md) | 页面契约、视觉规则、响应式验收与交互状态 |
-| [Node 应用开发与运行手册](src/README.md) | 模块边界、配置、数据与运行时准备、管理接口 |
-| [靶场封面素材来源](src/public/covers/README.md) | 上游图片、标识与来源链接 |
-| [许可证](LICENSE) | 项目自有代码采用 Apache License 2.0 |
-
-## 许可证
-
-项目自有代码采用 [Apache License 2.0](LICENSE)。上游靶场、Logo 和界面截图分别遵循对应项目的许可证、版权与品牌要求，封面来源见 [素材说明](src/public/covers/README.md)。固定资源清单记录各项目许可证；SQLi-Labs 与 Upload-Labs 的当前固定版本记录为“上游未声明”。
+| [开发与运行手册](src/README.md) | 模块、配置、运行时、Provider 与验证命令 |
+| [设计说明](DESIGN.md) | 页面契约、视觉规则与响应式验收 |
+| [靶场封面来源](src/public/covers/README.md) | 上游图片、标识与来源链接 |

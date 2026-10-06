@@ -33,7 +33,7 @@ npm run dev
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，先把原始包写入项目内 `data/imports/<job>/staging` 或 `data/runtime/.staging`，完成体积、路径和固定 SHA-256 校验后才写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后删除暂存目录；服务启动时还会清理超过 24 小时的项目内遗留暂存目录。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部内置资源。
+`seed.ts` 保存九个项目的固定版本声明，它们是 VulnLab 的内置靶场目录。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备资源，先把原始包写入项目内 `data/imports/<job>/staging` 或 `data/runtime/.staging`，完成体积、路径和固定 SHA-256 校验后才写入 `data/labs/<slug>/<version>`，生成 `vulnlab.manifest.json`，再继续启动。准备过程检查路径穿越、Windows 不可移植路径和归档完整性，并在任务结束后删除暂存目录；服务启动时还会清理超过 24 小时的项目内遗留暂存目录。设置 `VULNLAB_OFFLINE=1` 后只允许使用 bundle 和已有缓存，不会发起网络下载；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
 
 离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
