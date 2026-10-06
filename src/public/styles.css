@@ -406,10 +406,18 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .admin-lab-source-row { display: grid; min-width: 0; grid-template-columns: minmax(142px, .78fr) minmax(0, 1.22fr); align-items: start; gap: 10px; }
 .admin-lab-form label { display: grid; min-width: 0; gap: 5px; color: #999; font-size: 11px; }
 .admin-lab-form input, .admin-lab-form select, .admin-lab-form textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; border-color: #343434; border-radius: 6px; padding: 7px 9px; color: #d4d4d4; background: #191919; font-size: 12px; }
-.admin-lab-form select { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, #999 50%), linear-gradient(135deg, #999 50%, transparent 50%); background-position: calc(100% - 13px) 16px, calc(100% - 9px) 16px; background-repeat: no-repeat; background-size: 4px 4px; cursor: pointer; }
+.admin-lab-form select { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, #999 50%), linear-gradient(135deg, #999 50%, transparent 50%); background-position: calc(100% - 13px) calc(50% - 1px), calc(100% - 9px) calc(50% - 1px); background-repeat: no-repeat; background-size: 4px 4px; cursor: pointer; }
 .admin-lab-form select:hover { border-color: #505050; background-color: #1d1d1d; }
 .admin-lab-form option { color: #ddd; background-color: #202020; }
 .admin-lab-form option:checked { color: #fff; background-color: #373737; }
+@supports (appearance: base-select) {
+  .admin-lab-form select { appearance: base-select; }
+  .admin-lab-form select::picker(select) { appearance: base-select; max-height: min(264px, 60vh); overflow-y: auto; border: 1px solid #383838; border-radius: 7px; padding: 4px; color: #d4d4d4; background: #1d1d1d; box-shadow: 0 12px 26px rgba(0, 0, 0, .38); }
+  .admin-lab-form select::picker-icon { display: none; }
+  .admin-lab-form option { min-height: 32px; border: 0; border-radius: 4px; padding: 7px 9px; color: #d4d4d4; background: transparent; }
+  .admin-lab-form option:hover { background: #292929; }
+  .admin-lab-form option:checked { color: #fff; background: #38291f; }
+}
 .admin-dialog .admin-lab-form input:focus, .admin-dialog .admin-lab-form select:focus, .admin-dialog .admin-lab-form textarea:focus { outline: none; border-color: #5b5b5b; box-shadow: none; }
 .admin-dialog .admin-lab-form input:focus-visible, .admin-dialog .admin-lab-form select:focus-visible, .admin-dialog .admin-lab-form textarea:focus-visible { border-color: #777; }
 .admin-dialog button:focus-visible, .admin-dialog a:focus-visible, .admin-dialog input:not([data-audit-filter]):not([type="checkbox"]):focus-visible, .admin-dialog select:focus-visible, .admin-dialog textarea:focus-visible { outline-color: #858585; }
@@ -433,17 +441,17 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .admin-lab-section-heading > div { display: grid; min-width: 0; gap: 3px; }
 .admin-lab-section-heading h4 { margin: 0; color: #c7c7c7; font-size: 11px; font-weight: 600; }
 .admin-lab-section-heading p { margin: 0; color: #858585; font-size: 10px; line-height: 1.4; }
-.admin-lab-section-heading .button { min-height: 28px; flex: 0 0 auto; padding: 0 9px; font-size: 10px; }
+.admin-lab-section-heading .button { min-height: 36px; flex: 0 0 auto; padding: 0 10px; font-size: 11px; }
 .admin-lab-runtime-settings { gap: 9px; }
 .admin-lab-source-ref { min-width: 0; }
 .admin-lab-display-grid { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .admin-lab-display-grid > label:last-child { grid-column: 1 / -1; }
 .admin-lab-form-actions { position: sticky; z-index: 3; bottom: 0; display: flex; min-width: 0; justify-content: flex-end; gap: 8px; margin-top: 1px; border-top: 1px solid #2a2a2a; padding: 9px 0 2px; background-color: #1d1d1d; }
-.admin-lab-form-actions .button { min-width: 88px; min-height: 34px; flex: 0 0 auto; padding: 0 11px; font-size: 11px; }
+.admin-lab-form-actions .button { min-width: 88px; min-height: 36px; flex: 0 0 auto; padding: 0 11px; font-size: 11px; }
 .admin-lab-source-value { min-width: 0; }
 .admin-lab-template-hint { margin: -1px 0 0; color: #888; font-size: 10px; line-height: 1.5; }
 .admin-lab-inspection-actions { display: flex; min-width: 0; align-items: center; gap: 9px; }
-.admin-lab-inspection-actions .button { min-height: 28px; flex: 0 0 auto; padding: 0 9px; font-size: 10px; }
+.admin-lab-inspection-actions .button { min-height: 36px; flex: 0 0 auto; padding: 0 10px; font-size: 11px; }
 .admin-lab-inspection-actions > span { min-width: 0; color: #777; font-size: 10px; line-height: 1.4; }
 .admin-lab-inspection { display: grid; min-width: 0; gap: 5px; border-top: 1px solid #292929; padding: 8px 0 2px; color: #999; font-size: 10px; line-height: 1.5; }
 .admin-lab-inspection > div { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -451,10 +459,9 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .admin-lab-inspection > div span { flex: 0 0 auto; color: #888; }
 .admin-lab-inspection p, .admin-lab-inspection ul { margin: 0; overflow-wrap: anywhere; }
 .admin-lab-inspection ul { display: grid; gap: 2px; padding-left: 16px; }
-.admin-lab-inspection .button { justify-self: start; min-height: 27px; padding: 0 9px; font-size: 10px; }
+.admin-lab-inspection .button { justify-self: start; min-height: 36px; padding: 0 10px; font-size: 11px; }
 .admin-lab-inspection-error { margin: 0; color: #d9948e; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .admin-lab-list { display: grid; align-content: start; gap: 7px; padding-bottom: 8px; }
-.admin-lab-note { margin: 0 2px 2px; color: #858585; font-size: 10px; line-height: 1.45; }
 .admin-lab-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; border: 1px solid #303030; border-radius: 7px; padding: 7px 9px; background: #1b1b1b; transition: border-color 140ms ease, background-color 140ms ease; }
 .admin-lab-row:hover { border-color: #4a4a4a; background: #202020; }
 .admin-lab-row-copy { display: grid; min-width: 0; grid-column: 1; grid-row: 1; gap: 5px; }

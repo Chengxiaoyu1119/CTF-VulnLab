@@ -1248,7 +1248,7 @@ function adminLabsPanel() {
       const modeLabel = lab.runtimeConfig?.profile === 'oa-project' ? 'OA 靶场' : customRuntimeModes[runtimeMode]?.label ?? (String(lab.runtimeKind) === 'container' ? 'Compose（当前未接入）' : String(lab.runtimeKind) === 'vm' ? '虚拟机目录（当前未接入）' : '未识别运行方式')
       const addedAt = auditTimestamp(lab.createdAt)
       const stateView = `<span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>`
-      const actions = `<div class="admin-lab-row-actions">${runtimeMode ? `<button class="button button-quiet" type="button" data-action="copy-admin-lab-config" data-id="${esc(lab.id)}">复制配置</button>` : ''}${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-admin-lab" data-id="${esc(lab.id)}" ${busyFor('retry-admin-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-admin-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}${lab.builtin ? '' : `<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button>`}<button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-admin-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button>${lab.builtin ? '' : `<button class="button button-danger" type="button" data-action="delete-custom-lab" data-id="${esc(lab.id)}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>删除</button>`}</div>`
+      const actions = `<div class="admin-lab-row-actions">${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-admin-lab" data-id="${esc(lab.id)}" ${busyFor('retry-admin-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-admin-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}${lab.builtin ? '' : `<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button>`}<button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-admin-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button>${lab.builtin ? '' : `<button class="button button-danger" type="button" data-action="delete-custom-lab" data-id="${esc(lab.id)}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>删除</button>`}</div>`
       const createdView = lab.builtin ? '' : `<time class="admin-lab-row-created" datetime="${esc(lab.createdAt)}" title="添加于 ${esc(addedAt.date)} ${esc(addedAt.time)}">添加于 ${esc(addedAt.date)} ${esc(addedAt.time.slice(0, 5))}</time>`
       const kindView = `<span class="admin-lab-row-kind">${lab.builtin ? '项目内置' : '自定义'}</span>`
       const runtimeSource = `${modeLabel} · ${sourceLabel}`
@@ -1266,7 +1266,7 @@ function adminLabsPanel() {
       <section class="admin-lab-section admin-lab-display-settings" aria-labelledby="admin-lab-display-title"><div class="admin-lab-section-heading"><div><h4 id="admin-lab-display-title">展示资料</h4><p>用于主页面靶场卡片和详情</p></div></div><div class="admin-lab-display-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label><label>许可证<input name="license" value="${esc(draft.license)}" placeholder="未声明"></label><label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label><label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label></div></section>
       <div class="admin-lab-form-actions"><button class="button button-quiet" type="button" data-action="cancel-custom-lab-editor">取消</button><button class="button button-primary" type="submit" ${busyFor('save-lab') ? 'disabled' : ''}>${busyFor('save-lab') ? '保存中…' : editingLab ? '保存修改' : '添加靶场'}</button></div>
     </form>`
-  const list = `<section class="admin-lab-list" aria-label="靶场列表"><p class="admin-lab-note">项目内置靶场可停用或恢复；自定义靶场可编辑或删除。</p>${rows}</section>`
+  const list = `<section class="admin-lab-list" aria-label="靶场列表">${rows}</section>`
   const heading = editorOpen ? `<div class="admin-lab-heading"><h3>${editingLab ? '编辑靶场' : '添加靶场'}</h3></div>` : ''
   return `<section class="admin-lab-view" data-admin-view="labs" data-editor-open="${editorOpen}" aria-label="靶场管理">
     ${heading}
@@ -1572,7 +1572,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'start-custom-lab-create', 'cancel-custom-lab-editor', 'edit-custom-lab', 'copy-admin-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'start-custom-lab-create', 'cancel-custom-lab-editor', 'edit-custom-lab', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1701,26 +1701,6 @@ async function runAction(action, element) {
       license: lab.license,
       summary: lab.summary,
       tags: lab.tags.join(', '),
-    }
-    state.adminLabInspection = null
-    state.adminLabInspectionError = ''
-    render()
-    focusAdminLabTitle()
-    return
-  }
-  if (action === 'copy-admin-lab-config') {
-    const lab = state.labs.find(item => item.id === element.dataset.id && customRuntimeModeFor(item))
-    if (!lab) return
-    state.adminLabEditId = null
-    state.adminLabEditorOpen = true
-    state.adminLabArchiveFile = null
-    state.adminLabDraft = {
-      title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '',
-      runtimeMode: customRuntimeModeFor(lab), runtimeKind: lab.runtimeKind, runtimeProfile: lab.runtimeConfig?.profile ?? 'static-php',
-      documentRoot: lab.runtimeConfig?.documentRoot ?? '', entryPath: lab.runtimeConfig?.entryPath ?? '', initSqlPath: lab.runtimeConfig?.initSqlPath ?? '',
-      nodeArgs: (lab.runtimeConfig?.nodeArgs ?? []).join('\n'), javaArgs: (lab.runtimeConfig?.javaArgs ?? []).join('\n'), pythonArgs: (lab.runtimeConfig?.pythonArgs ?? []).join('\n'),
-      portArg: lab.runtimeConfig?.portArg ?? '', settingsPath: lab.runtimeConfig?.settingsPath ?? '',
-      category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
     }
     state.adminLabInspection = null
     state.adminLabInspectionError = ''

@@ -635,7 +635,11 @@ def main() -> None:
         runtime_select_style = runtime_select.evaluate(
             "element => { const style = getComputedStyle(element); return { focused: element === document.activeElement, outline: style.outlineStyle, boxShadow: style.boxShadow, appearance: style.appearance }; }"
         )
-        assert runtime_select_style == {"focused": True, "outline": "none", "boxShadow": "none", "appearance": "none"}, runtime_select_style
+        assert runtime_select_style == {"focused": True, "outline": "none", "boxShadow": "none", "appearance": "base-select"}, runtime_select_style
+        picker_style = runtime_select.evaluate(
+            "element => { const style = getComputedStyle(element, '::picker(select)'); return { background: style.backgroundColor, borderRadius: style.borderRadius, maxHeight: style.maxHeight, overflowY: style.overflowY }; }"
+        )
+        assert picker_style == {"background": "rgb(29, 29, 29)", "borderRadius": "7px", "maxHeight": "264px", "overflowY": "auto"}, picker_style
         expect(page.locator(".admin-lab-precheck")).to_be_visible()
         expect(page.locator(".admin-lab-precheck").get_by_role("button", name="检查结构", exact=True)).to_be_visible()
         expect(page.locator(".admin-lab-runtime-settings")).to_be_visible()
@@ -2675,6 +2679,8 @@ def main() -> None:
             timeout=20_000,
         )
         failed_row = page.locator('.admin-lab-row[data-lab-id]').filter(has_text="浏览器自定义靶场")
+        expect(page.locator(".admin-lab-note")).to_have_count(0)
+        expect(page.locator('[data-action="copy-admin-lab-config"]')).to_have_count(0)
         expect(failed_row).to_contain_text("准备失败")
         expect(failed_row.locator(".admin-lab-row-created")).to_be_visible()
         failure_details = failed_row.locator(".admin-lab-row-error")
@@ -2734,12 +2740,6 @@ def main() -> None:
         failed_row.locator('[data-action="toggle-admin-lab"]').click()
         expect(failed_row).to_contain_text("已就绪")
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count + 1)
-        failed_row.locator('[data-action="copy-admin-lab-config"]').click()
-        expect(page.locator('#admin-lab-form [name="title"]')).to_have_value("")
-        expect(page.locator('#admin-lab-form [name="sourceUrl"]')).to_have_value("")
-        expect(page.locator('#admin-lab-form [name="sourceType"]')).to_have_value("git")
-        expect(page.locator('#admin-lab-form [name="runtimeMode"]')).to_have_value("php-static")
-        page.locator('[data-action="cancel-custom-lab-editor"]').click()
         failed_row = page.locator(f'.admin-lab-row[data-lab-id="{custom_lab_id}"]')
         failed_row.locator('[data-action="delete-custom-lab"]').click()
         expect(page.locator('.workspace-dialog-backdrop').last).to_contain_text("无法撤销")
