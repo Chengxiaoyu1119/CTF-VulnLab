@@ -11,6 +11,8 @@ internal static class AppContainerLauncher
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateSuspended = 0x00000004;
     private const uint StartfUseStdHandles = 0x00000100;
+    private const uint TokenQuery = 0x0008;
+    private const int TokenIsAppContainer = 29;
     private const uint ProcThreadAttributeSecurityCapabilities = 0x00020009;
     private const uint ProcThreadAttributeChildProcessPolicy = 0x0002000E;
     private const uint ProcessCreationChildProcessRestricted = 0x00000001;
@@ -142,8 +144,10 @@ internal static class AppContainerLauncher
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint ResumeThread(IntPtr thread);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool IsProcessInAppContainer(IntPtr process, out bool isAppContainer);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint desiredAccess, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr token, int tokenInformationClass, out int tokenInformation, uint tokenInformationLength, out uint returnLength);
 
     private static void Check(bool success, string action)
     {
@@ -151,6 +155,23 @@ internal static class AppContainerLauncher
         {
             int errorCode = Marshal.GetLastWin32Error();
             throw new System.ComponentModel.Win32Exception(errorCode, string.Format("{0} (GetLastError={1}, 0x{2:X8})", action, errorCode, unchecked((uint)errorCode)));
+        }
+    }
+
+    private static bool IsProcessInAppContainer(IntPtr process)
+    {
+        IntPtr token = IntPtr.Zero;
+        Check(OpenProcessToken(process, TokenQuery, out token), "Process access token open failed");
+        try
+        {
+            int isAppContainer;
+            uint returnLength;
+            Check(GetTokenInformation(token, TokenIsAppContainer, out isAppContainer, sizeof(int), out returnLength), "AppContainer token verification failed");
+            return isAppContainer != 0;
+        }
+        finally
+        {
+            if (token != IntPtr.Zero) CloseHandle(token);
         }
     }
 
@@ -325,6 +346,9 @@ internal static class AppContainerLauncher
         IntPtr attributes = IntPtr.Zero;
         IntPtr capabilitiesPointer = IntPtr.Zero;
         IntPtr childPolicyPointer = IntPtr.Zero;
+        ProcessInformation process = new ProcessInformation();
+        bool processCreated = false;
+        bool processOwnershipTransferred = false;
         try
         {
             File.WriteAllText(Path.Combine(runtimeRoot, ProfileMarkerName), profile, new UTF8Encoding(false));
@@ -365,21 +389,15 @@ internal static class AppContainerLauncher
             startup.StartupInfo.hStdOutput = GetStdHandle(-11);
             startup.StartupInfo.hStdError = GetStdHandle(-12);
             startup.AttributeList = attributes;
-            ProcessInformation process;
             Console.Error.WriteLine("OA_SANDBOX:process:create-start");
             Check(CreateProcessW(nodePath, command, IntPtr.Zero, IntPtr.Zero, true,
                 ExtendedStartupInfoPresent | CreateSuspended, null,
                 null, ref startup, out process), "AppContainer process launch failed");
-            bool isAppContainer;
-            Check(IsProcessInAppContainer(process.Process, out isAppContainer), "AppContainer verification failed");
-            if (!isAppContainer)
-            {
-                TerminateProcess(process.Process, 1);
-                CloseHandle(process.Thread);
-                CloseHandle(process.Process);
+            processCreated = true;
+            if (!IsProcessInAppContainer(process.Process))
                 throw new InvalidOperationException("OA API process did not enter an AppContainer.");
-            }
             Console.Error.WriteLine("OA_SANDBOX:process:create-complete");
+            processOwnershipTransferred = true;
             return process;
         }
         catch
@@ -394,6 +412,13 @@ internal static class AppContainerLauncher
         }
         finally
         {
+            if (processCreated && !processOwnershipTransferred)
+            {
+                TerminateProcess(process.Process, 1);
+                if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread);
+                WaitForSingleObject(process.Process, 3000);
+                CloseHandle(process.Process);
+            }
             if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
             if (capabilitiesPointer != IntPtr.Zero) Marshal.FreeHGlobal(capabilitiesPointer);
             if (childPolicyPointer != IntPtr.Zero) Marshal.FreeHGlobal(childPolicyPointer);
