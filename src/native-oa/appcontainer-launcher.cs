@@ -297,6 +297,10 @@ internal static class AppContainerLauncher
     private static byte[] RestrictedEnvironment()
     {
         var allowed = new System.Collections.Generic.SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string currentDirectory = Environment.CurrentDirectory;
+        string currentDrive = Path.GetPathRoot(currentDirectory);
+        if (!String.IsNullOrEmpty(currentDrive) && currentDrive.Length >= 2 && currentDrive[1] == ':')
+            allowed["=" + currentDrive.Substring(0, 2)] = currentDirectory;
         string[] names = { "SystemRoot", "WINDIR", "TEMP", "TMP", "NODE_ENV", "VULNLAB_OA_FRONTEND_ROOT", "VULNLAB_OA_INVITE_CODE", "VULNLAB_OA_JWT_SECRET", "VULNLAB_OA_RUNTIME_ROOT", "VULNLAB_OA_UPLOAD_ROOT" };
         foreach (string name in names)
         {
