@@ -14,7 +14,7 @@
 - `runtime-toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
 - `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
-- `seed.ts`：十个内置靶场的版本、Provider 与自动安装策略（九个常规靶场及 OA Beta）。
+- `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA Beta）。
 - `assets/labs/oa-vuln-labs/1.0.0-beta/`：随仓库发布的 OA `source.zip` 与 `docker.zip` 靶场资源。
 - `assets/`：固定输入资源；用途、版本、校验和生成方式见 [`assets/README.md`](assets/README.md)。
 - `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
@@ -35,9 +35,9 @@ npm run dev
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存十个内置靶场，其中九个常规靶场使用固定版本，OA Beta 使用仓库内的 `source.zip` / `docker.zip`。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备常规靶场资源，完成体积、路径和固定 SHA-256 校验后再安装。设置 `VULNLAB_OFFLINE=1` 后只使用 bundle 和已有缓存；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
+`seed.ts` 保存十一个内置靶场，其中十个常规靶场使用固定版本，OA Beta 使用仓库内的 `source.zip` / `docker.zip`。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备常规靶场资源，完成体积、路径和固定 SHA-256 校验后再安装。设置 `VULNLAB_OFFLINE=1` 后只使用 bundle 和已有缓存；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
 
-离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
+离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。XSS-Labs 使用固定上游提交及 SHA-256；上游未声明许可证，第 17–20 关依赖现代浏览器已移除的 Flash。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
 管理员可以通过管理中心添加自定义靶场。来源支持公开 GitHub/GitLab 仓库和本地 ZIP；运行配置使用静态 PHP、PHP + MySQL、Node.js、Java JAR、Python 文件或 PyGoat Django 这几类固定模板。上传包先写入 `data/lab-uploads`，导入成功后再复制到 `data/labs`，SQLite 保存运行模板和永久路径，服务重启时会做路径对账。Node 项目必须带锁文件；带 `requirements.txt` 的自定义 Python 项目必须配置离线 wheelhouse；不符合模板的入口、路径或 ZIP 安全检查会直接拒绝。
 
@@ -71,7 +71,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 
 邀请码通过 `POST /api/auth/invitations` 创建，有效期 24 小时、单次使用；明文只在创建响应中返回，数据库只保存 SHA-256 哈希。注册与邀请码消费在同一 SQLite 事务中完成，注册成功后保存使用者账号快照，因此之后删除注册账号仍能追溯邀请码。旧记录没有使用者快照时，界面会明确标记为“历史记录未记录使用者”，不会猜测回填。注册账号当前统一为管理员；默认管理员 `vulnlab` 是独立配置账号，不伪装成注册账号。
 
-服务运行后，`npm run smoke:runtimes` 会依次验证九个常规内置靶场；OA 有独立的 `npm run smoke:oa`、`npm run smoke:oa:docker` 与 `npm run smoke:oa:mysql` 回归入口。MariaDB smoke 需要预先准备项目私有 MariaDB 运行时，不会自动下载运行时。
+服务运行后，`npm run smoke:runtimes` 会依次验证十个常规内置靶场；OA 有独立的 `npm run smoke:oa`、`npm run smoke:oa:docker` 与 `npm run smoke:oa:mysql` 回归入口。MariaDB smoke 需要预先准备项目私有 MariaDB 运行时，不会自动下载运行时。
 
 `/api/settings` 保存的监听地址和端口在下次服务启动时生效；监听 `0.0.0.0` 或 `::` 时必须同时设置可信的 `VULNLAB_PUBLIC_URL`，运行时入口不会使用请求头 `Host` 推导公共地址。
 

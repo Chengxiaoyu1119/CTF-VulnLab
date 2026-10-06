@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import { mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { unzipSync } from '../../src/node_modules/fflate/esm/index.mjs'
 import { NativeOaProvider } from '../../src/dist/providers.js'
@@ -11,7 +12,7 @@ import { ProjectEnvironmentManager } from '../../src/dist/project-environment.js
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
 const appDataDir = join(appDir, 'data')
-const dataDir = join(appDataDir, `.oa-provider-smoke-${randomUUID()}`)
+const dataDir = join(tmpdir(), `vulnlab-oa-provider-smoke-${randomUUID()}`)
 const projectNodeRoot = await realpath(join(appDataDir, 'runtime', 'toolchains', 'node'))
 const projectMariaRoot = await realpath(join(appDataDir, 'runtime', 'toolchains', 'mariadb'))
 const mariaSource = join(projectMariaRoot, '11.4.10', 'win32-x64')

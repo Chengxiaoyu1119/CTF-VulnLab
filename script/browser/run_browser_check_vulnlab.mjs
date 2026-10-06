@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
@@ -34,9 +35,7 @@ const run = (command, args, options) => new Promise((resolvePromise, reject) => 
   child.once('exit', code => code === 0 ? resolvePromise() : reject(new Error(`${command} exited with ${code ?? 'an unknown'} status.`)))
 })
 
-const dataRoot = join(appDir, 'data')
-await mkdir(dataRoot, { recursive: true })
-const dataDir = await mkdtemp(join(dataRoot, 'browser-check-'))
+const dataDir = await mkdtemp(join(tmpdir(), 'vulnlab-browser-check-'))
 let server
 try {
   const port = await freePort()

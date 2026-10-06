@@ -112,6 +112,13 @@ assert.equal(paths.runtimePhp, join(dataDir, 'runtime', 'php'))
 
   const lab = database.getLabBySlug('upload-labs')
   assert.ok(lab)
+  const xssLab = database.getLabBySlug('xss-labs')
+  assert.ok(xssLab)
+  assert.equal(xssLab.runtimeKind, 'native-php')
+  assert.equal(xssLab.providerId, 'native-php')
+  assert.equal(xssLab.runtimeConfig.profile, 'static-php')
+  assert.equal(xssLab.license, '上游未声明')
+  assert.equal(xssLab.summary, 'XSS 专项关卡，练习反射型输入与常见过滤绕过。')
   const customLab = database.createLab({
     slug: 'fixture-custom-lab',
     title: 'Fixture 自定义靶场',

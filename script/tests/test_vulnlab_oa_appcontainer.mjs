@@ -16,9 +16,8 @@ if (process.platform !== 'win32') {
   process.exit(0)
 }
 
-const dataRoot = join(appDir, 'data')
 const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
-const testRoot = join(dataRoot, `.oa-appcontainer-test-${randomUUID()}`)
+const testRoot = join(tmpdir(), `vulnlab-oa-appcontainer-test-${randomUUID()}`)
 await mkdir(testRoot, { recursive: true })
 const tempRoot = await mkdtemp(join(testRoot, 'sandbox-'))
 const runtimeRoot = join(tempRoot, 'runtime')

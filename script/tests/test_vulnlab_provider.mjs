@@ -213,6 +213,40 @@ try {
   await rm(xvwaRoot, { recursive: true, force: true })
 }
 
+const xssLabsRoot = await mkdtemp(join(tmpdir(), 'vulnlab-xss-provider-'))
+try {
+  const sourceRoot = join(xssLabsRoot, 'labs', 'xss-labs', 'fixture')
+  await mkdir(sourceRoot, { recursive: true })
+  const originalLevel = '<iframe src="http://www.exifviewer.org/"></iframe><a href=/xss/level15.php?src=1.gif>level15</a>\n'
+  await writeFile(join(sourceRoot, 'index.php'), '<?php echo "XSS挑战"; ?>\n')
+  await writeFile(join(sourceRoot, 'level1.php'), '<?php echo $_GET["name"]; ?>\n')
+  await writeFile(join(sourceRoot, 'level14.php'), originalLevel)
+  await writeFile(join(sourceRoot, 'level15.php'), '<?php echo "level15"; ?>\n')
+  const phpSpawn = (_binary, args, options) => {
+    const port = Number(args[args.indexOf('-S') + 1].split(':').at(-1))
+    const script = "const server=require('node:http').createServer((req,res)=>{res.writeHead(200,{'content-type':'text/html'});res.end(req.url.includes('level14')?'<a href=level15.php>level15</a>':req.url.includes('level1')?'VulnLabSmoke':'XSS挑战');});server.listen(Number(process.argv.at(-1)),'127.0.0.1');"
+    return spawn(process.execPath, ['-e', script, String(port)], options)
+  }
+  const xssProvider = new NativePhpProvider({ spawnImpl: phpSpawn, allocatePort: async () => 6894 })
+  const xssLab = { ...lab, id: 'lab-xss-labs', slug: 'xss-labs', title: 'XSS-Labs', localPath: sourceRoot }
+  const started = await xssProvider.start({
+    instanceId: 'xss-labs-fixture', lab: xssLab, publicOrigin: 'http://127.0.0.1:6711', lifetimeMinutes: 5,
+    dataDir: xssLabsRoot,
+    runtime: { bindHost: '127.0.0.1', portStart: 6800, portEnd: 6899, phpBinary: 'php' },
+  })
+  const runtimeLevel = await readFile(join(xssLabsRoot, 'runtime', 'xss-labs-fixture', 'level14.php'), 'utf8')
+  assert.match(runtimeLevel, /src="about:blank"/)
+  assert.match(runtimeLevel, /href=level15\.php\?src=1\.gif/)
+  assert.equal(await readFile(join(sourceRoot, 'level14.php'), 'utf8'), originalLevel, 'XSS-Labs installation source must remain unchanged')
+  const smoke = await fetch(`${started.endpoint}level1.php?name=VulnLabSmoke`)
+  assert.equal(smoke.status, 200)
+  assert.match(await smoke.text(), /VulnLabSmoke/)
+  await xssProvider.stop({ lab: xssLab, instance: { ...instance, id: 'xss-labs-fixture', labId: xssLab.id, labTitle: xssLab.title, provider: 'native-php' }, dataDir: xssLabsRoot })
+  await assert.rejects(stat(join(xssLabsRoot, 'runtime', 'xss-labs-fixture')))
+} finally {
+  await rm(xssLabsRoot, { recursive: true, force: true })
+}
+
 const pikachuRoot = await mkdtemp(join(tmpdir(), 'vulnlab-pikachu-provider-'))
 try {
   const sourceRoot = join(pikachuRoot, 'labs', 'pikachu', 'fixture')

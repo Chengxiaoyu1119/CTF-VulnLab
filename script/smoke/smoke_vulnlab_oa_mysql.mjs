@@ -3,6 +3,7 @@ import { createServer } from 'node:net'
 import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { strFromU8, unzipSync } from '../../src/node_modules/fflate/esm/index.mjs'
 import { CliMySqlManager } from '../../src/dist/mysql.js'
@@ -12,7 +13,7 @@ import { adaptOaSeed } from '../../src/dist/oa-seed.js'
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
 const require = createRequire(new URL('../../src/package.json', import.meta.url))
 const createPool = require('mysql2/promise').createPool
-const dataDir = join(appDir, 'data', `.oa-mysql-smoke-${randomUUID()}`)
+const dataDir = join(tmpdir(), `vulnlab-oa-mysql-smoke-${randomUUID()}`)
 const mariadbRoot = join(appDir, 'data', 'runtime', 'toolchains', 'mariadb', '11.4.10', 'win32-x64')
 const mysqlServerBinary = join(mariadbRoot, 'bin', 'mariadbd.exe')
 const mysqlBinary = join(mariadbRoot, 'bin', 'mariadb.exe')

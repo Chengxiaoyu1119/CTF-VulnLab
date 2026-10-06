@@ -149,6 +149,12 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .lab-detail-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .lab-detail-tags span { border: 1px solid #373737; border-radius: 999px; padding: 3px 8px; color: #aaa; background-color: #242424; font-size: 10px; line-height: 1.2; }
 .lab-detail-tags span + span::before { display: none; }
+.lab-detail-notes { margin-top: 10px; color: #8f8f8f; font-size: 10px; line-height: 1.5; }
+.lab-detail-notes summary { width: fit-content; cursor: pointer; color: #969696; }
+.lab-detail-notes[open] { border-top: 1px solid var(--workspace-line); padding-top: 8px; }
+.lab-detail-notes p { margin: 6px 0 0; }
+.lab-detail-notes a { display: inline-block; margin-top: 6px; color: #aaa; text-decoration: underline; text-underline-offset: 2px; }
+.lab-detail-notes a:hover { color: var(--workspace-ink); }
 .lab-detail-runtime { margin-top: 15px; border-top: 1px solid var(--workspace-line); padding: 10px 0 2px; }
 .lab-detail-runtime-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .lab-detail-runtime-head > div { display: inline-flex; align-items: center; gap: 7px; color: var(--workspace-success); font-size: 11px; }

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { zipSync } from '../../src/node_modules/fflate/esm/index.mjs'
-import { installBuiltinAsset } from '../../src/dist/builtin-assets.js'
+import { hasBuiltinAsset, installBuiltinAsset } from '../../src/dist/builtin-assets.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-assets-'))
 try {
@@ -40,6 +40,59 @@ try {
   assert.ok(stages.includes('download'))
   assert.ok(stages.includes('extract'))
   assert.ok(stages.includes('completed'))
+
+  const xssArchive = Buffer.from(zipSync({
+    'xss-labs-fixture/index.php': Buffer.from('<?php echo "XSS-Labs"; ?>'),
+    'xss-labs-fixture/level1.php': Buffer.from('<?php echo $_GET["name"]; ?>'),
+  }))
+  const xssLab = {
+    ...manifest,
+    id: 'xss-labs',
+    slug: 'xss-labs',
+    title: 'XSS-Labs',
+    sourceUrl: 'https://github.com/do0dl3/xss-labs',
+    sourceRef: 'do0dl3/xss-labs@fixture',
+    license: '上游未声明',
+    runtimeKind: 'native-php',
+    providerId: 'native-php',
+    version: 'fixture',
+  }
+  assert.equal(hasBuiltinAsset('xss-labs'), true)
+  const xssManifest = await installBuiltinAsset({
+    lab: xssLab,
+    jobId: 'xss-labs-job',
+    dataDir: root,
+    fetchImpl: async () => new Response(xssArchive, { headers: { 'content-length': String(xssArchive.length) } }),
+    assetOverride: {
+      url: 'https://fixture.invalid/xss-labs.zip',
+      sha256: createHash('sha256').update(xssArchive).digest('hex'),
+      kind: 'zip',
+      filename: 'xss-labs-fixture.zip',
+    },
+  })
+  assert.equal(await readFile(join(xssManifest.localPath, 'index.php'), 'utf8'), '<?php echo "XSS-Labs"; ?>')
+  assert.equal(await readFile(join(xssManifest.localPath, 'level1.php'), 'utf8'), '<?php echo $_GET["name"]; ?>')
+  assert.equal(xssManifest.archiveSha256, createHash('sha256').update(xssArchive).digest('hex'))
+
+  const xssBundleDir = join(root, 'xss-bundle')
+  const xssBundleArchive = join(xssBundleDir, 'labs', 'xss-labs', 'offline', 'source.zip')
+  await mkdir(join(xssBundleDir, 'labs', 'xss-labs', 'offline'), { recursive: true })
+  await writeFile(xssBundleArchive, xssArchive)
+  const offlineXssManifest = await installBuiltinAsset({
+    lab: { ...xssLab, version: 'offline' },
+    jobId: 'xss-labs-offline-job',
+    dataDir: root,
+    bundleDir: xssBundleDir,
+    offline: true,
+    fetchImpl: async () => { throw new Error('离线模式不应联网') },
+    assetOverride: {
+      url: 'https://fixture.invalid/xss-labs.zip',
+      sha256: createHash('sha256').update(xssArchive).digest('hex'),
+      kind: 'zip',
+      filename: 'source.zip',
+    },
+  })
+  assert.equal(await readFile(join(offlineXssManifest.localPath, 'index.php'), 'utf8'), '<?php echo "XSS-Labs"; ?>')
 
   const bundleDir = join(root, 'bundle')
   const bundleArchive = join(bundleDir, 'labs', 'juice-shop', 'offline', 'juice-shop-20.2.0_node22_win32_x64.zip')

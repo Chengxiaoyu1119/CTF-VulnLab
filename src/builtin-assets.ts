@@ -41,6 +41,12 @@ const juiceShopAsset = (): BuiltinAsset => {
 }
 
 const assets: Record<string, () => BuiltinAsset> = {
+  'xss-labs': () => ({
+    url: 'https://github.com/do0dl3/xss-labs/archive/c97bed6e6dd850d486e0fcaac177b13117b1052d.zip',
+    sha256: 'c028a1fb84274ccf5c8a2a6dfaac98242da3e4af12c605d1fd0fffcbe6a006bd',
+    kind: 'zip',
+    filename: 'source.zip',
+  }),
   'oa-vuln-labs': () => ({
     url: 'bundle://oa-vuln-labs/source.zip',
     sha256: '99d7d57daad5f68474a6a2a0c04be5959bae4543a9ed31a10cfc6249ebc57e64',

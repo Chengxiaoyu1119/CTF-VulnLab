@@ -370,19 +370,20 @@ def main() -> None:
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
         expect(page.locator(".lab-card-grid:not(.lab-card-overflow) > .lab-card")).to_have_count(9)
         expect(page.locator('.lab-card-overflow .lab-card-title', has_text="OA-Vuln-Labs")).to_have_count(1)
+        expect(page.locator('.lab-card-overflow .lab-card-title', has_text="OWASP PyGoat")).to_have_count(1)
         overflow_spacing = page.locator(".lab-card-overflow").evaluate(
-            "element => { const lab = element.querySelector('.lab-card'); const add = element.querySelector('.lab-add-card'); const a = lab.getBoundingClientRect(); const b = add.getBoundingClientRect(); return { sameGrid: Boolean(lab && add && lab.parentElement === add.parentElement), verticalOffset: Math.abs(a.top - b.top), horizontalGap: b.left - a.right } }"
+            "element => { const labs = element.querySelectorAll('.lab-card'); const lab = labs[labs.length - 1]; const add = element.querySelector('.lab-add-card'); const a = lab.getBoundingClientRect(); const b = add.getBoundingClientRect(); return { sameGrid: Boolean(lab && add && lab.parentElement === add.parentElement), verticalOffset: Math.abs(a.top - b.top), horizontalGap: b.left - a.right } }"
         )
         assert overflow_spacing["sameGrid"] and overflow_spacing["verticalOffset"] <= 1 and 0 <= overflow_spacing["horizontalGap"] <= 24, overflow_spacing
         assert page.locator(".lab-card").evaluate_all("elements => elements.slice(0, 9).every(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight })")
-        desktop_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const oa = document.querySelector('.lab-card-overflow .lab-card').getBoundingClientRect(); const canvas = document.querySelector('.lab-canvas'); return { addTop: add.top, oaTop: oa.top, gap: add.left - oa.right, sameRow: Math.abs(add.top - oa.top) <= 1, canvasScrollHeight: canvas.scrollHeight, canvasClientHeight: canvas.clientHeight } }")
+        desktop_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const labs = document.querySelectorAll('.lab-card-overflow .lab-card'); const lastLab = labs[labs.length - 1].getBoundingClientRect(); const canvas = document.querySelector('.lab-canvas'); return { addTop: add.top, lastLabTop: lastLab.top, gap: add.left - lastLab.right, sameRow: Math.abs(add.top - lastLab.top) <= 1, canvasScrollHeight: canvas.scrollHeight, canvasClientHeight: canvas.clientHeight } }")
         assert desktop_add_position["sameRow"] and 0 <= desktop_add_position["gap"] <= 24 and desktop_add_position["canvasScrollHeight"] > desktop_add_position["canvasClientHeight"], desktop_add_position
         page.set_viewport_size({"width": 320, "height": 568})
         mobile_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const ninth = document.querySelectorAll('.lab-card')[8].getBoundingClientRect(); return { addTop: add.top, ninthBottom: ninth.bottom, viewportHeight: innerHeight, documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth } }")
         assert mobile_add_position["addTop"] >= mobile_add_position["ninthBottom"] and mobile_add_position["addTop"] > mobile_add_position["viewportHeight"], mobile_add_position
         assert mobile_add_position["documentWidth"] <= mobile_add_position["viewportWidth"], mobile_add_position
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.locator(".lab-card-overflow .lab-card-media").click()
+        page.get_by_role("button", name="查看 OA-Vuln-Labs 信息").click()
         expect(page.get_by_role("heading", name="OA-Vuln-Labs", exact=True)).to_be_visible()
         expect(page.locator('.lab-detail-cover[data-cover="oa-vuln-labs"]')).to_be_visible()
         oa_cover_image = page.locator(".lab-detail-cover .lab-card-cover")
@@ -409,6 +410,26 @@ def main() -> None:
         assert mobile_menu_box and mobile_dialog_box and mobile_menu_box["width"] <= 224 and mobile_menu_box["x"] >= mobile_dialog_box["x"] and mobile_menu_box["x"] + mobile_menu_box["width"] <= mobile_dialog_box["x"] + mobile_dialog_box["width"], {"menu": mobile_menu_box, "dialog": mobile_dialog_box}
         page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_role("button", name="关闭靶场信息").click()
+        page.get_by_role("button", name="查看 XSS-Labs 信息").click()
+        expect(page.get_by_role("heading", name="XSS-Labs", exact=True)).to_be_visible()
+        expect(page.locator('.lab-detail-cover[data-cover="xss-labs"]')).to_be_visible()
+        xss_cover = page.locator(".lab-detail-cover .lab-card-cover")
+        expect(xss_cover).to_have_attribute("src", "/covers/xss-labs.svg")
+        assert xss_cover.evaluate("element => element.complete && element.naturalWidth > 0")
+        expect(page.locator(".lab-detail-facts")).to_have_text("Web·中等")
+        expect(page.locator(".lab-detail-summary").first).to_have_text("XSS 专项关卡，练习反射型输入与常见过滤绕过。")
+        xss_notes = page.locator(".lab-detail-notes")
+        expect(xss_notes.locator("summary")).to_have_text("版本与兼容性")
+        assert not xss_notes.evaluate("element => element.open")
+        xss_notes.locator("summary").click()
+        expect(xss_notes).to_contain_text("版本 c97bed6 · 许可证上游未声明")
+        expect(xss_notes).to_contain_text("第 14 关使用本地空白占位")
+        expect(xss_notes).to_contain_text("第 17–20 关依赖 Flash，现代浏览器不支持")
+        expect(xss_notes.get_by_role("link", name="上游仓库")).to_have_attribute("href", "https://github.com/do0dl3/xss-labs")
+        xss_notes.locator("summary").click()
+        xss_detail_size = page.locator(".lab-detail-body").evaluate("element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })")
+        assert xss_detail_size["scrollHeight"] <= xss_detail_size["clientHeight"], xss_detail_size
+        page.get_by_role("button", name="关闭靶场信息").click()
         expect(page.locator(".lab-add-hint")).to_have_count(0)
         expect(page.get_by_text("从管理中心导入", exact=True)).to_have_count(0)
         page.locator(".lab-add-card").get_by_role("button", name="添加靶场").click()
@@ -425,7 +446,8 @@ def main() -> None:
             "elements => elements.map(element => element.getAttribute('loading'))"
         ) == [None, None, None, *["lazy"] * (cover_image_count - 3)]
         mutillidae_lab = next(lab for lab in initial_labs_payload if lab["slug"] == "mutillidae")
-        mutillidae_trigger = page.locator(".lab-card-media").nth(7)
+        mutillidae_index = next(index for index, lab in enumerate(initial_labs_payload) if lab["slug"] == "mutillidae")
+        mutillidae_trigger = page.locator(".lab-card-media").nth(mutillidae_index)
         mutillidae_trigger.click()
         expect(page.get_by_role("heading", name="OWASP Mutillidae II", exact=True)).to_be_visible()
         detail_entry_animation = page.locator(".lab-detail-heading").evaluate(

@@ -603,6 +603,7 @@ const coverAssets = Object.freeze({
   'oa-vuln-labs': '/covers/oa-vuln-labs.svg',
   dvwa: '/covers/dvwa.png',
   pikachu: '/covers/pikachu.png',
+  'xss-labs': '/covers/xss-labs.svg',
   'sqli-labs': '/covers/sqli-labs.jpg',
   'upload-labs': '/covers/upload-labs.jpg',
   xvwa: '/covers/xvwa.png',
@@ -692,6 +693,9 @@ function labDetailModal() {
     : ''
   const stateLabel = preparing ? '准备中' : ''
   const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
+  const sourceInfo = lab.slug === 'xss-labs'
+    ? `<details class="lab-detail-notes"><summary>版本与兼容性</summary><p>版本 ${esc(lab.version)} · 许可证${esc(lab.license || '未声明')}</p><p>第 14 关使用本地空白占位；第 17–20 关依赖 Flash，现代浏览器不支持。</p><a href="${esc(lab.sourceUrl)}" target="_blank" rel="noreferrer">上游仓库</a></details>`
+    : ''
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
   const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
   const runningInfo = instance
@@ -700,7 +704,7 @@ function labDetailModal() {
   const managementActions = instance && admin
     ? `<button class="button button-quiet lab-detail-stop lab-detail-action" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button><button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button>`
     : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div>${oaModeMenu}</section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${sourceInfo}${preparationInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div>${oaModeMenu}</section></div>`
 }
 
 function passwordToggleIcon(visible) {

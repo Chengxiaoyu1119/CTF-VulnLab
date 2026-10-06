@@ -661,6 +661,18 @@ const configureUploadLabs = async (root: string, appUrlRoot: string) => {
   await writeFile(configPath, contents, 'utf8')
 }
 
+const configureXssLabs = async (root: string) => {
+  const levelPath = join(root, 'level14.php')
+  let contents = await readFile(levelPath, 'utf8').catch(() => {
+    throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', 'XSS-Labs 缺少 level14.php 关卡文件。', 409)
+  })
+  if (!contents.includes('http://www.exifviewer.org/') || !contents.includes('/xss/level15.php')) {
+    throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', 'XSS-Labs 第 14 关入口与固定版本不匹配。', 409)
+  }
+  contents = contents.replace('http://www.exifviewer.org/', 'about:blank').replace('/xss/level15.php', 'level15.php')
+  await writeFile(levelPath, contents, 'utf8')
+}
+
 const configureDvwaExistingDatabase = async (root: string) => {
   const installerPath = join(root, 'dvwa', 'includes', 'DBMS', 'MySQL.php')
   let contents = await readFile(installerPath, 'utf8').catch(() => {
@@ -914,6 +926,7 @@ export class NativePhpProvider implements LabProvider {
       if (input.lab.slug === 'upload-labs') {
         await configureUploadLabs(sourceTarget, appUrlRoot)
       }
+      if (input.lab.slug === 'xss-labs') await configureXssLabs(sourceTarget)
       const runtimeInput = profile === 'sqli-labs'
         ? { ...input, phpAutoPrependFile: await configureSqliLabs(sourceTarget) }
         : input

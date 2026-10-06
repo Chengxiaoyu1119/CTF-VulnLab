@@ -34,6 +34,11 @@ const request = async (path, options = {}) => {
 const probes = {
   dvwa: [{ path: 'login.php', pattern: /DVWA/i, redirect: 'manual' }],
   pikachu: [{ path: 'index.php', pattern: /pikachu|皮卡丘/i, redirect: 'follow' }],
+  'xss-labs': [
+    { path: '', pattern: /XSS挑战/i, redirect: 'manual' },
+    { path: 'level1.php?name=VulnLabSmoke', pattern: /VulnLabSmoke/, redirect: 'manual' },
+    { path: 'level14.php', pattern: /level15\.php/, redirect: 'manual' },
+  ],
   'sqli-labs': [{ path: 'Less-1/index.php?id=1', pattern: /Dumb|Login name/i, redirect: 'manual' }],
   'upload-labs': [{ path: '', pattern: /upload/i, redirect: 'manual' }],
   xvwa: [
