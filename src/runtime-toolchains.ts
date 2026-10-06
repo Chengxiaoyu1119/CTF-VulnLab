@@ -466,11 +466,14 @@ export class RuntimeToolchainInstaller {
     }
   }
 
-  async installMissing() {
+  async installMissing(ids?: readonly RuntimeToolchainId[]) {
     if (this.installPromise) return this.installPromise
     this.installPromise = (async () => {
       await this.inspect()
-      for (const input of this.packages) {
+      const requested = ids ? new Set(ids) : new Set(this.packages.map(input => input.id))
+      const unknown = [...requested].filter(id => !this.packages.some(input => input.id === id))
+      if (unknown.length) throw new RuntimeToolchainError(`未知运行时工具链：${unknown.join('、')}。`)
+      for (const input of this.packages.filter(item => requested.has(item.id))) {
         if (this.statuses.find(item => item.id === input.id)?.state !== 'ready') await this.installPackage(input)
       }
       return this.getStatuses()

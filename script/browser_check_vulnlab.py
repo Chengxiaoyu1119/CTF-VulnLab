@@ -25,17 +25,25 @@ if not SCREENSHOT_DIR:
 OUTPUT_DIR = Path(SCREENSHOT_DIR)
 
 
-def assert_admin_selection_buttons_match_logout(page) -> None:
+def assert_admin_logout_visibility(page, visible: bool) -> None:
+    logout = page.locator('.admin-dialog [data-action="logout"]')
+    if visible:
+        expect(logout).to_be_visible()
+    else:
+        expect(logout).to_have_count(0)
+    expect(page.locator('.admin-sidebar [data-action="logout"], .admin-dialog-tools [data-action="logout"]')).to_have_count(0)
+
+
+def assert_admin_selection_buttons_consistent(page) -> None:
     sizes = page.locator(".admin-selection-actions button").evaluate_all(
         """buttons => {
-            const logout = document.querySelector('.dialog-actions [data-action="logout"]').getBoundingClientRect()
             return buttons.map(button => {
                 const rect = button.getBoundingClientRect()
-                return { width: rect.width, height: rect.height, matches: rect.width === logout.width && rect.height === logout.height }
+                return { width: rect.width, height: rect.height }
             })
         }"""
     )
-    assert sizes and all(size["matches"] for size in sizes), sizes
+    assert sizes and all(size == sizes[0] for size in sizes), sizes
 
 
 def main() -> None:
@@ -354,13 +362,53 @@ def main() -> None:
         )
         assert brand_edge_style == {"backgroundColor": "rgb(18, 18, 18)", "borderLeftWidth": "0px", "borderRightWidth": "0px", "boxShadow": "none"}, brand_edge_style
         canvas_frame_style = page.locator(".lab-canvas").evaluate(
-            "element => ({ width: getComputedStyle(element).width, height: getComputedStyle(element).height, borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth })"
+            "element => ({ width: getComputedStyle(element).width, height: getComputedStyle(element).height, backgroundColor: getComputedStyle(element).backgroundColor, borderRadius: getComputedStyle(element).borderRadius, borderTopWidth: getComputedStyle(element).borderTopWidth, boxShadow: getComputedStyle(element).boxShadow })"
         )
-        assert canvas_frame_style["borderRadius"] == "12px" and canvas_frame_style["borderTopWidth"] == "1px", canvas_frame_style
+        assert canvas_frame_style["backgroundColor"] == "rgb(21, 21, 21)" and canvas_frame_style["borderRadius"] == "12px" and canvas_frame_style["borderTopWidth"] == "1px" and "inset" in canvas_frame_style["boxShadow"] and "48px" not in canvas_frame_style["boxShadow"], canvas_frame_style
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
         expect(page.locator(".lab-grid .lab-add-card")).to_have_count(1)
         expect(page.locator(".workspace-add-lab")).to_have_count(0)
+        expect(page.locator(".lab-card-grid:not(.lab-card-overflow) > .lab-card")).to_have_count(9)
+        expect(page.locator('.lab-card-overflow .lab-card-title', has_text="OA-Vuln-Labs")).to_have_count(1)
+        overflow_spacing = page.locator(".lab-card-overflow").evaluate(
+            "element => { const lab = element.querySelector('.lab-card'); const add = element.querySelector('.lab-add-card'); const a = lab.getBoundingClientRect(); const b = add.getBoundingClientRect(); return { sameGrid: Boolean(lab && add && lab.parentElement === add.parentElement), verticalOffset: Math.abs(a.top - b.top), horizontalGap: b.left - a.right } }"
+        )
+        assert overflow_spacing["sameGrid"] and overflow_spacing["verticalOffset"] <= 1 and 0 <= overflow_spacing["horizontalGap"] <= 24, overflow_spacing
         assert page.locator(".lab-card").evaluate_all("elements => elements.slice(0, 9).every(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight })")
+        desktop_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const oa = document.querySelector('.lab-card-overflow .lab-card').getBoundingClientRect(); const canvas = document.querySelector('.lab-canvas'); return { addTop: add.top, oaTop: oa.top, gap: add.left - oa.right, sameRow: Math.abs(add.top - oa.top) <= 1, canvasScrollHeight: canvas.scrollHeight, canvasClientHeight: canvas.clientHeight } }")
+        assert desktop_add_position["sameRow"] and 0 <= desktop_add_position["gap"] <= 24 and desktop_add_position["canvasScrollHeight"] > desktop_add_position["canvasClientHeight"], desktop_add_position
+        page.set_viewport_size({"width": 320, "height": 568})
+        mobile_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const ninth = document.querySelectorAll('.lab-card')[8].getBoundingClientRect(); return { addTop: add.top, ninthBottom: ninth.bottom, viewportHeight: innerHeight, documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth } }")
+        assert mobile_add_position["addTop"] >= mobile_add_position["ninthBottom"] and mobile_add_position["addTop"] > mobile_add_position["viewportHeight"], mobile_add_position
+        assert mobile_add_position["documentWidth"] <= mobile_add_position["viewportWidth"], mobile_add_position
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.locator(".lab-card-overflow .lab-card-media").click()
+        expect(page.get_by_role("heading", name="OA-Vuln-Labs", exact=True)).to_be_visible()
+        expect(page.locator('.lab-detail-cover[data-cover="oa-vuln-labs"]')).to_be_visible()
+        oa_cover_image = page.locator(".lab-detail-cover .lab-card-cover")
+        expect(oa_cover_image).to_have_attribute("src", "/covers/oa-vuln-labs.svg")
+        assert oa_cover_image.evaluate("element => element.complete && element.naturalWidth > 0 && Math.abs(element.naturalWidth / element.naturalHeight - 2.4) < 0.01")
+        expect(page.locator(".lab-detail-summary")).to_have_text("企业 OA 业务场景靶场，涵盖 25 个漏洞点，并提供 4 条攻击链练习。")
+        page.locator(".lab-detail-dialog").evaluate("element => Promise.all(element.getAnimations().map(animation => animation.finished))")
+        oa_detail_before = page.locator(".lab-detail-dialog").bounding_box()
+        oa_start = page.locator(".lab-detail-dialog .oa-start-trigger")
+        expect(oa_start).to_be_visible()
+        assert oa_start.locator("svg").count() == 0
+        oa_start.click()
+        expect(page.locator(".oa-mode-menu")).to_be_visible()
+        oa_menu_box = page.locator(".oa-mode-menu").bounding_box()
+        oa_detail_after = page.locator(".lab-detail-dialog").bounding_box()
+        assert oa_menu_box and oa_menu_box["height"] <= 68 and oa_menu_box["width"] <= 224, oa_menu_box
+        assert oa_detail_before == oa_detail_after, {"before": oa_detail_before, "after": oa_detail_after}
+        assert page.locator(".oa-mode-note").evaluate("element => element.scrollWidth <= element.clientWidth")
+        page.screenshot(path=str(OUTPUT_DIR / "oa-mode-menu-compact.png"))
+        page.set_viewport_size({"width": 320, "height": 568})
+        page.wait_for_function("() => { const menu = document.querySelector('.oa-mode-menu'); const dialog = document.querySelector('.lab-detail-dialog'); if (!menu || !dialog) return false; const menuBox = menu.getBoundingClientRect(); const dialogBox = dialog.getBoundingClientRect(); return menuBox.width <= 224 && menuBox.left >= dialogBox.left - 1 && menuBox.right <= dialogBox.right + 1; }")
+        mobile_menu_box = page.locator(".oa-mode-menu").bounding_box()
+        mobile_dialog_box = page.locator(".lab-detail-dialog").bounding_box()
+        assert mobile_menu_box and mobile_dialog_box and mobile_menu_box["width"] <= 224 and mobile_menu_box["x"] >= mobile_dialog_box["x"] and mobile_menu_box["x"] + mobile_menu_box["width"] <= mobile_dialog_box["x"] + mobile_dialog_box["width"], {"menu": mobile_menu_box, "dialog": mobile_dialog_box}
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.get_by_role("button", name="关闭靶场信息").click()
         expect(page.locator(".lab-add-hint")).to_have_count(0)
         expect(page.get_by_text("从管理中心导入", exact=True)).to_have_count(0)
         page.locator(".lab-add-card").get_by_role("button", name="添加靶场").click()
@@ -462,7 +510,8 @@ def main() -> None:
         assert admin_entry_animation == "admin-content-in", admin_entry_animation
         admin_dialog_box = page.locator('[data-overlay-slot="admin"] .admin-dialog').bounding_box()
         expect(page.locator('[data-admin-dialog-view="profile"]')).to_be_visible()
-        assert admin_dialog_box and round(admin_dialog_box["width"]) == 640 and round(admin_dialog_box["height"]) == 480, admin_dialog_box
+        assert_admin_logout_visibility(page, True)
+        assert admin_dialog_box and round(admin_dialog_box["width"]) == 640 and round(admin_dialog_box["height"]) == 420, admin_dialog_box
         expect(page.locator('.profile-avatar')).to_have_attribute('src', '/favicon.png')
         expect(page.locator('.profile-identity')).to_have_count(0)
         expect(page.locator('.profile-facts')).to_have_count(0)
@@ -492,23 +541,69 @@ def main() -> None:
         expect(account_button).to_have_count(1)
         labs_button.click()
         expect(page.locator('[data-admin-view="labs"]')).to_be_visible()
+        assert_admin_logout_visibility(page, False)
         expect(page.get_by_text("登记来源后，系统会在后台准备运行资源。", exact=True)).to_have_count(0)
         expect(page.get_by_text("仅显示自定义来源", exact=True)).to_have_count(0)
         expect(page.get_by_text(re.compile(r"^\d+ 个自定义靶场$"))).to_have_count(0)
+        expect(page.locator("#admin-lab-form")).to_have_count(0)
+        expect(page.locator("[data-action='start-custom-lab-create']")).to_be_visible()
+        expect(page.locator(".admin-lab-list")).to_be_visible()
+        expect(page.locator(".admin-lab-list > .admin-empty-state")).to_be_visible()
+        empty_state_style = page.locator(".admin-lab-list > .admin-empty-state").evaluate(
+            "element => { const style = getComputedStyle(element); return { borderStyle: style.borderTopStyle, textAlign: style.textAlign, background: style.backgroundColor }; }"
+        )
+        assert empty_state_style == {"borderStyle": "none", "textAlign": "left", "background": "rgba(0, 0, 0, 0)"}, empty_state_style
+        for width, height in [(320, 568), (390, 844), (768, 1024), (1280, 720), (1440, 900)]:
+            page.set_viewport_size({"width": width, "height": height})
+            dialog_box = page.locator(".admin-dialog:visible").bounding_box()
+            list_layout = page.locator(".admin-lab-view").evaluate(
+                "element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, headerFits: (() => { const header = element.querySelector('.admin-lab-heading').getBoundingClientRect(); const button = element.querySelector('[data-action=start-custom-lab-create]').getBoundingClientRect(); return button.left >= header.left - 1 && button.right <= header.right + 1; })() })"
+            )
+            assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= height, (width, height, dialog_box)
+            assert list_layout["scrollWidth"] <= list_layout["clientWidth"] and list_layout["headerFits"], (width, list_layout)
+            assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 320, "height": 568})
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.locator("[data-action='start-custom-lab-create']").click()
         expect(page.locator("#admin-lab-form")).to_be_visible()
-        expect(page.locator("#admin-lab-form").get_by_role("button", name="添加靶场", exact=True)).to_be_visible()
-        expect(page.locator('[data-admin-view="labs"] input[name="title"]')).to_be_visible()
+        title_input = page.locator('[data-admin-view="labs"] input[name="title"]')
+        expect(title_input).to_be_visible()
+        expect(title_input).to_be_focused()
+        assert page.locator(".admin-dialog-content").evaluate("element => element.scrollTop === 0")
         expect(page.locator('[data-admin-view="labs"] select[name="runtimeMode"]')).to_be_visible()
         expect(page.locator('[data-admin-view="labs"] select[name="runtimeKind"]')).to_have_count(0)
         expect(page.locator('[data-admin-view="labs"] select[name="runtimeProfile"]')).to_have_count(0)
         expect(page.locator('[data-admin-view="labs"] [data-action="select-lab-source"]')).to_have_count(2)
         expect(page.locator(".admin-lab-template-hint")).to_contain_text("PHP 入口文件")
-        runtime_advanced = page.locator(".admin-lab-advanced:not(.admin-lab-display-settings)")
-        expect(runtime_advanced).not_to_have_attribute("open", "")
-        expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).not_to_be_visible()
-        runtime_advanced.locator("summary").click()
+        source_row_layout = page.locator(".admin-lab-source-row").evaluate(
+            "element => { const source = element.querySelector('.admin-lab-source-toggle button').getBoundingClientRect(); const value = element.querySelector('.admin-lab-source-value input').getBoundingClientRect(); return { sameRow: Math.abs(source.top - value.top) < 2, ordered: source.right <= value.left, offset: Math.round(source.top - value.top) }; }"
+        )
+        assert source_row_layout["sameRow"] and source_row_layout["ordered"], source_row_layout
+        form_surface = page.locator("#admin-lab-form").evaluate(
+            "element => { const style = getComputedStyle(element); return { borderWidth: style.borderTopWidth, borderStyle: style.borderTopStyle, radius: style.borderRadius, background: style.backgroundColor, padding: style.paddingTop }; }"
+        )
+        assert form_surface == {"borderWidth": "0px", "borderStyle": "none", "radius": "0px", "background": "rgba(0, 0, 0, 0)", "padding": "0px"}, form_surface
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-form-primary-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 320, "height": 568})
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-form-primary-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        runtime_select = page.locator('#admin-lab-form [name="runtimeMode"]')
+        runtime_select.focus()
+        runtime_select_style = runtime_select.evaluate(
+            "element => { const style = getComputedStyle(element); return { focused: element === document.activeElement, outline: style.outlineStyle, boxShadow: style.boxShadow, appearance: style.appearance }; }"
+        )
+        assert runtime_select_style == {"focused": True, "outline": "none", "boxShadow": "none", "appearance": "none"}, runtime_select_style
+        expect(page.locator(".admin-lab-precheck")).to_be_visible()
+        expect(page.locator(".admin-lab-precheck").get_by_role("button", name="检查结构", exact=True)).to_be_visible()
+        expect(page.locator(".admin-lab-runtime-settings")).to_be_visible()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).to_be_visible()
-        runtime_advanced.locator("summary").click()
+        expect(page.locator(".admin-lab-runtime-grid [name=entryPath]")).to_be_visible()
+        expect(page.locator(".admin-lab-display-settings")).to_be_visible()
+        expect(page.locator(".admin-lab-display-settings [name=summary]")).to_be_visible()
+        expect(page.locator(".admin-lab-form details, .admin-lab-form summary")).to_have_count(0)
         assert page.locator("#admin-lab-form").evaluate("element => element.scrollWidth <= element.clientWidth")
         page.locator('[data-action="select-lab-source"][data-source="archive"]').click()
         expect(page.locator('[data-admin-view="labs"] input[name="archiveFile"]')).to_be_visible()
@@ -528,31 +623,54 @@ def main() -> None:
         page.locator('[data-action="select-lab-source"][data-source="git"]').click()
         expect(page.locator('[data-admin-view="labs"] input[name="sourceUrl"]')).to_be_visible()
         page.locator('[data-admin-view="labs"] select[name="runtimeMode"]').select_option("node")
-        runtime_advanced = page.locator(".admin-lab-advanced:not(.admin-lab-display-settings)")
-        runtime_advanced.locator("summary").click()
-        advanced_state = runtime_advanced.evaluate("element => ({ open: element.open, argsVisible: Boolean(element.querySelector('[name=nodeArgs]')?.getClientRects().length) })")
-        assert advanced_state == {"open": True, "argsVisible": True}, advanced_state
-        expect(page.locator(".admin-lab-template-hint")).to_contain_text("package-lock.json")
         expect(page.locator('[data-admin-view="labs"] textarea[name="nodeArgs"]')).to_be_visible()
-        runtime_advanced.locator("summary").click()
+        expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).to_be_visible()
+        expect(page.locator(".admin-lab-template-hint")).to_contain_text("package-lock.json")
         page.locator('[data-admin-view="labs"] select[name="runtimeMode"]').select_option("php-static")
-        expect(runtime_advanced).not_to_have_attribute("open", "")
-        runtime_advanced.locator("summary").click()
-        expect(runtime_advanced).to_have_attribute("open", "")
-        for width, height in [(1440, 900), (768, 1024), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
+        expect(page.locator('[data-admin-view="labs"] textarea[name="nodeArgs"]')).to_have_count(0)
+        expect(page.locator('[data-admin-view="labs"] input[name="entryPath"]')).to_be_visible()
+        display_layout = page.locator(".admin-lab-display-grid").evaluate(
+            "element => { const license = element.querySelector('[name=license]').getBoundingClientRect(); const tags = element.querySelector('[name=tags]').getBoundingClientRect(); const summary = element.querySelector('[name=summary]').getBoundingClientRect(); return { fieldsAligned: Math.abs(license.top - tags.top) < 2, summaryFullWidth: Math.abs(summary.width - element.clientWidth) < 2 }; }"
+        )
+        assert display_layout == {"fieldsAligned": True, "summaryFullWidth": True}, display_layout
+        expect(page.locator(".admin-lab-section")).to_have_count(3)
+        page.set_viewport_size({"width": 320, "height": 568})
+        sticky_layout = page.locator(".admin-dialog-content").evaluate(
+            "element => { element.scrollTop = element.scrollHeight; const viewport = element.getBoundingClientRect(); const headerElement = element.querySelector('.admin-lab-heading'); const header = headerElement.getBoundingClientRect(); const actions = element.querySelector('.admin-lab-form-actions').getBoundingClientRect(); return { hasScroll: element.scrollHeight > element.clientHeight, headerPinned: getComputedStyle(headerElement).position === 'sticky' && header.top >= viewport.top - 1 && header.top <= viewport.top + 8, actionsPinned: actions.bottom <= viewport.bottom && viewport.bottom - actions.bottom < 18 }; }"
+        )
+        assert sticky_layout["hasScroll"] and sticky_layout["headerPinned"] and sticky_layout["actionsPinned"], sticky_layout
+        page.locator(".admin-dialog-content").evaluate("element => { element.scrollTop = 0 }")
+        page.set_viewport_size({"width": 1440, "height": 900})
+        for width, height in [(1440, 900), (768, 1024), (601, 844), (600, 844), (558, 844), (480, 844), (390, 844), (320, 568), (800, 320)]:
             page.set_viewport_size({"width": width, "height": height})
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
             assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= height, (width, height, dialog_box)
             form_layout = page.locator("#admin-lab-form").evaluate("element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, fieldsFit: [...element.querySelectorAll('input, select, textarea, summary, button')].filter(item => item.getClientRects().length).every(item => { const field = item.getBoundingClientRect(); const form = element.getBoundingClientRect(); return field.left >= form.left - 1 && field.right <= form.right + 1; }) })")
             assert form_layout["scrollWidth"] <= form_layout["clientWidth"] and form_layout["fieldsFit"], (width, form_layout)
-            expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
+            display_columns = page.locator(".admin-lab-display-grid").evaluate(
+                "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            )
+            assert display_columns == (1 if width <= 480 else 2), (width, display_columns)
+            expect(page.locator(".admin-lab-precheck, .admin-lab-runtime-settings, .admin-lab-display-settings")).to_have_count(3)
+            if width <= 480:
+                source_row_layout = page.locator(".admin-lab-source-row").evaluate(
+                    "element => { const source = element.querySelector('.admin-lab-source-toggle').getBoundingClientRect(); const value = element.querySelector('.admin-lab-source-value').getBoundingClientRect(); return value.top >= source.bottom; }"
+                )
+                assert source_row_layout, (width, "source controls did not stack")
+            else:
+                source_row_layout = page.locator(".admin-lab-source-row").evaluate(
+                    "element => { const source = element.querySelector('.admin-lab-source-toggle').getBoundingClientRect(); const value = element.querySelector('.admin-lab-source-value').getBoundingClientRect(); return Math.abs(source.top - value.top) < 2 && source.right <= value.left; }"
+                )
+                assert source_row_layout, (width, "source controls did not align")
         page.set_viewport_size({"width": 1440, "height": 900})
         page.screenshot(path=str(OUTPUT_DIR / "admin-add-lab-advanced-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         page.screenshot(path=str(OUTPUT_DIR / "admin-add-lab-advanced-mobile.png"), full_page=True)
-        page.locator(".admin-lab-advanced:not(.admin-lab-display-settings) > summary").click()
-        expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).not_to_be_visible()
+        expect(page.locator('[data-admin-view="labs"] input[name="sourceRef"]')).to_be_visible()
         page.set_viewport_size({"width": 1440, "height": 900})
+        page.locator('[data-action="cancel-custom-lab-editor"]').click()
+        expect(page.locator("#admin-lab-form")).to_have_count(0)
+        expect(page.locator("[data-action='start-custom-lab-create']")).to_be_visible()
         page.locator('[data-action="open-admin-section"][data-section="profile"]').click()
         expect(page.locator('[data-admin-dialog-view="profile"]')).to_be_visible()
         with page.expect_response(lambda response: response.url.endswith("/api/auth/users") and response.request.method == "GET") as initial_users_response_info:
@@ -581,6 +699,7 @@ def main() -> None:
         assert system_account_style == {"borderWidth": "0px", "borderRadius": "8px", "backgroundColor": "rgb(35, 35, 35)"}, system_account_style
         with page.expect_response(lambda response: response.url.endswith("/api/overview") and response.request.method == "GET") as overview_response_info:
             system_button.click()
+            assert_admin_logout_visibility(page, False)
         assert overview_response_info.value.headers.get("cache-control") == "no-store"
         expect(page.locator('[data-admin-view="system"]')).to_be_visible()
         expect(page.locator(".admin-system-stat")).to_have_count(4)
@@ -615,6 +734,7 @@ def main() -> None:
             for index, count in enumerate([8, 5, 3, 2, 1]):
                 for launch in range(count):
                     stats_db.execute("INSERT INTO audit (id, actor, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)", (f"system-fixture-{index}-{launch}", "vulnlab", "instance.start", initial_labs_payload[index]["title"], "system-fixture-instance" if index == 0 else "", stats_stamp))
+        pause_silent_overview = None
         try:
             overview_routes = []
 
@@ -787,7 +907,6 @@ def main() -> None:
                 assert page.locator(".admin-dialog-content").evaluate("e => e.scrollWidth <= e.clientWidth"), width
                 dialog_box = page.locator(".admin-dialog:visible").bounding_box()
                 assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= height, (width, height, dialog_box)
-                expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
                 page.screenshot(path=str(OUTPUT_DIR / f"system-populated-{width}.png"), full_page=True)
             page.set_viewport_size({"width": 1440, "height": 900})
             ranking_row = page.locator(".admin-lab-ranking").first
@@ -811,12 +930,16 @@ def main() -> None:
             page.get_by_role("button", name="关闭管理中心", exact=True).click()
             admin_trigger.click()
             system_button.click()
+            assert_admin_logout_visibility(page, False)
             expect(page.locator(".admin-inline-error")).to_be_visible()
             expect(page.locator(".admin-system-stat")).to_have_count(0)
             page.unroute("**/api/overview", fail_system_overview)
             page.get_by_role("button", name="刷新系统数据", exact=True).click()
             expect(page.locator('[data-system-stat="launches"]')).to_have_text("19")
         finally:
+            page.unroute("**/api/overview", pause_overview)
+            if pause_silent_overview is not None:
+                page.unroute("**/api/overview", pause_silent_overview)
             page.unroute("**/api/overview")
             with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as stats_db:
                 stats_db.execute("DELETE FROM audit WHERE id LIKE 'system-fixture-%'")
@@ -828,6 +951,7 @@ def main() -> None:
         page.set_viewport_size({"width": 320, "height": 568})
         invitation_button.click()
         expect(page.locator('[data-admin-view="invitations"]')).to_be_visible()
+        assert_admin_logout_visibility(page, False)
         expect(page.locator('[data-admin-dialog-view="invitations"]')).to_be_visible()
         page.wait_for_function("""() => {
             const button = document.querySelector('.admin-nav-button.is-active')
@@ -854,7 +978,7 @@ def main() -> None:
         )
         assert empty_scroll_style["scrollHeight"] == empty_scroll_style["clientHeight"] and empty_scroll_style["overflowY"] == "auto", empty_scroll_style
         records_dialog_box = page.locator(".admin-dialog:visible").bounding_box()
-        assert records_dialog_box and round(records_dialog_box["width"]) == 640 and round(records_dialog_box["height"]) == 480, records_dialog_box
+        assert records_dialog_box and round(records_dialog_box["width"]) == 640 and round(records_dialog_box["height"]) == 420, records_dialog_box
         page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-empty-desktop.png"), full_page=True)
         generated_invitations = page.evaluate(
             """async () => {
@@ -984,14 +1108,14 @@ def main() -> None:
         select_all = page.locator('[data-admin-select-all="invitations"]')
         select_all.check()
         expect(page.locator(".admin-selection-count")).to_contain_text(f"已选 {generated_invitation_records} 条")
-        assert_admin_selection_buttons_match_logout(page)
+        assert_admin_selection_buttons_consistent(page)
         invitation_footer_order = page.locator(".dialog-actions").evaluate(
             "element => [...element.children].map(item => item.classList.contains('admin-selection-actions') ? 'admin-selection-actions' : item.dataset.action || item.className)"
         )
-        assert invitation_footer_order.index("admin-selection-actions") < invitation_footer_order.index("logout"), invitation_footer_order
+        assert invitation_footer_order == ["admin-dialog-primary", "admin-selection-actions"], invitation_footer_order
         for width in (390, 320):
             page.set_viewport_size({"width": width, "height": 568})
-            assert_admin_selection_buttons_match_logout(page)
+            assert_admin_selection_buttons_consistent(page)
             invitation_footer_layout = page.locator(".dialog-actions").evaluate(
                 "element => { const box = element.getBoundingClientRect(); const items = [...element.children].map(item => item.getBoundingClientRect()).filter(rect => rect.width); return { width: box.width, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, fits: items.every(item => item.left >= box.left - 1 && item.right <= box.right + 1), ordered: items.every((item, index) => index === 0 || item.left >= items[index - 1].right - 1) }; }"
             )
@@ -1088,6 +1212,7 @@ def main() -> None:
                 (expired_invitation_id, f"{expired_invitation_id}-hash", "vulnlab", (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"), legacy_stamp),
             )
         invitation_button.click()
+        assert_admin_logout_visibility(page, False)
         expect(page.locator(".invitation-history-card[data-status='used']")).to_have_count(len(account_names) + 1)
         expect(page.locator(".invitation-history-card[data-status='expired']")).to_have_count(1)
         expect(page.locator(".invitation-history-card[data-status='used'] [data-admin-record-select='invitations'], .invitation-history-card[data-status='used'] .record-delete")).to_have_count(0)
@@ -1119,6 +1244,7 @@ def main() -> None:
         account_page.get_by_label("密码", exact=True).press("Enter")
         expect(account_page.locator(".labs-screen")).to_be_visible()
         account_button.click()
+        assert_admin_logout_visibility(page, False)
         expect(page.locator('[data-admin-view="users"]')).to_be_visible()
         expect(page.locator(".admin-user-entry")).to_have_count(7)
         system_admin_row = page.locator('.admin-user-entry[data-kind="system"]')
@@ -1209,7 +1335,6 @@ def main() -> None:
         page.set_viewport_size({"width": 1440, "height": 900})
         page.set_viewport_size({"width": 1440, "height": 360})
         assert page.locator(".admin-dialog-content").evaluate("element => element.scrollHeight > element.clientHeight")
-        expect(page.get_by_role("button", name="退出系统", exact=True)).to_be_in_viewport()
         page.set_viewport_size({"width": 1440, "height": 900})
         account_select_alignment = page.locator('[data-admin-select-all="users"]').evaluate(
             "element => ({ toolbar: element.closest('.admin-user-table-head').getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"users\"]').getBoundingClientRect().left, input: element.getBoundingClientRect().left })"
@@ -1234,18 +1359,16 @@ def main() -> None:
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
         account_status_toolbar_order = page.locator(".admin-selection-actions button").evaluate_all("elements => elements.map(element => element.textContent.trim())")
         assert account_status_toolbar_order == ["禁用", "删除"], account_status_toolbar_order
-        assert_admin_selection_buttons_match_logout(page)
+        assert_admin_selection_buttons_consistent(page)
         assert page.locator(".dialog-actions .admin-selection-actions").count() == 1
-        assert page.locator(".dialog-actions").evaluate(
-            "element => element.querySelector('.admin-selection-actions').compareDocumentPosition(element.querySelector('[data-action=logout]')) & Node.DOCUMENT_POSITION_FOLLOWING"
-        )
+        assert_admin_logout_visibility(page, False)
         for width in (390, 320):
             page.set_viewport_size({"width": width, "height": 568})
             account_footer_layout = page.locator(".dialog-actions").evaluate(
                 "element => { const box = element.getBoundingClientRect(); const items = [...element.children].map(item => item.getBoundingClientRect()).filter(rect => rect.width); return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, fits: items.every(item => item.left >= box.left - 1 && item.right <= box.right + 1), ordered: items.every((item, index) => index === 0 || item.left >= items[index - 1].right - 1) }; }"
             )
             assert account_footer_layout["scrollWidth"] <= account_footer_layout["clientWidth"] and account_footer_layout["fits"] and account_footer_layout["ordered"], (width, account_footer_layout)
-            assert_admin_selection_buttons_match_logout(page)
+            assert_admin_selection_buttons_consistent(page)
         page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_role("button", name="禁用", exact=True).click()
         disable_selected_confirm = page.get_by_role("dialog", name="禁用账号")
@@ -1362,7 +1485,6 @@ def main() -> None:
         for user_name in account_names[3:]:
             expect(page.locator(f'.admin-user-entry[data-id="{user_name}"]')).to_have_count(0)
         account_context.close()
-
         def empty_audit_records(route):
             route.fulfill(status=200, content_type="application/json", headers={"X-VulnLab-Record-Total": "0"}, body="[]")
 
@@ -1388,6 +1510,7 @@ def main() -> None:
         page.route("**/api/audit*", fail_audit_records)
         audit_button.click()
         expect(page.locator('[data-admin-view="audit"]')).to_be_visible()
+        assert_admin_logout_visibility(page, False)
         expect(page.locator(".admin-inline-error")).to_contain_text("测试审计服务暂不可用")
         expect(page.locator('[data-action="retry-admin-records"]')).to_be_visible()
         page.unroute("**/api/audit*", fail_audit_records)
@@ -1411,7 +1534,7 @@ def main() -> None:
             page.locator('[data-action="clear-audit-filters"]:not([disabled])').click()
         expect(page.locator('[data-action="clear-audit-filters"]')).to_have_count(0)
         audit_dialog_box = page.locator('.admin-dialog:visible').bounding_box()
-        assert audit_dialog_box and round(audit_dialog_box["width"]) == 640 and round(audit_dialog_box["height"]) == 480, audit_dialog_box
+        assert audit_dialog_box and round(audit_dialog_box["width"]) == 640 and round(audit_dialog_box["height"]) == 420, audit_dialog_box
         assert page.locator(".admin-record-filters").evaluate(
             "filters => ['[data-admin-select-all=\"audit\"]', '[data-audit-filter=\"date\"]', '.admin-action-select'].every(selector => filters.contains(filters.querySelector(selector))) && getComputedStyle(filters).position === 'sticky'"
         )
@@ -1518,7 +1641,7 @@ def main() -> None:
             record.locator('[data-admin-record-select="audit"]').check()
         expect(page.locator(".admin-selection-count")).to_contain_text("已选 2 条")
         expect(page.get_by_role("button", name="删除", exact=True)).to_have_count(1)
-        assert_admin_selection_buttons_match_logout(page)
+        assert_admin_selection_buttons_consistent(page)
         selected_audit_style = page.locator(".audit-entry.is-selected").first.evaluate(
             "element => ({ borderColor: getComputedStyle(element).borderColor, backgroundColor: getComputedStyle(element).backgroundColor })"
         )
@@ -1540,9 +1663,9 @@ def main() -> None:
                 .filter(value => value !== undefined)
             """
         )
-        assert len(audit_filter_centers) == 4 and max(audit_filter_centers) - min(audit_filter_centers) <= 1, audit_filter_centers
-        audit_selection_centers = page.locator(".dialog-actions").evaluate(
-            """element => ['.admin-selection-count', '.admin-bulk-delete', '[data-action="logout"]']
+        assert len(audit_filter_centers) == 3 and max(audit_filter_centers) - min(audit_filter_centers) <= 1, audit_filter_centers
+        audit_selection_centers = page.locator(".admin-selection-actions").evaluate(
+            """element => ['.admin-selection-count', '.admin-bulk-delete']
                 .map(selector => {
                     const item = element.querySelector(selector)
                     const rect = item?.getBoundingClientRect()
@@ -1551,12 +1674,12 @@ def main() -> None:
                 .filter(value => value !== undefined)
             """
         )
-        assert len(audit_selection_centers) == 3 and max(audit_selection_centers) - min(audit_selection_centers) <= 1, audit_selection_centers
+        assert len(audit_selection_centers) == 2 and max(audit_selection_centers) - min(audit_selection_centers) <= 1, audit_selection_centers
         audit_toolbar_overflow = page.locator(".admin-record-filters").evaluate("element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })")
         assert audit_toolbar_overflow["scrollWidth"] <= audit_toolbar_overflow["clientWidth"], audit_toolbar_overflow
         for width, height in [(1440, 900), (390, 844), (320, 568)]:
             page.set_viewport_size({"width": width, "height": height})
-            assert_admin_selection_buttons_match_logout(page)
+            assert_admin_selection_buttons_consistent(page)
             responsive_checkbox_alignment = page.locator(".admin-record-filters").evaluate(
                 "element => ({ selectAll: element.querySelector('[data-admin-select-all=\"audit\"]').getBoundingClientRect().left, firstRow: document.querySelector('.audit-entry [data-admin-record-select=\"audit\"]').getBoundingClientRect().left, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })"
             )
@@ -1791,6 +1914,17 @@ def main() -> None:
         assert large_desktop_canvas["scrollHeight"] > large_desktop_canvas["clientHeight"], large_desktop_canvas
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert large_desktop_canvas["width"] <= 900 and large_desktop_canvas["height"] <= 640, large_desktop_canvas
+        page.set_viewport_size({"width": 1280, "height": 800})
+        short_desktop_grid = page.evaluate(
+            """() => {
+                const canvas = document.querySelector('.lab-canvas').getBoundingClientRect()
+                return [...document.querySelectorAll('.lab-card-grid:not(.lab-card-overflow) > .lab-card')].slice(0, 9).every(card => {
+                    const box = card.getBoundingClientRect()
+                    return box.top >= canvas.top && box.bottom <= canvas.bottom
+                })
+            }"""
+        )
+        assert short_desktop_grid, "1280x800 首屏九个靶场卡片必须完整显示"
         page.set_viewport_size({"width": 1600, "height": 841})
         page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
         screenshot_viewport_spacing = page.evaluate(
@@ -1904,7 +2038,8 @@ def main() -> None:
                     ninthBottomGap: canvasBox.bottom - ninthCardBox.bottom,
                     allNineVisible: cards.slice(0, 9).every(card => rect(card).top >= canvasBox.top && rect(card).bottom <= canvasBox.bottom),
                     tenthCardHiddenBeforeScroll: cards.length <= 9 || rect(cards[9]).top >= canvasBox.bottom,
-                    addCardAfterNine: addCardBox.top > ninthCardBox.bottom
+                    addCardAfterNine: addCardBox.top > ninthCardBox.bottom,
+                    overflowCardsSameRow: Math.abs(addCardBox.top - rect(cards[9]).top) <= 1
                 }
             }"""
         )
@@ -1926,13 +2061,15 @@ def main() -> None:
             }"""
         )
         assert add_card_bottom_gap["atBottom"] and add_card_bottom_gap["canScrollUp"], add_card_bottom_gap
-        assert abs(lab_grid_spacing["firstTopGap"] - add_card_bottom_gap["bottomGap"]) <= 5, add_card_bottom_gap
+        assert 24 <= add_card_bottom_gap["bottomGap"] <= 40, add_card_bottom_gap
         page.locator(".lab-canvas").evaluate("element => element.scrollTop = 0")
         page.wait_for_timeout(120)
         page.screenshot(path=str(OUTPUT_DIR / "labs-desktop.png"), full_page=True)
         if PRIMARY_SCREENSHOT:
             primary = Path(PRIMARY_SCREENSHOT)
             primary.parent.mkdir(parents=True, exist_ok=True)
+            page.locator(".lab-canvas").evaluate("element => element.scrollTop = element.scrollHeight")
+            page.wait_for_timeout(120)
             page.screenshot(path=str(primary), full_page=True)
 
         page.set_viewport_size({"width": 927, "height": 675})
@@ -1995,9 +2132,9 @@ def main() -> None:
         wide_tablet_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(wide_tablet_columns.split()) == 3, wide_tablet_columns
         wide_tablet_frame = page.locator(".lab-canvas").evaluate(
-            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
         )
-        assert wide_tablet_frame["borderWidth"] == "1px" and wide_tablet_frame["borderRadius"] == "12px" and wide_tablet_frame["width"] < wide_tablet_frame["screenWidth"], wide_tablet_frame
+        assert wide_tablet_frame["borderWidth"] == "1px" and wide_tablet_frame["borderRadius"] == "12px" and wide_tablet_frame["backgroundColor"] == "rgb(21, 21, 21)" and "inset" in wide_tablet_frame["boxShadow"] and "48px" not in wide_tablet_frame["boxShadow"] and wide_tablet_frame["width"] < wide_tablet_frame["screenWidth"], wide_tablet_frame
         wide_tablet_card_ratio = page.locator('.lab-card').first.evaluate(
             "element => { const box = element.getBoundingClientRect(); return box.width / box.height }"
         )
@@ -2009,9 +2146,9 @@ def main() -> None:
         tablet_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(tablet_columns.split()) == 2, tablet_columns
         tablet_frame = page.locator(".lab-canvas").evaluate(
-            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow, width: element.getBoundingClientRect().width, screenWidth: element.closest('.labs-screen').getBoundingClientRect().width })"
         )
-        assert tablet_frame["borderWidth"] == "1px" and tablet_frame["borderRadius"] == "12px" and tablet_frame["width"] < tablet_frame["screenWidth"], tablet_frame
+        assert tablet_frame["borderWidth"] == "1px" and tablet_frame["borderRadius"] == "12px" and tablet_frame["backgroundColor"] == "rgb(21, 21, 21)" and "inset" in tablet_frame["boxShadow"] and "48px" not in tablet_frame["boxShadow"] and tablet_frame["width"] < tablet_frame["screenWidth"], tablet_frame
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.screenshot(path=str(OUTPUT_DIR / "labs-tablet.png"), full_page=True)
         tablet_canvas = page.locator(".lab-canvas").element_handle()
@@ -2196,7 +2333,14 @@ def main() -> None:
         expect(page.get_by_text("靶场准备失败，请重试。", exact=True)).to_have_count(0)
         expect(page.locator(".lab-detail-error")).to_have_count(0)
         expect(page.locator(".lab-detail-runtime")).to_have_count(0)
-        expect(page.get_by_role("button", name="重试启动", exact=True)).to_be_visible()
+        retry_button = page.get_by_role("button", name="重试启动", exact=True)
+        expect(retry_button).to_be_visible()
+        page.keyboard.press("Tab")
+        retry_button.focus()
+        retry_focus_style = retry_button.evaluate(
+            "element => ({ focusVisible: element.matches(':focus-visible'), outlineStyle: getComputedStyle(element).outlineStyle, boxShadow: getComputedStyle(element).boxShadow })"
+        )
+        assert retry_focus_style["focusVisible"] and retry_focus_style["outlineStyle"] == "none" and "inset" in retry_focus_style["boxShadow"], retry_focus_style
         page.screenshot(path=str(OUTPUT_DIR / "lab-detail-error-desktop.png"), full_page=True)
 
         def failed_start(route, request):
@@ -2216,6 +2360,67 @@ def main() -> None:
         page.unroute("**/api/labs", labs_with_failed_dvwa)
         page.wait_for_timeout(3800)
         page.unroute("**/api/instances", instances_after_start)
+        dvwa_lab["status"] = "cataloged"
+        restored_job = {
+            **failed_job,
+            "id": "browser-restored-job",
+            "status": "completed",
+            "stage": "completed",
+            "message": "靶场资源准备完成。",
+            "progress": 100,
+            "error": None,
+        }
+
+        def labs_with_cataloged_dvwa(route, request):
+            if request.method == "GET":
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(labs_payload, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        def jobs_with_historical_failure(route, request):
+            if request.method == "GET":
+                route.fulfill(status=200, content_type="application/json", body=json.dumps([restored_job, failed_job], ensure_ascii=False))
+            else:
+                route.continue_()
+
+        def start_after_reinstall(route, request):
+            if request.method == "POST":
+                route.fulfill(status=202, content_type="application/json", body=json.dumps({"status": "preparing", "lab": dvwa_lab, "job": restored_job}, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        reinstall_instance_state = {"polls": 0}
+
+        def instances_after_reinstall(route, request):
+            if request.method == "GET":
+                instances = []
+                if reinstall_instance_state["polls"] > 0:
+                    instances = [{
+                        "id": "browser-reinstalled-instance",
+                        "labId": dvwa_lab["id"],
+                        "status": "running",
+                        "endpoint": "http://127.0.0.1:65535/",
+                        "expiresAt": "2099-01-01T00:00:00.000Z",
+                    }]
+                reinstall_instance_state["polls"] += 1
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(instances))
+            else:
+                route.continue_()
+
+        page.route("**/api/labs", labs_with_cataloged_dvwa)
+        page.route("**/api/import-jobs", jobs_with_historical_failure)
+        page.route("**/api/instances", instances_after_reinstall)
+        page.route("**/api/labs/*/instances", start_after_reinstall)
+        page.reload(wait_until="networkidle")
+        page.locator('.lab-card-media[data-id]').first.click()
+        page.get_by_role("button", name="启动环境", exact=True).click()
+        expect(page.locator('.lab-card[data-state="running"]')).to_have_count(1, timeout=5000)
+        expect(page.locator(".toast")).not_to_contain_text("内置靶场本地资源路径已失效")
+        page.unroute("**/api/labs/*/instances", start_after_reinstall)
+        page.unroute("**/api/instances", instances_after_reinstall)
+        page.unroute("**/api/import-jobs", jobs_with_historical_failure)
+        page.unroute("**/api/labs", labs_with_cataloged_dvwa)
+        page.route("**/api/instances", instances_after_start)
         page.evaluate("location.hash = 'labs'")
         page.reload(wait_until="networkidle")
         expect(page.locator(".lab-grid")).to_be_visible()
@@ -2241,9 +2446,9 @@ def main() -> None:
         mobile_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
         mobile_frame = page.locator(".lab-canvas").evaluate(
-            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
+            "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
         )
-        assert mobile_frame["borderWidth"] == "1px" and mobile_frame["borderRadius"] == "10px" and mobile_frame["width"] < mobile_frame["viewportWidth"], mobile_frame
+        assert mobile_frame["borderWidth"] == "1px" and mobile_frame["borderRadius"] == "10px" and mobile_frame["backgroundColor"] == "rgb(21, 21, 21)" and "inset" in mobile_frame["boxShadow"] and "34px" not in mobile_frame["boxShadow"] and mobile_frame["width"] < mobile_frame["viewportWidth"], mobile_frame
         mobile_card_box = page.locator(".lab-card").first.bounding_box()
         assert mobile_card_box and mobile_card_box["height"] <= 140, mobile_card_box
         mobile_corner_style = page.locator(".lab-card").first.evaluate(
@@ -2394,8 +2599,23 @@ def main() -> None:
         page.screenshot(path=str(OUTPUT_DIR / "labs-expanded-scroll-bottom.png"), full_page=True)
         page.unroute("**/api/labs", labs_with_expanded_catalog)
         page.evaluate("() => { const canvas = document.querySelector('.lab-canvas'); if (canvas) canvas.scrollTop = 0 }")
+        with sqlite3.connect(Path(os.environ["VULNLAB_DATA_DIR"]) / "vulnlab.sqlite") as legacy_db:
+            legacy_db.execute(
+                "INSERT INTO labs (id, slug, title, category, difficulty, source_type, source_url, source_ref, license, runtime_kind, provider_id, runtime_config_json, builtin, version, status, summary, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("legacy-compose-fixture", "legacy-compose-fixture", "旧 Compose 记录", "Web", "中等", "git", "https://github.com/vulhub/vulhub", "vulhub/vulhub@master", "未声明", "container", "container", "{}", 0, "custom", "disabled", "legacy fixture", "[]", "2026-08-23T12:06:16.477Z", "2026-08-23T12:06:16.477Z"),
+            )
+        page.reload(wait_until="networkidle")
         page.get_by_role("button", name="管理中心", exact=True).click()
         page.locator('[data-action="open-admin-section"][data-section="labs"]').click()
+        legacy_row = page.locator('.admin-lab-row[data-lab-id="legacy-compose-fixture"]')
+        expect(legacy_row).to_contain_text("Compose（当前未接入）")
+        expect(legacy_row).not_to_contain_text("PHP 网站")
+        expect(legacy_row.locator(".admin-lab-row-created")).to_contain_text("添加于 2026/08/23")
+        legacy_row.locator('[data-action="edit-custom-lab"]').click()
+        expect(page.locator('#admin-lab-form [name="runtimeMode"]')).to_have_value("")
+        expect(page.locator(".admin-lab-template-hint")).to_contain_text("当前未接入 Compose")
+        page.locator('[data-action="cancel-custom-lab-editor"]').click()
+        page.locator('[data-action="start-custom-lab-create"]').click()
         valid_archive_path = OUTPUT_DIR / "custom-admin-lab.zip"
         invalid_archive_path = OUTPUT_DIR / "custom-admin-lab-invalid.zip"
         with zipfile.ZipFile(valid_archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -2406,20 +2626,44 @@ def main() -> None:
         form.locator('[name="title"]').fill("浏览器自定义靶场")
         page.locator('[data-action="select-lab-source"][data-source="archive"]').click()
         form.locator('[name="archiveFile"]').set_input_files(str(invalid_archive_path))
-        form.get_by_role("button", name="检查项目结构").click()
+        form.get_by_role("button", name="检查结构", exact=True).click()
         expect(page.locator(".admin-lab-inspection")).to_contain_text("index.php")
-        expect(page.locator(".admin-lab-inspection-actions")).to_contain_text("只读")
+        expect(page.locator(".admin-lab-inspection")).to_be_visible()
         form.get_by_role("button", name="添加靶场", exact=True).click()
         page.wait_for_function(
             """async () => (await (await fetch('/api/labs')).json()).some(lab => lab.title === '浏览器自定义靶场' && lab.status === 'error')""",
             timeout=20_000,
         )
-        failed_row = page.locator('.admin-lab-row[data-lab-id]')
+        failed_row = page.locator('.admin-lab-row[data-lab-id]').filter(has_text="浏览器自定义靶场")
         expect(failed_row).to_contain_text("准备失败")
         expect(failed_row).to_contain_text("PHP 入口文件不存在")
+        expect(failed_row.locator(".admin-lab-row-created")).to_be_visible()
+        delete_menu = failed_row.locator(".admin-lab-more")
+        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
+        delete_menu.locator("summary").click()
+        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
+        expect(delete_menu.locator("summary")).to_be_focused()
+        delete_menu.locator("summary").click()
+        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).to_be_visible()
+        delete_menu.locator("summary").click()
+        expect(delete_menu.locator('[data-action="delete-custom-lab"]')).not_to_be_visible()
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-failure-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 320, "height": 568})
+        page.screenshot(path=str(OUTPUT_DIR / "admin-lab-failure-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        for width, height in ((320, 568), (390, 844), (768, 1024), (1280, 720), (1440, 900)):
+            page.set_viewport_size({"width": width, "height": height})
+            action_layout = failed_row.locator(".admin-lab-row-actions").evaluate(
+                "element => { const row = element.getBoundingClientRect(); const buttons = [...element.querySelectorAll(':scope > button, :scope > details > summary')].map(button => button.getBoundingClientRect()); return { fit: buttons.every(button => button.left >= row.left - 1 && button.right <= row.right + 1), oneRow: buttons.every(button => Math.abs(button.top - buttons[0].top) < 2) }; }"
+            )
+            assert action_layout == {"fit": True, "oneRow": True}, (width, action_layout)
+        page.set_viewport_size({"width": 1440, "height": 900})
         custom_lab_id = failed_row.get_attribute("data-lab-id")
         assert custom_lab_id
-        page.locator('[data-action="retry-custom-lab"]').click()
+        failed_row = page.locator(f'.admin-lab-row[data-lab-id="{custom_lab_id}"]')
+        failed_row.locator('[data-action="retry-custom-lab"]').click()
         page.wait_for_function(
             """async labId => {
                 const labs = await (await fetch('/api/labs')).json()
@@ -2429,8 +2673,8 @@ def main() -> None:
             arg=custom_lab_id,
             timeout=20_000,
         )
-        expect(page.locator('[data-action="retry-custom-lab"]')).to_be_visible()
-        page.locator('[data-action="edit-custom-lab"]').click()
+        expect(failed_row.locator('[data-action="retry-custom-lab"]')).to_be_visible()
+        failed_row.locator('[data-action="edit-custom-lab"]').click()
         expect(page.locator("#admin-lab-form")).to_contain_text("留空保留当前压缩包")
         page.locator('#admin-lab-form [name="archiveFile"]').set_input_files(str(valid_archive_path))
         page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
@@ -2438,28 +2682,35 @@ def main() -> None:
             """async () => (await (await fetch('/api/labs')).json()).some(lab => lab.title === '浏览器自定义靶场' && lab.status === 'ready')""",
             timeout=20_000,
         )
-        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已就绪")
-        page.locator('[data-action="edit-custom-lab"]').click()
+        expect(failed_row).to_contain_text("已就绪")
+        failed_row.locator('[data-action="edit-custom-lab"]').click()
         page.locator('#admin-lab-form [name="title"]').fill("已编辑的浏览器靶场")
         page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
-        expect(page.locator('.admin-lab-row[data-lab-id] .admin-lab-row-copy strong')).to_have_text("已编辑的浏览器靶场")
-        page.locator('[data-action="toggle-custom-lab"]').click()
+        expect(failed_row.locator('.admin-lab-row-copy strong')).to_have_text("已编辑的浏览器靶场")
+        failed_row.locator('[data-action="toggle-custom-lab"]').click()
         page.get_by_role("button", name="停用靶场", exact=True).last.click()
-        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已停用")
+        expect(failed_row).to_contain_text("已停用")
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
-        page.locator('[data-action="edit-custom-lab"]').click()
+        failed_row.locator('[data-action="edit-custom-lab"]').click()
         page.locator('#admin-lab-form [name="title"]').fill("停用中已编辑的靶场")
         page.locator('#admin-lab-form').get_by_role("button", name="保存修改", exact=True).click()
-        expect(page.locator('.admin-lab-row[data-lab-id] .admin-lab-row-copy strong')).to_have_text("停用中已编辑的靶场")
-        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已停用")
-        page.locator('[data-action="toggle-custom-lab"]').click()
-        expect(page.locator('.admin-lab-row[data-lab-id]')).to_contain_text("已就绪")
+        expect(failed_row.locator('.admin-lab-row-copy strong')).to_have_text("停用中已编辑的靶场")
+        expect(failed_row).to_contain_text("已停用")
+        failed_row.locator('[data-action="toggle-custom-lab"]').click()
+        expect(failed_row).to_contain_text("已就绪")
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count + 1)
-        page.locator('[data-action="copy-custom-lab-config"]').click()
+        failed_row.locator('[data-action="copy-custom-lab-config"]').click()
         expect(page.locator('#admin-lab-form [name="title"]')).to_have_value("")
         expect(page.locator('#admin-lab-form [name="sourceUrl"]')).to_have_value("")
         expect(page.locator('#admin-lab-form [name="sourceType"]')).to_have_value("git")
         expect(page.locator('#admin-lab-form [name="runtimeMode"]')).to_have_value("php-static")
+        page.locator('[data-action="cancel-custom-lab-editor"]').click()
+        failed_row = page.locator(f'.admin-lab-row[data-lab-id="{custom_lab_id}"]')
+        failed_row.locator(".admin-lab-more > summary").click()
+        failed_row.locator('[data-action="delete-custom-lab"]').click()
+        expect(page.locator('.workspace-dialog-backdrop').last).to_contain_text("无法撤销")
+        page.get_by_role("button", name="删除靶场", exact=True).last.click()
+        expect(failed_row).to_have_count(0)
         assert not console_errors, console_errors
         browser.close()
     print("VulnLab browser check passed.")

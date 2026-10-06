@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { mysqlClientArguments, type MySqlRuntimeConfig } from './mysql.js'
-import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainStatus } from './runtime-toolchains.js'
+import { RuntimeToolchainInstaller, type RuntimeToolchainBinaries, type RuntimeToolchainId, type RuntimeToolchainStatus } from './runtime-toolchains.js'
 import { dataPaths, runtimePaths } from './paths.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
@@ -51,6 +51,7 @@ export interface PreparedProjectEnvironment {
   phpIni?: string
   mysql?: MySqlRuntimeConfig
   nodeBinary: string
+  projectNodeBinary?: string
   javaBinary: string
   pythonBinary: string
   status: ProjectEnvironmentStatus
@@ -201,6 +202,19 @@ const terminate = async (child: ChildProcess | null, pid?: number) => {
 const mysqlString = (value: string) => `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\0', '')}'`
 
 const mysqlStatePath = (mysqlDir: string) => join(mysqlDir, 'mariadb-runtime.json')
+
+export const mysqlDataDirectoryMatches = (reported: string, expected: string) => Boolean(reported.trim())
+  && resolve(reported.trim()).toLowerCase() === resolve(expected).toLowerCase()
+
+const processIsRunning = (pid?: number) => {
+  if (!Number.isSafeInteger(pid) || !pid || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 
 const jsonState = async (path: string) => {
   try {
@@ -466,16 +480,25 @@ export class ProjectEnvironmentManager {
     const adminUser = existing?.adminUser || 'vulnlab_admin'
     const configuredPort = existing?.port && Number.isInteger(existing.port) ? existing.port : port
     await this.initializeMysql(server)
-    const currentPort = existing && await tcpReachable('127.0.0.1', configuredPort)
-      ? configuredPort
-      : await nextAvailablePort(configuredPort)
-    if (existing && await tcpReachable('127.0.0.1', currentPort)) {
-      const config: MySqlRuntimeConfig = { host: '127.0.0.1', port: currentPort, adminUser, adminPassword: password, appHost: '127.0.0.1', mysqlBinary: client }
-      await this.executeMysqlEventually(client, { host: config.host, port: config.port, user: config.adminUser, password: config.adminPassword }, 'SELECT 1;')
-      this.mysqlState = { host: config.host, port: config.port, adminUser, adminPassword: password, dataDir: this.mysqlDataDir, initializedAt: existing?.initializedAt ?? new Date().toISOString(), pid: existing?.pid }
-      return config
+    let existingDataDir = ''
+    if (existing && await tcpReachable('127.0.0.1', configuredPort)) {
+      const config: MySqlRuntimeConfig = { host: '127.0.0.1', port: configuredPort, adminUser, adminPassword: password, appHost: '127.0.0.1', mysqlBinary: client }
+      try {
+        const result = await this.executeMysql(client, { host: config.host, port: config.port, user: config.adminUser, password: config.adminPassword }, 'SELECT @@datadir;')
+        existingDataDir = result.stdout.trim()
+      } catch (error) {
+        if (processIsRunning(existing.pid)) {
+          throw new Error(`无法验证项目 MariaDB 身份，记录的进程 ${existing.pid} 仍在运行；为避免重复打开数据库目录，未切换端口。${error instanceof Error ? ` ${error.message}` : ''}`)
+        }
+      }
+      if (mysqlDataDirectoryMatches(existingDataDir, this.mysqlDataDir)) {
+        const config: MySqlRuntimeConfig = { host: '127.0.0.1', port: configuredPort, adminUser, adminPassword: password, appHost: '127.0.0.1', mysqlBinary: client }
+        this.mysqlState = { host: config.host, port: config.port, adminUser, adminPassword: password, dataDir: this.mysqlDataDir, initializedAt: existing.initializedAt ?? new Date().toISOString() }
+        return config
+      }
     }
 
+    const currentPort = await nextAvailablePort(configuredPort)
     let initFile: string | undefined
     if (!existing) {
       initFile = join(this.mysqlDir, 'init.sql')
@@ -493,12 +516,12 @@ export class ProjectEnvironmentManager {
     return config
   }
 
-  private async prepareOnce(force = false, installMissing = false): Promise<PreparedProjectEnvironment> {
+  private async prepareOnce(force = false, installMissing = false, toolchains?: readonly RuntimeToolchainId[]): Promise<PreparedProjectEnvironment> {
     if (this.prepared && !force) return this.prepared
     if (force) this.prepared = null
     await mkdir(this.runtimeDir, { recursive: true })
     await this.toolchains.inspect()
-    if (installMissing) await this.toolchains.installMissing()
+    if (installMissing) await this.toolchains.installMissing(toolchains)
     this.toolchainBinaries = await this.toolchains.binaries()
     const phpCandidate = await this.phpCandidate()
     const php = await this.preparePhp(phpCandidate)
@@ -537,13 +560,22 @@ export class ProjectEnvironmentManager {
       java,
       python,
     }
-    this.prepared = { phpBinary: php.binary, phpIni: php.ini, mysql, nodeBinary: node.binary, javaBinary: java.binary, pythonBinary: python.binary, status }
+    this.prepared = {
+      phpBinary: php.binary,
+      phpIni: php.ini,
+      mysql,
+      nodeBinary: node.binary,
+      projectNodeBinary: this.toolchainBinaries.node,
+      javaBinary: java.binary,
+      pythonBinary: python.binary,
+      status,
+    }
     return this.prepared
   }
 
-  async prepare(force = false, installMissing = false): Promise<PreparedProjectEnvironment> {
+  async prepare(force = false, installMissing = false, toolchains?: readonly RuntimeToolchainId[]): Promise<PreparedProjectEnvironment> {
     if (this.preparing) return this.preparing
-    this.preparing = this.prepareOnce(force, installMissing)
+    this.preparing = this.prepareOnce(force, installMissing, toolchains)
     try {
       return await this.preparing
     } finally {

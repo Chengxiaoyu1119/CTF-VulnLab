@@ -88,6 +88,7 @@ const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
   if (runtimeKind === 'native-node') return 'native-node'
   if (runtimeKind === 'native-java') return 'native-java'
   if (runtimeKind === 'native-python') return 'native-python'
+  if (runtimeKind === 'native-oa') return 'oa-local'
   return runtimeKind
 }
 
@@ -95,6 +96,7 @@ const profileForRuntime = (runtimeKind: Lab['runtimeKind']): LabRuntimeConfig['p
   if (runtimeKind === 'native-node') return 'prebuilt-node'
   if (runtimeKind === 'native-java') return 'webgoat'
   if (runtimeKind === 'native-python') return 'pygoat'
+  if (runtimeKind === 'native-oa') return 'oa-project'
   return 'static-php'
 }
 
@@ -102,7 +104,7 @@ const parseRuntimeConfig = (raw: string, runtimeKind: Lab['runtimeKind']): LabRu
   const fallback = { profile: profileForRuntime(runtimeKind) }
   try {
     const value = JSON.parse(raw) as Partial<LabRuntimeConfig>
-    if (typeof value.profile !== 'string' || !['static-php', 'mysql-php', 'prebuilt-node', 'webgoat', 'pygoat', 'java-jar', 'python-script'].includes(value.profile)) return fallback
+    if (typeof value.profile !== 'string' || !['static-php', 'mysql-php', 'prebuilt-node', 'webgoat', 'pygoat', 'java-jar', 'python-script', 'oa-appcontainer', 'oa-project'].includes(value.profile)) return fallback
     const config: LabRuntimeConfig = { profile: value.profile as LabRuntimeConfig['profile'] }
     for (const key of ['documentRoot', 'entryPath', 'initSqlPath', 'settingsPath'] as const) {
       if (typeof value[key] === 'string' && value[key].length <= 160) config[key] = value[key]
@@ -526,7 +528,7 @@ export class VulnLabDatabase {
 
   listLabs(includeDisabled = false): Lab[] {
     const seedOrder = new Map(seedLabs.map((item, index) => [item.slug, index]))
-    return this.db.prepare("SELECT * FROM labs WHERE status != 'disabled'").all()
+    return this.db.prepare(includeDisabled ? 'SELECT * FROM labs' : "SELECT * FROM labs WHERE status != 'disabled'").all()
       .map(row => parseLab(row as Row))
       .sort((left, right) => {
         const leftOrder = seedOrder.get(left.slug) ?? Number.MAX_SAFE_INTEGER
@@ -569,6 +571,15 @@ export class VulnLabDatabase {
   updateLabStatus(id: string, status: LabStatus, localPath: string | null = null) {
     const importedAt = status === 'ready' ? now() : null
     this.db.prepare('UPDATE labs SET status = ?, local_path = COALESCE(?, local_path), imported_at = COALESCE(?, imported_at), updated_at = ? WHERE id = ?').run(status, localPath, importedAt, now(), id)
+  }
+
+  deleteCustomLab(id: string): Lab | null {
+    return this.db.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM labs WHERE id = ? AND builtin = 0').get(id) as Row | undefined
+      if (!row) return null
+      const result = this.db.prepare('DELETE FROM labs WHERE id = ? AND builtin = 0').run(id)
+      return result.changes === 1 ? parseLab(row) : null
+    })()
   }
 
   restoreLabStatus(id: string) {

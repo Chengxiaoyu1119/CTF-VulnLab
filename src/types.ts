@@ -4,9 +4,9 @@ export type LabStatus = 'cataloged' | 'queued' | 'importing' | 'ready' | 'error'
 
 export type SourceType = 'git' | 'archive'
 
-export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python'
+export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python' | 'native-oa'
 
-export type LabRuntimeProfile = 'static-php' | 'mysql-php' | 'prebuilt-node' | 'webgoat' | 'pygoat' | 'java-jar' | 'python-script'
+export type LabRuntimeProfile = 'static-php' | 'mysql-php' | 'prebuilt-node' | 'webgoat' | 'pygoat' | 'java-jar' | 'python-script' | 'oa-project'
 
 export interface LabRuntimeConfig {
   profile: LabRuntimeProfile

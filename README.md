@@ -4,11 +4,11 @@
   <img src="src/public/favicon.png" width="76" alt="VulnLab">
   <h1>VulnLab</h1>
   <p><strong>本地 Web 安全训练工作台</strong></p>
-  <p>9 个固定版本靶场 · 一键启动 · 独立实例</p>
+  <p>9 个公开靶场 + 1 个 OA Beta · 一键启动 · 独立实例</p>
 
   <img src="https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
   <img src="https://img.shields.io/badge/NODE.JS-22%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 22+">
-  <img src="https://img.shields.io/badge/WEB%20LABS-09-ff7f2a?style=for-the-badge&logo=owasp&logoColor=white" alt="9 web labs">
+  <img src="https://img.shields.io/badge/WEB%20LABS-10-ff7f2a?style=for-the-badge&logo=owasp&logoColor=white" alt="10 web labs including OA beta">
   <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/CTF-VulnLab/vulnlab-ci.yml?style=for-the-badge&logo=githubactions&label=CI" alt="VulnLab CI"></a>
 </div>
 
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/vulnlab-workspace-showcase.png" alt="VulnLab 工作台与内置靶场目录" width="100%">
+  <img src=".github/assets/vulnlab-workspace-showcase.png" alt="VulnLab 工作台与公开靶场展示" width="100%">
 </p>
 
 > 当前面向 Windows x64 本地使用；按需准备运行时和靶场资源，暂未提供独立安装包。
@@ -48,8 +48,9 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | [OWASP WebGoat](https://github.com/WebGoat/WebGoat) | 课程式安全训练 | 首次使用需创建账号并登录 |
 | [OWASP Mutillidae II](https://github.com/webpwnized/mutillidae) | OWASP 漏洞练习 | 可直接进入；登录类练习按页面提示注册 |
 | [OWASP PyGoat](https://github.com/adeyosemanputra/pygoat) | Django / OWASP 漏洞 | 需注册账号并登录后进入课程 |
+| OA-Vuln-Labs (Beta) | 企业 OA · 25 个漏洞点 · 4 条攻击链 | 初始登录：`admin / ZSD@admin2025!`；无需先找漏洞 |
 
-> 表中账号属于靶场，不是 VulnLab 工作台账号。SQLi-Labs、Upload-Labs、Juice Shop、Mutillidae 的个别挑战仍可能要求登录或注册。
+> OA 账号属于靶场，不是工作台账号；漏洞点和攻击链是登录后的练习内容。OA 资源许可尚未获上游声明；其他靶场个别关卡可能要求注册或登录。
 
 ## 核心能力
 

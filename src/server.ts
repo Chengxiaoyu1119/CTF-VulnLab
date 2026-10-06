@@ -6,7 +6,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { fileURLToPath } from 'node:url'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { VulnLabDatabase, type RecordCursor, type RecordPage, type RecordPageOptions } from './db.js'
 import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
 import { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './importer.js'
@@ -16,7 +16,7 @@ import { mysqlRuntimeConfigFromEnv } from './mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './providers.js'
 import { projectEnvironmentOptionsFromEnv } from './project-environment.js'
 import { prepareInstalledLab } from './runtime-prep.js'
-import { inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
+import { inspectOaRuntimeModes, inspectRuntimeDependencies, runtimeReadinessByLab } from './runtime-status.js'
 import { autoInstallLabs } from './seed.js'
 import { dataPaths } from './paths.js'
 import type { AppSettings, Difficulty, ImportManifest, Lab, LabInstance, LabRuntimeConfig, RuntimeKind, SessionView, SourceType, SystemOverview } from './types.js'
@@ -55,8 +55,10 @@ const nativeRuntime: NativeRuntimeConfig = {
   phpBinary: runtimePhpBinary,
   phpIni: runtimePhpIni,
   nodeBinary: process.env.VULNLAB_NODE_BIN?.trim() || process.execPath,
+  oaNodeBinary: undefined,
   javaBinary: process.env.VULNLAB_JAVA_BIN?.trim() || 'java',
   pythonBinary: process.env.VULNLAB_PYTHON_BIN?.trim() || 'py',
+  mysqlManaged: false,
   publicOriginTemplate: runtimePublicOrigin,
   mysql: runtimeMySql,
 }
@@ -115,6 +117,20 @@ const recoverProviderInstances = async () => {
     }
   }
 }
+const recoverPendingProviderInstances = async () => {
+  const activeIds = new Set(database.listInstances().filter(item => item.status === 'running').map(item => item.id))
+  const recoveredIds = await providerRegistry.recoverPending(dataDir, activeIds)
+  for (const id of recoveredIds) {
+    const instance = database.getRunningInstance(id)
+    if (!instance) continue
+    const wasExpired = Date.parse(instance.expiresAt) <= Date.now()
+    const recovered = wasExpired
+      ? database.expireInstance(id, 'OA Docker 待回收资源已清理')
+      : database.destroyInstance(id, 'OA Docker 待回收资源已清理')
+    if (recovered) database.addAudit('system', 'instance.recovered', recovered.labTitle, id)
+  }
+  return recoveredIds.length
+}
 const trustProxy = process.env.VULNLAB_TRUST_PROXY === 'true'
 const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 64 * 1024, trustProxy })
 const maxLabUploadBytes = 256 * 1024 * 1024
@@ -125,8 +141,8 @@ const loginWindowMs = 60_000
 const loginLimit = isProduction ? 10 : 30
 const registrationUnavailableMessage = '注册失败，请检查注册信息后重试。'
 const activeImports = new Map<string, { task: Promise<void>; controller: AbortController }>()
-const pendingStarts = new Map<string, Promise<LabInstance | null>>()
-const activeStarts = new Map<string, Promise<LabInstance>>()
+const pendingStarts = new Map<string, { mode: 'local' | 'docker'; task: Promise<LabInstance | null> }>()
+const activeStarts = new Map<string, { mode: 'local' | 'docker'; task: Promise<LabInstance> }>()
 let reapingExpiredInstances = false
 let runtimeStatusCache: { expiresAt: number; value: Awaited<ReturnType<typeof inspectRuntimeDependencies>> } | null = null
 
@@ -136,7 +152,8 @@ const runtimeDependencies = async () => {
   const value = await inspectRuntimeDependencies({
     phpBinary: nativeRuntime.phpBinary,
     phpIni: nativeRuntime.phpIni,
-    nodeBinary: nativeRuntime.nodeBinary,
+    nodeBinary: process.execPath,
+    oaNodeBinary: nativeRuntime.oaNodeBinary,
     javaBinary: nativeRuntime.javaBinary,
     pythonBinary: nativeRuntime.pythonBinary,
     mysql: nativeRuntime.mysql,
@@ -145,6 +162,7 @@ const runtimeDependencies = async () => {
       'php-mysqli': { source: projectStatus.php.source, action: projectStatus.php.available ? 'ready' : 'configure' },
       mysql: { source: projectStatus.mysql.source, action: projectStatus.mysql.available ? 'ready' : 'configure' },
       node: { source: projectStatus.node.source, action: projectStatus.node.available ? 'ready' : 'prepare' },
+      'node-permission': { source: nativeRuntime.oaNodeBinary ? 'project' : 'missing', action: nativeRuntime.oaNodeBinary ? 'ready' : 'prepare' },
       java: { source: projectStatus.java.source, action: projectStatus.java.available ? 'ready' : 'prepare' },
       python: { source: projectStatus.python.source, action: projectStatus.python.available ? 'ready' : 'prepare' },
     },
@@ -174,7 +192,8 @@ const publicRuntimeStatus = (status: ReturnType<typeof projectEnvironment.getSta
 })
 
 const projectToolchainsForLab = (lab: Lab): RuntimeToolchainId[] => {
-  if (!useProjectToolchainsByDefault) return []
+  if (!useProjectToolchainsByDefault && lab.runtimeKind !== 'native-oa') return []
+  if (lab.runtimeKind === 'native-oa') return ['node', 'mariadb']
   if (lab.runtimeKind === 'native-php') return [
     ...(explicitExternalRuntime.php ? [] : ['php' as const]),
     ...((databaseLabs.has(lab.slug) || lab.runtimeConfig?.profile === 'mysql-php') && !explicitExternalRuntime.mysql ? ['mariadb' as const] : []),
@@ -189,27 +208,44 @@ const missingProjectToolchains = (lab: Lab, project: ReturnType<typeof projectEn
   const statuses = new Map(project.toolchains.map(item => [item.id, item]))
   return projectToolchainsForLab(lab)
     .filter(id => statuses.get(id)?.state !== 'ready')
-    .map(id => statuses.get(id)?.label ?? ({ php: 'PHP', mariadb: 'MariaDB', node: 'Node.js', java: 'Java', python: 'Python' }[id]))
+    .map(id => statuses.get(id)?.label ?? id)
 }
+
+const isProjectPath = (root: string, target: string) => {
+  const normalizedRoot = resolve(root).toLowerCase()
+  const normalizedTarget = resolve(target).toLowerCase()
+  const path = relative(normalizedRoot, normalizedTarget)
+  return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+}
+
+const hasProjectManagedMysql = () => Boolean(
+  runtimeMySql
+  && nativeRuntime.mysqlManaged
+  && projectEnvironment.getStatus().mysql.managed
+  && projectEnvironment.getStatus().mysql.available,
+)
 
 const runtimeReadiness = async (labs: Lab[], dependencies: Awaited<ReturnType<typeof runtimeDependencies>>) => {
   const readiness = await runtimeReadinessByLab(labs, dependencies, dataDir)
-  if (!useProjectToolchainsByDefault) return readiness
+  if (!useProjectToolchainsByDefault && !labs.some(lab => lab.runtimeKind === 'native-oa')) return readiness
   const project = projectEnvironment.getStatus()
   return Object.fromEntries(labs.map(lab => {
-    const missing = [...new Set([...(readiness[lab.slug]?.missing ?? []), ...missingProjectToolchains(lab, project)])]
+    const oaStorageMissing = lab.runtimeKind === 'native-oa' && !hasProjectManagedMysql() ? ['VulnLab 项目托管 MariaDB'] : []
+    const missing = [...new Set([...(readiness[lab.slug]?.missing ?? []), ...missingProjectToolchains(lab, project), ...oaStorageMissing])]
     return [lab.slug, { available: missing.length === 0, missing }]
   }))
 }
 
-const prepareProjectEnvironment = async (force = false, installMissing = false) => {
+const prepareProjectEnvironment = async (force = false, installMissing = false, toolchains?: readonly RuntimeToolchainId[]) => {
   try {
-    const prepared = await projectEnvironment.prepare(force, installMissing)
+    const prepared = await projectEnvironment.prepare(force, installMissing, toolchains)
     nativeRuntime.phpBinary = prepared.phpBinary
     nativeRuntime.phpIni = prepared.phpIni
     runtimeMySql = prepared.mysql
     nativeRuntime.mysql = prepared.mysql
+    nativeRuntime.mysqlManaged = Boolean(prepared.mysql && prepared.status.mysql.managed && isProjectPath(prepared.status.runtimeDir, prepared.mysql.mysqlBinary))
     nativeRuntime.nodeBinary = prepared.nodeBinary
+    nativeRuntime.oaNodeBinary = prepared.projectNodeBinary
     nativeRuntime.javaBinary = prepared.javaBinary
     nativeRuntime.pythonBinary = prepared.pythonBinary
     runtimeStatusCache = null
@@ -217,6 +253,7 @@ const prepareProjectEnvironment = async (force = false, installMissing = false) 
   } catch (error) {
     runtimeMySql = mysqlRuntimeConfigFromEnv()
     nativeRuntime.mysql = runtimeMySql
+    nativeRuntime.mysqlManaged = false
     runtimeStatusCache = null
     app.log.error(error, '项目运行环境准备失败，服务仍会启动，并在对应靶场启动时返回具体依赖错误。')
     if (installMissing) {
@@ -260,9 +297,14 @@ const reapExpiredInstances = async () => {
 const expiredInstanceTimer = setInterval(() => {
   void reapExpiredInstances().catch(error => app.log.error(error, '过期实例回收任务失败。'))
 }, 5_000)
+const pendingOaCleanupTimer = setInterval(() => {
+  void recoverPendingProviderInstances().catch(error => app.log.error(error, 'OA Docker 待回收资源重试失败。'))
+}, 30_000)
 expiredInstanceTimer.unref()
+pendingOaCleanupTimer.unref()
 app.addHook('onClose', async () => {
   clearInterval(expiredInstanceTimer)
+  clearInterval(pendingOaCleanupTimer)
 })
 
 const hashPassword = (password: string, salt: Buffer) => scryptSync(password, salt, 32)
@@ -350,6 +392,7 @@ const runtimeProfiles: Record<RuntimeKind, readonly LabRuntimeConfig['profile'][
   'native-node': ['prebuilt-node'],
   'native-java': ['webgoat', 'java-jar'],
   'native-python': ['pygoat', 'python-script'],
+  'native-oa': ['oa-project'],
 }
 
 const defaultRuntimeProfile = (runtimeKind: RuntimeKind): LabRuntimeConfig['profile'] => runtimeProfiles[runtimeKind][0]
@@ -645,89 +688,113 @@ const runImportJob = (jobId: string, actor: string) => {
 }
 
 const startLabInstall = (lab: Lab, actor: string) => {
-  if (lab.status === 'ready') return { lab, job: null, started: false }
-  const job = database.createJob(lab.id, lab.sourceUrl, actor)
-  if (job.status === 'importing') return { lab: database.getLab(lab.id) as Lab, job, started: false }
+  const current = database.getLab(lab.id)
+  if (!current || current.status === 'disabled') return { lab: current ?? lab, job: null, started: false }
+  if (current.status === 'ready') return { lab: current, job: null, started: false }
+  const job = database.createJob(current.id, current.sourceUrl, actor)
+  if (job.status === 'importing') return { lab: database.getLab(current.id) as Lab, job, started: false }
   const claimed = database.claimJob(job.id)
-  if (!claimed) return { lab: database.getLab(lab.id) as Lab, job: database.getJob(job.id), started: false }
+  if (!claimed) return { lab: database.getLab(current.id) as Lab, job: database.getJob(job.id), started: false }
   runImportJob(claimed.id, actor)
   return { lab: database.getLab(lab.id) as Lab, job: claimed, started: true }
 }
 
-const startLabInstance = (lab: Lab, actor: string, origin: string): Promise<LabInstance> => {
+const startLabInstance = (lab: Lab, actor: string, origin: string, mode: 'local' | 'docker' = 'local'): Promise<LabInstance> => {
   const existingStart = activeStarts.get(lab.id)
-  if (existingStart) return existingStart
+  if (existingStart) {
+    if (lab.runtimeKind === 'native-oa' && existingStart.mode !== mode) return Promise.reject(new ProviderError('OA_MODE_SWITCH_REQUIRES_STOP', '当前 OA 正在以另一种模式启动；请等启动完成后停止实例，再切换模式。', 409))
+    return existingStart.task
+  }
   const task = (async () => {
     const currentLab = database.getLab(lab.id)
     if (!currentLab || currentLab.status === 'disabled') throw new ProviderError('LAB_DISABLED', '该靶场已停用，无法启动。', 409)
     const existingInstance = database.listInstances()
       .map(instance => database.getRunningInstance(instance.id))
       .find(instance => instance?.labId === lab.id)
-    if (existingInstance) return existingInstance
-    if (lab.status !== 'ready') throw new ProviderError('LAB_NOT_READY', '靶场资源正在准备，请稍候。', 409)
-    let dependencies = await runtimeDependencies()
-    let readiness = await runtimeReadiness([lab], dependencies)
-    if (missingProjectToolchains(lab, projectEnvironment.getStatus()).length || !readiness[lab.slug]?.available) {
-      await prepareProjectEnvironment(true, true)
-      runtimeStatusCache = null
-      dependencies = await runtimeDependencies()
-      readiness = await runtimeReadiness([lab], dependencies)
+    if (existingInstance) {
+      const activeMode = existingInstance.provider === 'oa-docker' ? 'docker' : 'local'
+      if (currentLab.runtimeKind === 'native-oa' && activeMode !== mode) throw new ProviderError('OA_MODE_SWITCH_REQUIRES_STOP', 'OA 实例已在另一种模式运行；请先停止当前实例，再切换启动模式。', 409)
+      return existingInstance
     }
-    if (!readiness[lab.slug]?.available) throw new ProviderError('RUNTIME_DEPENDENCY_MISSING', `本机缺少运行依赖：${readiness[lab.slug]?.missing.join('、') || '未知依赖'}。`, 409)
-    const provider = providerRegistry.resolve(lab.providerId, lab.runtimeKind)
+    if (currentLab.status !== 'ready') throw new ProviderError('LAB_NOT_READY', '靶场资源正在准备，请稍候。', 409)
+    if (currentLab.runtimeKind !== 'native-oa' || mode === 'local') {
+      let dependencies = await runtimeDependencies()
+      let readiness = await runtimeReadiness([currentLab], dependencies)
+      if (missingProjectToolchains(currentLab, projectEnvironment.getStatus()).length || !readiness[currentLab.slug]?.available) {
+        await prepareProjectEnvironment(true, true, projectToolchainsForLab(currentLab))
+        runtimeStatusCache = null
+        dependencies = await runtimeDependencies()
+        readiness = await runtimeReadiness([currentLab], dependencies)
+      }
+      if (!readiness[currentLab.slug]?.available) throw new ProviderError('RUNTIME_DEPENDENCY_MISSING', `本机缺少运行依赖：${readiness[currentLab.slug]?.missing.join('、') || '未知依赖'}。`, 409)
+    }
+    const latestLab = database.getLab(lab.id)
+    if (!latestLab || latestLab.status === 'disabled') throw new ProviderError('LAB_DISABLED', '该靶场已停用，无法启动。', 409)
+    const providerId = latestLab.runtimeKind === 'native-oa' ? (mode === 'docker' ? 'oa-docker' : 'oa-local') : latestLab.providerId
+    const provider = providerRegistry.resolve(providerId, latestLab.runtimeKind)
     const overview = database.overview()
     const maxInstances = overview.maxInstances
     if (overview.runningInstanceCount >= maxInstances) throw new ProviderError('INSTANCE_CAPACITY_REACHED', '当前运行容量已满，请先结束一个实例。', 409)
     const instanceId = randomUUID()
     const started = await provider.start({
       instanceId,
-      lab,
+      lab: latestLab,
       publicOrigin: origin,
       lifetimeMinutes: instanceLifetimeMinutes,
       dataDir,
       runtime: nativeRuntime,
     })
-    const instance = database.createInstance({ id: instanceId, lab, provider: provider.id, ...started }, maxInstances)
+    const instance = database.createInstance({ id: instanceId, lab: latestLab, provider: provider.id, ...started }, maxInstances)
     if (!instance) {
-      const candidate = { id: instanceId, labId: lab.id, labTitle: lab.title, provider: provider.id, endpoint: started.endpoint, status: 'running' as const, createdAt: started.createdAt, expiresAt: started.expiresAt, logs: started.logs }
-      try { await provider.stop({ lab, instance: candidate, runtime: nativeRuntime, dataDir }) } catch (error) { app.log.error(error, 'Provider 启动后无法回收未持久化实例。') }
+      const candidate = { id: instanceId, labId: latestLab.id, labTitle: latestLab.title, provider: provider.id, endpoint: started.endpoint, status: 'running' as const, createdAt: started.createdAt, expiresAt: started.expiresAt, logs: started.logs }
+      try { await provider.stop({ lab: latestLab, instance: candidate, runtime: nativeRuntime, dataDir }) } catch (error) { app.log.error(error, 'Provider 启动后无法回收未持久化实例。') }
       throw new ProviderError('INSTANCE_CAPACITY_REACHED', '当前运行容量已满，请先结束一个实例。', 409)
     }
-    database.addAudit(actor, 'instance.start', lab.title, instance.id)
+    database.addAudit(actor, 'instance.start', latestLab.title, instance.id)
     return instance
   })()
-  activeStarts.set(lab.id, task)
+  const start = { mode, task }
+  activeStarts.set(lab.id, start)
   void task.then(() => {
-    if (activeStarts.get(lab.id) === task) activeStarts.delete(lab.id)
+    if (activeStarts.get(lab.id) === start) activeStarts.delete(lab.id)
   }, () => {
-    if (activeStarts.get(lab.id) === task) activeStarts.delete(lab.id)
+    if (activeStarts.get(lab.id) === start) activeStarts.delete(lab.id)
   })
   return task
 }
 
-const queueStartAfterImport = (labId: string, jobId: string, actor: string, origin: string) => {
+const queueStartAfterImport = (labId: string, jobId: string, actor: string, origin: string, mode: 'local' | 'docker' = 'local') => {
   const existing = pendingStarts.get(labId)
-  if (existing) return existing
+  if (existing) {
+    if (existing.mode !== mode) throw new ProviderError('OA_MODE_SWITCH_REQUIRES_STOP', 'OA 资源正在准备并将以另一种模式启动；请等待该次启动完成后再切换。', 409)
+    return existing.task
+  }
   const task = (async () => {
     await activeImports.get(jobId)?.task
     const preparedLab = database.getLab(labId)
     if (!preparedLab || preparedLab.status !== 'ready') return null
     try {
-      return await startLabInstance(preparedLab, actor, origin)
+      return await startLabInstance(preparedLab, actor, origin, mode)
     } catch (error) {
-      const message = error instanceof Error ? error.message : '靶场准备完成，但启动失败。'
-      database.updateLabStatus(preparedLab.id, 'error')
-      database.updateJob(jobId, { status: 'error', stage: 'failed', progress: 0, message: `资源已准备，但启动失败：${message}`, error: message })
+      const message = readableRuntimeError(error)
+      const dockerOaStartFailed = mode === 'docker' && preparedLab.runtimeKind === 'native-oa'
+      if (dockerOaStartFailed) {
+        database.updateJob(jobId, { status: 'completed', stage: 'start-failed', progress: 100, message: `资源已准备；Docker 模式启动失败：${message}`, error: message })
+      } else {
+        database.updateLabStatus(preparedLab.id, 'error')
+        database.updateJob(jobId, { status: 'error', stage: 'failed', progress: 0, message: `资源已准备，但启动失败：${message}`, error: message })
+      }
       database.addAudit(actor, 'instance.start.failed', preparedLab.title, message)
       app.log.error(error, `靶场 ${preparedLab.slug} 自动启动失败。`)
       return null
     }
   })()
-  pendingStarts.set(labId, task)
+  const start = { mode, task }
+  pendingStarts.set(labId, start)
   void task.then(() => {
-    if (pendingStarts.get(labId) === task) pendingStarts.delete(labId)
+    if (pendingStarts.get(labId) === start) pendingStarts.delete(labId)
   }, () => {
-    if (pendingStarts.get(labId) === task) pendingStarts.delete(labId)
+    if (pendingStarts.get(labId) === start) pendingStarts.delete(labId)
   })
   return task
 }
@@ -1194,6 +1261,42 @@ app.post('/api/labs', async (request, reply) => {
   return reply.code(result.started ? 202 : 200).send(result)
 })
 
+app.delete('/api/labs/:id', async (request, reply) => {
+  const session = requireAdmin(request, reply)
+  if (!session) return
+  const { id } = request.params as { id: string }
+  const lab = database.getLab(id)
+  if (!lab || lab.builtin) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '自定义靶场不存在。' })
+  if (activeStarts.has(id) || pendingStarts.has(id)) return reply.code(409).send({ code: 'LAB_STARTING', message: '靶场正在启动，结束后才能删除。' })
+  if (database.listInstances().some(instance => instance.labId === id && instance.status === 'running')) {
+    return reply.code(409).send({ code: 'LAB_RUNNING', message: '靶场正在运行，请先停止实例再删除。' })
+  }
+  const jobs = database.listJobsParsed().filter(job => job.labId === id)
+  if (['queued', 'importing'].includes(lab.status) || jobs.some(job => ['queued', 'importing'].includes(job.status)) || jobs.some(job => activeImports.has(job.id))) {
+    return reply.code(409).send({ code: 'LAB_PREPARING', message: '靶场正在准备，请等待任务结束后再删除。' })
+  }
+  const deleted = database.deleteCustomLab(id)
+  if (!deleted) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '自定义靶场不存在。' })
+
+  let cleanupPending = false
+  const cleanupPaths: string[] = []
+  try { cleanupPaths.push(storage.lab(deleted.slug, deleted.version)) } catch { cleanupPending = true }
+  for (const job of jobs) {
+    try { cleanupPaths.push(storage.importJob(job.id)) } catch { cleanupPending = true }
+  }
+  for (const path of cleanupPaths) {
+    try { await rm(path, { recursive: true, force: true }) } catch { cleanupPending = true }
+  }
+  const uploaded = /^upload:\/\/([0-9a-f-]{36})$/i.exec(deleted.sourceUrl)
+  if (uploaded && !database.listLabs(true).some(item => item.sourceUrl === deleted.sourceUrl)) {
+    try { await rm(storage.labUpload(uploaded[1].toLowerCase()), { force: true }) } catch { cleanupPending = true }
+  }
+  database.addAudit(session.userName, 'lab.delete', deleted.title, cleanupPending
+    ? '已删除自定义靶场记录；部分独占资源需后续清理。'
+    : '已删除自定义靶场记录及其独占导入资源。')
+  return reply.send({ ok: true, cleanupPending })
+})
+
 app.patch('/api/labs/:id', async (request, reply) => {
   const session = requireAdmin(request, reply)
   if (!session) return
@@ -1305,17 +1408,24 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
   const { id } = request.params as { id: string }
   const lab = database.getLab(id)
   if (!lab) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
+  if (lab.status === 'disabled') return reply.code(409).send({ code: 'LAB_DISABLED', message: '该靶场已停用，请在靶场管理中恢复后再启动。' })
+  const body = requestBody(request)
+  const requestedMode = body.mode === undefined ? 'local' : body.mode
+  if (lab.runtimeKind === 'native-oa' && requestedMode !== 'local' && requestedMode !== 'docker') {
+    return reply.code(400).send({ code: 'OA_MODE_INVALID', message: 'OA 启动模式必须是 local 或 docker。' })
+  }
+  const mode: 'local' | 'docker' = requestedMode === 'docker' ? 'docker' : 'local'
   if (lab.status !== 'ready') {
     const adapter = adapterFor(lab.sourceUrl, lab.sourceType)
     const archiveAvailable = lab.sourceType === 'archive' && Boolean(await uploadedLabArchive(lab) ?? await bundledLabArchive(lab))
     if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented && !archiveAvailable) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的资源来源尚未接通。' })
     const preparation = startLabInstall(lab, session.userName)
     if (!preparation.job?.id) return reply.code(409).send({ code: 'LAB_PREPARE_FAILED', message: '靶场准备任务未创建。' })
-    queueStartAfterImport(lab.id, preparation.job.id, session.userName, publicOrigin(request))
+    queueStartAfterImport(lab.id, preparation.job.id, session.userName, publicOrigin(request), mode)
     database.addAudit(session.userName, 'instance.prepare', lab.title, preparation.job.id)
     return reply.code(202).send({ status: 'preparing', lab: database.getLab(lab.id), job: preparation.job })
   }
-  const instance = await startLabInstance(lab, session.userName, publicOrigin(request))
+  const instance = await startLabInstance(lab, session.userName, publicOrigin(request), mode)
   return reply.code(201).send(instance)
 })
 
@@ -1364,9 +1474,18 @@ app.get('/api/runtime-status', async (request, reply) => {
   if (!session) return
   const dependencies = await runtimeDependencies()
   const project = projectEnvironment.getStatus()
+  const readiness = await runtimeReadiness(database.listLabs(), dependencies)
+  const oaModes = await inspectOaRuntimeModes()
+  const localReadiness = readiness['oa-vuln-labs']
+  oaModes.local.available = localReadiness?.available ?? false
+  oaModes.local.missing = localReadiness?.missing ?? ['OA 靶场资源未就绪。']
+  oaModes.local.detail = oaModes.local.available
+    ? '不调用系统命令；SSTI exec 返回模拟结果。运行进程仍使用启动 VulnLab 的 Windows 账号，不是操作系统沙盒。'
+    : `本地模式缺少：${oaModes.local.missing.join('、')}`
   return {
     dependencies,
-    labs: await runtimeReadiness(database.listLabs(), dependencies),
+    labs: readiness,
+    oaModes,
     project: publicRuntimeStatus(project),
   }
 })
@@ -1485,6 +1604,7 @@ const start = async () => {
   }
   await prepareProjectEnvironment()
   await recoverProviderInstances()
+  await recoverPendingProviderInstances().catch(error => app.log.error(error, 'OA Docker 待回收资源暂不可用，后台会继续重试。'))
   await app.listen({ host, port })
   app.log.info(`VulnLab listening on http://${host}:${port}`)
   void bootstrapBuiltinLabs().catch(error => app.log.error(error, '内置靶场资源整理失败。'))
@@ -1495,13 +1615,14 @@ const shutdown = async (signal: string) => {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(expiredInstanceTimer)
+  clearInterval(pendingOaCleanupTimer)
   app.log.info(`收到 ${signal}，正在关闭 VulnLab。`)
   try {
     for (const { controller } of activeImports.values()) controller.abort()
     await Promise.allSettled([...activeImports.values()].map(({ task }) => task))
     await Promise.allSettled([providerRegistry.shutdown()])
     await projectEnvironment.stop()
-    for (const providerId of ['native-php', 'native-node', 'native-java', 'native-python']) {
+    for (const providerId of ['native-php', 'native-node', 'native-java', 'native-python', 'oa-local', 'oa-project', 'oa-appcontainer']) {
       database.recoverRunningInstances(providerId, '服务关闭，运行进程已回收')
     }
     await app.close()

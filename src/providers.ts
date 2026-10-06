@@ -1,8 +1,18 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { cp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { createServer, type AddressInfo } from 'node:net'
-import { basename, join, resolve, sep } from 'node:path'
+import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createHash, randomBytes } from 'node:crypto'
+import { createConnection, createServer, type AddressInfo, isIP } from 'node:net'
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, parse as parseUrlPath } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createPool, type Pool } from 'mysql2/promise'
 import { CliMySqlManager, mysqlRuntimeConfigFromEnv, type MySqlManager, type MySqlResource, type MySqlRuntimeConfig } from './mysql.js'
+import { RpcPeer } from './oa-ipc.js'
+import { adaptOaSeed } from './oa-seed.js'
+import { OA_LAUNCHER_SHA256, probeOaAppContainer } from './oa-sandbox.js'
+import { inspectOaDockerAsset, oaDockerAssetPath, unpackOaDockerAsset } from './oa-docker-assets.js'
+import { inspectOaDockerRuntime, runDockerCommand, type DockerCommandResult } from './oa-docker-runtime.js'
 import { dataPaths } from './paths.js'
 import type { Lab, LabInstance, RuntimeKind } from './types.js'
 
@@ -14,9 +24,11 @@ export interface NativeRuntimeConfig {
   phpBinary: string
   phpIni?: string
   nodeBinary: string
+  oaNodeBinary?: string
   javaBinary: string
   pythonBinary: string
   mysql?: MySqlRuntimeConfig
+  mysqlManaged?: boolean
 }
 
 export interface ProviderStartInput {
@@ -68,6 +80,7 @@ export interface LabProvider {
   stop(input: ProviderStopInput): Promise<ProviderStopResult>
   getProxyTarget?(instanceId: string): string | null
   recover?(input: ProviderRecoverInput): Promise<void>
+  recoverPending?(dataDir: string, activeInstanceIds: ReadonlySet<string>): Promise<string[]>
   shutdown?(): Promise<void>
 }
 
@@ -77,6 +90,122 @@ export interface ProviderRecoverInput {
   runtime?: NativeRuntimeConfig
   dataDir?: string
 }
+
+export const oaDockerProjectName = (instanceId: string) => `vulnlab-oa-${createHash('sha256').update(instanceId).digest('hex').slice(0, 24)}`
+
+const oaDockerIngressDockerfile = [
+  'FROM alpine:3.20',
+  'RUN apk add --no-cache ca-certificates curl socat tzdata',
+  'USER 65532:65532',
+  'EXPOSE 9090',
+  'ENTRYPOINT ["socat", "TCP-LISTEN:9090,fork,reuseaddr", "TCP:web:9090"]',
+  '',
+].join('\n')
+
+const oaDockerMysqlDockerfile = [
+  'FROM mysql:8.0',
+  'COPY init.sql /docker-entrypoint-initdb.d/01-init.sql',
+  '',
+].join('\n')
+
+export const createOaDockerComposeConfig = (input: {
+  projectName: string
+  buildContext: string
+  mysqlContext: string
+  ingressContext: string
+  port: number
+  databasePassword: string
+  redisPassword: string
+  jwtSecret: string
+  instanceId: string
+}) => ({
+  name: input.projectName,
+  services: {
+    ingress: {
+      build: { context: input.ingressContext, dockerfile: 'Dockerfile' },
+      image: 'vulnlab/oa-ingress:1.0.0-beta',
+      restart: 'no',
+      security_opt: ['no-new-privileges:true'],
+      cap_drop: ['ALL'],
+      pids_limit: 64,
+      read_only: true,
+      user: '65532:65532',
+      tmpfs: ['/tmp:rw,noexec,nosuid,size=8m'],
+      ports: [{ target: 9090, published: String(input.port), host_ip: '127.0.0.1', protocol: 'tcp' }],
+      depends_on: { web: { condition: 'service_healthy' } },
+      networks: ['oa-internal', 'oa-ingress'],
+      labels: { 'com.vulnlab.instance': input.instanceId },
+    },
+    mysql: {
+      build: { context: input.mysqlContext, dockerfile: 'Dockerfile' },
+      image: 'vulnlab/oa-mysql:1.0.0-beta',
+      restart: 'no',
+      security_opt: ['no-new-privileges:true'],
+      pids_limit: 256,
+      environment: {
+        TZ: 'Asia/Shanghai',
+        MYSQL_ROOT_PASSWORD: input.databasePassword,
+        MYSQL_DATABASE: 'oa_system',
+        MYSQL_ROOT_HOST: '%',
+      },
+      command: [
+        '--character-set-server=utf8mb4',
+        '--collation-server=utf8mb4_unicode_ci',
+        '--skip-character-set-client-handshake',
+        '--default-authentication-plugin=mysql_native_password',
+      ],
+      volumes: [{ type: 'volume', source: 'mysql-data', target: '/var/lib/mysql' }],
+      healthcheck: {
+        test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent'],
+        interval: '5s', timeout: '5s', retries: 30, start_period: '40s',
+      },
+      networks: ['oa-internal'],
+      labels: { 'com.vulnlab.instance': input.instanceId },
+    },
+    redis: {
+      image: 'redis:7-alpine',
+      restart: 'no',
+      security_opt: ['no-new-privileges:true'],
+      pids_limit: 128,
+      command: ['redis-server', '--requirepass', input.redisPassword, '--appendonly', 'yes'],
+      environment: { TZ: 'Asia/Shanghai', REDIS_PASSWORD: input.redisPassword },
+      volumes: [{ type: 'volume', source: 'redis-data', target: '/data' }],
+      healthcheck: {
+        test: ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG'],
+        interval: '5s', timeout: '3s', retries: 20, start_period: '10s',
+      },
+      networks: ['oa-internal'],
+      labels: { 'com.vulnlab.instance': input.instanceId },
+    },
+    web: {
+      platform: 'linux/amd64',
+      build: { context: input.buildContext, dockerfile: 'Dockerfile' },
+      image: 'vulnlab/oa-system:1.0.0-beta',
+      restart: 'no',
+      security_opt: ['no-new-privileges:true'],
+      cap_drop: ['ALL'],
+      pids_limit: 128,
+      read_only: true,
+      environment: {
+        TZ: 'Asia/Shanghai',
+        DB_HOST: 'mysql', DB_PORT: '3306', DB_USER: 'root', DB_PASSWORD: input.databasePassword, DB_NAME: 'oa_system',
+        REDIS_HOST: 'redis', REDIS_PORT: '6379', REDIS_PASSWORD: input.redisPassword,
+        JWT_SECRET: input.jwtSecret, SERVER_PORT: '9090', UPLOAD_PATH: './uploads',
+      },
+      volumes: [{ type: 'volume', source: 'uploads-data', target: '/app/backend/uploads' }],
+      tmpfs: ['/tmp:rw,noexec,nosuid,size=16m'],
+      depends_on: {
+        mysql: { condition: 'service_healthy' },
+        redis: { condition: 'service_healthy' },
+      },
+      healthcheck: { test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:9090/'], interval: '10s', timeout: '5s', retries: 12, start_period: '20s' },
+      networks: ['oa-internal'],
+      labels: { 'com.vulnlab.instance': input.instanceId },
+    },
+  },
+  networks: { 'oa-internal': { driver: 'bridge', internal: true }, 'oa-ingress': { driver: 'bridge' } },
+  volumes: { 'mysql-data': {}, 'redis-data': {}, 'uploads-data': {} },
+})
 
 export class ProviderError extends Error {
   constructor(
@@ -206,6 +335,16 @@ const waitForExit = async (child: ChildProcess) => {
     try { child.kill() } catch { finish() }
     setTimeout(finish, 2_000)
   })
+}
+
+const stopChildGracefully = async (child: ChildProcess, timeoutMs = 5_000) => {
+  if (child.exitCode !== null && child.exitCode !== undefined) return
+  const exited = new Promise<void>(resolveExit => child.once('exit', () => resolveExit()))
+  child.stdin?.end()
+  const graceful = await Promise.race([exited.then(() => true), sleep(timeoutMs).then(() => false)])
+  if (graceful) return
+  try { child.kill() } catch { return }
+  await Promise.race([exited, sleep(2_000)])
 }
 
 const processAlive = (pid: number) => {
@@ -881,6 +1020,926 @@ export class NativePhpProvider implements LabProvider {
   }
 }
 
+interface NativeOaRuntime {
+  child: ChildProcess
+  peer: RpcPeer
+  root: string
+  port: number
+  server: HttpServer
+  pool: Pool
+  database: MySqlResource
+  cache: Map<string, { value: string; expiresAt: number }>
+  instanceId: string
+  sandbox: OaSandboxState
+  cleanup?: Promise<void>
+}
+
+interface OaSandboxState {
+  profile: string
+  launcherPath: string
+  runtimeRoot: string
+  uploadRoot: string
+  nodePath: string
+  entryPath: string
+  moduleRoot: string
+}
+
+export interface NativeOaProviderOptions {
+  spawnImpl?: SpawnFunction
+  allocatePort?: PortAllocator
+  mysqlManager?: MySqlManager
+}
+
+const closeHttpServer = (server: HttpServer) => new Promise<void>(resolveClose => {
+  if (!server.listening) return resolveClose()
+  server.close(() => resolveClose())
+})
+
+const collectHttpBody = async (request: import('node:http').IncomingMessage, limit: number) => {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += bytes.byteLength
+    if (size > limit) throw new ProviderError('NATIVE_OA_REQUEST_TOO_LARGE', 'OA 请求超过 32 MiB 上限。', 413)
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks, size)
+}
+
+const isLoopbackHost = (host: string) => {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '')
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1'
+}
+
+const configureOaFrontendSecrets = async (root: string, jwtSecret: string, inviteCode: string) => {
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) await configureOaFrontendSecrets(path, jwtSecret, inviteCode)
+    else if (entry.isFile() && entry.name.endsWith('.js')) {
+      const source = await readFile(path, 'utf8')
+      const configured = source.replaceAll('oa2025-secret', jwtSecret).replaceAll('oa-admin-2025', inviteCode)
+      if (configured !== source) await writeFile(path, configured, 'utf8')
+    }
+  }
+}
+
+export class NativeOaProvider implements LabProvider {
+  readonly id = 'oa-local'
+  readonly supportedRuntimeKinds: readonly RuntimeKind[] = ['native-oa']
+  private readonly spawnImpl: SpawnFunction
+  private readonly allocatePortImpl: PortAllocator
+  private readonly mysqlManager: MySqlManager
+  private readonly runtimes = new Map<string, NativeOaRuntime>()
+  private readonly reservedPorts = new Set<number>()
+  private portAllocation = Promise.resolve()
+
+  constructor(options: NativeOaProviderOptions = {}) {
+    this.spawnImpl = options.spawnImpl ?? spawn
+    this.allocatePortImpl = options.allocatePort ?? allocatePort
+    this.mysqlManager = options.mysqlManager ?? new CliMySqlManager()
+  }
+
+  private sandboxProfile(instanceId: string) {
+    return `VulnLab.OA.${createHash('sha256').update(instanceId).digest('hex').slice(0, 32)}`
+  }
+
+  private async projectLauncherPath() {
+    if (process.platform !== 'win32') throw new ProviderError('NATIVE_OA_SANDBOX_UNAVAILABLE', 'OA 靶场需要 Windows AppContainer 操作系统隔离。', 409)
+    const moduleDir = dirname(fileURLToPath(import.meta.url))
+    const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+    const launcherRoot = resolve(appDir, 'assets', 'native-oa')
+    const launcherPath = await realpath(join(launcherRoot, 'appcontainer-launcher-sandbox.exe')).catch(() => '')
+    const relativeLauncher = launcherPath ? relative(launcherRoot.toLowerCase(), launcherPath.toLowerCase()) : ''
+    if (!launcherPath || relativeLauncher === '..' || relativeLauncher.startsWith(`..${sep}`) || isAbsolute(relativeLauncher)) {
+      throw new ProviderError('NATIVE_OA_LAUNCHER_NOT_PROJECT_MANAGED', '项目内 OA AppContainer 启动器未准备。', 409)
+    }
+    const launcherHash = createHash('sha256').update(await readFile(launcherPath)).digest('hex')
+    if (launcherHash !== OA_LAUNCHER_SHA256) throw new ProviderError('NATIVE_OA_LAUNCHER_HASH_MISMATCH', '项目内 OA AppContainer 启动器校验失败。', 409)
+    return { appDir, launcherPath }
+  }
+
+  private async verifyOaInstallPaths(dataDir: string, instancePaths: string[], appPaths: string[], nodePath: string) {
+    const dataRoot = await realpath(dataDir)
+    const moduleDir = dirname(fileURLToPath(import.meta.url))
+    const appRoot = await realpath(basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir)
+    const nodeRoot = await realpath(resolve(dataDir, 'runtime', 'toolchains', 'node'))
+    const groups: Array<{ paths: string[]; root: string }> = [
+      { paths: instancePaths, root: dataRoot },
+      { paths: appPaths, root: appRoot },
+      { paths: [nodePath], root: nodeRoot },
+    ]
+    for (const { paths, root } of groups) {
+      for (const path of paths) {
+        const normalized = await realpath(path)
+        const relativePath = relative(root.toLowerCase(), normalized.toLowerCase())
+        if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+          throw new ProviderError('NATIVE_OA_SANDBOX_PATH_UNTRUSTED', `OA AppContainer 路径越出受信任目录：${path}`, 409)
+        }
+        let current = resolve(path)
+        while (true) {
+          if ((await lstat(current)).isSymbolicLink()) throw new ProviderError('NATIVE_OA_SANDBOX_REPARSE_PATH', `OA AppContainer 路径包含符号链接：${current}`, 409)
+          const parent = dirname(current)
+          if (parent === current) break
+          current = parent
+        }
+      }
+    }
+  }
+
+  private async sandboxForInstance(input: ProviderStartInput, root: string, nodePath: string): Promise<OaSandboxState> {
+    const uploadRoot = join(root, 'uploads')
+    const moduleDir = dirname(fileURLToPath(import.meta.url))
+    const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+    const sandbox: OaSandboxState = {
+      profile: this.sandboxProfile(input.instanceId),
+      launcherPath: '',
+      runtimeRoot: root,
+      uploadRoot,
+      nodePath,
+      entryPath: join(appDir, 'dist', 'oa-api-child.js'),
+      moduleRoot: join(appDir, 'node_modules'),
+    }
+    await mkdir(uploadRoot, { recursive: true })
+    await this.verifyOaInstallPaths(input.dataDir, [root, uploadRoot], [sandbox.entryPath, sandbox.moduleRoot], nodePath)
+    return sandbox
+  }
+
+  private async sandboxForRecovery(dataDir: string, instanceId: string, root: string, saved: unknown): Promise<OaSandboxState | null> {
+    if (!saved || typeof saved !== 'object') return null
+    const stored = saved as Partial<OaSandboxState>
+    const profile = this.sandboxProfile(instanceId)
+    if (stored.profile !== profile || typeof stored.nodePath !== 'string') return null
+    const nodePath = await this.validateProjectNodePath(dataDir, stored.nodePath)
+    const { appDir, launcherPath } = await this.projectLauncherPath()
+    const sandbox: OaSandboxState = {
+      profile,
+      launcherPath,
+      runtimeRoot: root,
+      uploadRoot: join(root, 'uploads'),
+      nodePath,
+      entryPath: join(appDir, 'dist', 'oa-api-child.js'),
+      moduleRoot: join(appDir, 'node_modules'),
+    }
+    await this.verifyOaInstallPaths(dataDir, [sandbox.runtimeRoot, sandbox.uploadRoot], [sandbox.entryPath, sandbox.moduleRoot], nodePath)
+    return sandbox
+  }
+
+  private async runSandboxCleanup(sandbox: OaSandboxState) {
+    const cwd = await stat(sandbox.runtimeRoot).then(() => sandbox.runtimeRoot, () => dirname(sandbox.launcherPath))
+    const args = ['cleanup', sandbox.profile, sandbox.runtimeRoot, sandbox.uploadRoot, sandbox.nodePath, sandbox.entryPath, sandbox.moduleRoot]
+    const child = this.spawnImpl(sandbox.launcherPath, args, {
+      cwd,
+      env: runtimeEnvironment(cwd),
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+    })
+    const result = await new Promise<{ code: number | null }>((resolveExit, rejectExit) => {
+      const timer = setTimeout(() => {
+        try { child.kill() } catch { /* the launcher may already have exited */ }
+        rejectExit(new ProviderError('NATIVE_OA_SANDBOX_CLEANUP_TIMEOUT', 'OA AppContainer 清理超时。', 503))
+      }, 120_000)
+      child.once('error', error => { clearTimeout(timer); rejectExit(error) })
+      child.once('exit', code => { clearTimeout(timer); resolveExit({ code }) })
+    })
+    if (result.code !== 0) throw new ProviderError('NATIVE_OA_SANDBOX_CLEANUP_FAILED', `OA AppContainer 清理失败（${result.code}）。`, 503)
+  }
+
+  private async claimPort(config: NativeRuntimeConfig, host = config.bindHost) {
+    let release!: () => void
+    const turn = new Promise<void>(resolveTurn => { release = resolveTurn })
+    const previous = this.portAllocation
+    this.portAllocation = previous.then(() => turn)
+    await previous
+    try {
+      for (let attempt = 0; attempt <= config.portEnd - config.portStart; attempt += 1) {
+        const port = await this.allocatePortImpl(host, config.portStart, config.portEnd)
+        if (!this.reservedPorts.has(port)) {
+          this.reservedPorts.add(port)
+          return port
+        }
+      }
+      throw new ProviderError('NATIVE_OA_PORT_EXHAUSTED', 'OA 靶场运行端口已用尽。', 409)
+    } finally {
+      release()
+    }
+  }
+
+  private async mysqlQuery(pool: Pool, payload: unknown) {
+    const input = payload as { statement?: unknown; values?: unknown }
+    if (typeof input?.statement !== 'string' || input.statement.length > 2 * 1024 * 1024 || !Array.isArray(input.values) || input.values.length > 500 || Buffer.byteLength(JSON.stringify(input.values)) > 4 * 1024 * 1024) {
+      throw new Error('MySQL 请求格式无效。')
+    }
+    const [result] = await pool.query({ sql: input.statement, timeout: 10_000 }, input.values as any[])
+    if (Array.isArray(result)) return { rows: result, affectedRows: 0, insertId: 0 }
+    const header = result as { affectedRows?: number; insertId?: number }
+    return { rows: [], affectedRows: header.affectedRows ?? 0, insertId: header.insertId ?? 0 }
+  }
+
+  private redisCommand(cache: Map<string, { value: string; expiresAt: number }>, payload: unknown) {
+    const input = payload as { args?: unknown }
+    if (!Array.isArray(input?.args) || input.args.length < 2 || input.args.length > 5 || !input.args.every(value => typeof value === 'string')) throw new Error('Redis 请求格式无效。')
+    const args = input.args as string[]
+    const command = args[0]?.toUpperCase()
+    if ((args[1] as string).length > 256) throw new Error('OA 项目内缓存键超过 256 个字符。')
+    if (command === 'GET' && args.length === 2) {
+      const value = cache.get(args[1] as string)
+      if (!value) return null
+      if (value.expiresAt <= Date.now()) {
+        cache.delete(args[1] as string)
+        return null
+      }
+      return value.value
+    } else if (command === 'SET' && args.length === 5 && args[3]?.toUpperCase() === 'EX' && /^\d+$/.test(args[4] ?? '')) {
+      if (Buffer.byteLength(args[2] as string) > 4 * 1024) throw new Error('OA 项目内缓存值超过 4 KiB。')
+      const ttlSeconds = Math.min(86_400, Number(args[4]))
+      for (const [key, value] of cache) if (value.expiresAt <= Date.now()) cache.delete(key)
+      if (!cache.has(args[1] as string) && cache.size >= 1_024) throw new Error('OA 项目内缓存实例达到 1,024 个键的上限。')
+      cache.set(args[1] as string, { value: args[2] as string, expiresAt: Date.now() + ttlSeconds * 1000 })
+      return 'OK'
+    } else {
+      throw new Error('OA 项目内缓存仅支持 GET 与 SET EX 命令。')
+    }
+  }
+
+  private async ssrfRequest(payload: unknown, allowedPorts: ReadonlySet<number>) {
+    const input = payload as { url?: unknown; method?: unknown; body?: unknown }
+    if (typeof input?.url !== 'string' || input.url.length > 2_048) throw new Error('SSRF URL 无效。')
+    const method = typeof input.method === 'string' ? input.method.toUpperCase() : 'GET'
+    if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(method)) throw new Error('SSRF HTTP 方法无效。')
+    const body = input.body === undefined ? undefined : typeof input.body === 'string' ? input.body : JSON.stringify(input.body)
+    if (body && Buffer.byteLength(body) > 256 * 1024) throw new Error('SSRF 请求体超过 256 KiB。')
+    const validateTarget = (value: string, base?: URL) => {
+      const url = new URL(value, base)
+      const port = Number(url.port || (url.protocol === 'https:' ? '443' : '80'))
+      if (url.protocol !== 'http:' || url.username || url.password || !isLoopbackHost(url.hostname) || !allowedPorts.has(port)) {
+        throw new Error('SSRF 目标仅允许本实例 Web、数据库和缓存端口。')
+      }
+      url.hostname = '127.0.0.1'
+      url.hash = ''
+      return url
+    }
+    let target = validateTarget(input.url)
+    let requestMethod = method
+    let requestBody = body
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      const response = await fetch(target, {
+        method: requestMethod,
+        ...(requestBody !== undefined && !['GET', 'HEAD'].includes(requestMethod) ? { body: requestBody } : {}),
+        ...(requestBody !== undefined ? { headers: { 'content-type': 'application/json' } } : {}),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8_000),
+      })
+      const location = response.headers.get('location')
+      if (location && [301, 302, 303, 307, 308].includes(response.status)) {
+        await response.body?.cancel().catch(() => undefined)
+        if (redirects === 5) throw new Error('SSRF 重定向次数超过 5 次。')
+        target = validateTarget(location, target)
+        if ([301, 302, 303].includes(response.status) && requestMethod !== 'HEAD') {
+          requestMethod = 'GET'
+          requestBody = undefined
+        }
+        continue
+      }
+      const reader = response.body?.getReader()
+      const chunks: Uint8Array[] = []
+      let bytes = 0
+      if (reader) {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          bytes += next.value.byteLength
+          if (bytes > 1024 * 1024) {
+            await reader.cancel()
+            break
+          }
+          chunks.push(next.value)
+        }
+      }
+      return { status: response.status, body: Buffer.concat(chunks).toString('utf8'), headers: Object.fromEntries(response.headers.entries()) }
+    }
+    throw new Error('SSRF 请求未完成。')
+  }
+
+  private async seedDatabase(input: ProviderStartInput, root: string, resource: MySqlResource) {
+    if (!this.mysqlManager.initializeSql) throw new ProviderError('NATIVE_OA_DB_INIT_UNSUPPORTED', '当前 MySQL Provider 不支持 OA 初始化 SQL。', 503)
+    const sourceSeed = await readFile(join(input.lab.localPath as string, 'database', 'init.sql'), 'utf8')
+    const nativeSeedPath = join(input.lab.localPath as string, 'database', 'init.native.sql')
+    const sql = await readFile(nativeSeedPath, 'utf8').catch(() => adaptOaSeed(sourceSeed))
+    await mkdir(join(root, 'database'), { recursive: true })
+    await writeFile(join(root, 'database', 'init.native.sql'), sql, 'utf8')
+    await this.mysqlManager.initializeSql(resource, sql)
+    await this.mysqlManager.verify(resource)
+    const pool = createPool({
+      host: resource.host,
+      port: resource.port,
+      user: resource.user,
+      password: resource.password,
+      database: resource.database,
+      charset: 'utf8mb4',
+      waitForConnections: true,
+      connectionLimit: 4,
+      queueLimit: 32,
+      connectTimeout: 10_000,
+    })
+    try {
+      const [users] = await pool.query('SELECT username FROM users ORDER BY id')
+      const usernames = (users as Array<{ username: string }>).map(user => user.username)
+      const expected = ['admin', 'manager', 'user', 'zhangsan', 'lisi', 'test']
+      if (JSON.stringify(usernames) !== JSON.stringify(expected)) throw new ProviderError('NATIVE_OA_DB_SEED_INVALID', 'OA 数据库种子账号校验失败。', 503)
+      const [counts] = await pool.query(`SELECT
+        (SELECT COUNT(*) FROM departments) AS departments,
+        (SELECT COUNT(*) FROM announcements) AS announcements,
+        (SELECT COUNT(*) FROM tickets) AS tickets,
+        (SELECT COUNT(*) FROM approvals) AS approvals,
+        (SELECT COUNT(*) FROM notification_templates) AS templates`)
+      const count = (counts as Array<Record<string, unknown>>)[0] ?? {}
+      if (['departments', 'announcements', 'tickets', 'approvals', 'templates'].some(key => Number(count[key]) < 1)) {
+        throw new ProviderError('NATIVE_OA_DB_SEED_INVALID', 'OA 数据库种子业务数据不完整。', 503)
+      }
+      return pool
+    } catch (error) {
+      await pool.end().catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async projectNodeBinary(input: ProviderStartInput) {
+    return this.validateProjectNodePath(input.dataDir, input.runtime.oaNodeBinary)
+  }
+
+  private async validateProjectNodePath(dataDir: string, binary?: string) {
+    const root = await realpath(resolve(dataDir, 'runtime', 'toolchains', 'node')).catch(() => '')
+    const candidate = await realpath(binary ?? '').catch(() => '')
+    const relativePath = root && candidate ? relative(root.toLowerCase(), candidate.toLowerCase()) : ''
+    if (!root || !candidate || basename(candidate).toLowerCase() !== 'node.exe' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new ProviderError('NATIVE_OA_NODE_NOT_PROJECT_MANAGED', 'OA 靶场仅允许使用 VulnLab 项目准备的 Node.js 运行时。', 409)
+    }
+    return candidate
+  }
+
+  private async verifyProjectRuntime(input: ProviderStartInput) {
+    const mysql = input.runtime.mysql
+    if (!mysql) throw new ProviderError('NATIVE_OA_MYSQL_NOT_CONFIGURED', 'OA 靶场需要项目托管的 MariaDB。', 409)
+    if (input.runtime.mysqlManaged !== true) throw new ProviderError('NATIVE_OA_MYSQL_NOT_PROJECT_MANAGED', 'OA 靶场仅允许使用 VulnLab 项目托管的 MariaDB。', 409)
+    if (mysql.host !== '127.0.0.1' || mysql.appHost !== '127.0.0.1' || !Number.isInteger(mysql.port) || mysql.port < 1024 || mysql.port > 65535) {
+      throw new ProviderError('NATIVE_OA_MYSQL_LOOPBACK_ONLY', 'OA 靶场 MariaDB 必须由项目托管并仅监听 127.0.0.1。', 409)
+    }
+    const mariaRoot = await realpath(resolve(input.dataDir, 'runtime', 'toolchains', 'mariadb')).catch(() => '')
+    const mysqlBinary = await realpath(mysql.mysqlBinary).catch(() => '')
+    const relativeMysql = mariaRoot && mysqlBinary ? relative(mariaRoot.toLowerCase(), mysqlBinary.toLowerCase()) : ''
+    if (!mariaRoot || !mysqlBinary || !['mariadb.exe', 'mysql.exe'].includes(basename(mysqlBinary).toLowerCase()) || relativeMysql === '..' || relativeMysql.startsWith(`..${sep}`) || isAbsolute(relativeMysql)) {
+      throw new ProviderError('NATIVE_OA_MYSQL_BINARY_NOT_PROJECT_MANAGED', 'OA 靶场仅允许使用 VulnLab 项目目录内的 MariaDB 客户端。', 409)
+    }
+    const nodePath = await this.projectNodeBinary(input)
+    return nodePath
+  }
+
+  private async launch(input: ProviderStartInput, root: string, port: number, resource: MySqlResource, pool: Pool, projectNodePath: string) {
+    const frontendRoot = join(root, 'backend', 'dist')
+    const uploadRoot = join(root, 'uploads')
+    const tempRoot = join(root, '.tmp')
+    const jwtSecret = randomBytes(32).toString('base64url')
+    const inviteCode = randomBytes(18).toString('base64url')
+    await cp(join(input.lab.localPath as string, 'backend', 'dist'), frontendRoot, { recursive: true, force: true })
+    await configureOaFrontendSecrets(frontendRoot, jwtSecret, inviteCode)
+    await mkdir(uploadRoot, { recursive: true })
+    await mkdir(tempRoot, { recursive: true })
+    const cache = new Map<string, { value: string; expiresAt: number }>()
+    const state = {
+      database_host: '127.0.0.1', database_port: resource.port, database_name: resource.database,
+      database_user: resource.user, database_password: resource.password,
+      redis_host: 'instance-memory-cache', redis_port: 0, redis_password: '', server_host: '127.0.0.1', server_port: port,
+    }
+    const sandbox = await this.sandboxForInstance(input, root, projectNodePath)
+    const { entryPath, moduleRoot } = sandbox
+    const appDir = dirname(dirname(entryPath))
+    await writeFile(join(root, 'vulnlab-runtime.json'), JSON.stringify({ port, provider: this.id, instanceId: input.instanceId, sandbox }), 'utf8')
+    const nodeArguments = [
+      '--permission', '--max-old-space-size=256', `--import=${pathToFileURL(join(appDir, 'dist', 'oa-network-guard.js')).href}`,
+      `--allow-fs-read=${root}`, `--allow-fs-read=${dirname(entryPath)}`,
+      `--allow-fs-read=${moduleRoot}`, `--allow-fs-write=${uploadRoot}`, `--allow-fs-write=${tempRoot}`,
+      entryPath,
+    ]
+    const child = this.spawnImpl(projectNodePath, nodeArguments, {
+      cwd: root,
+      env: runtimeEnvironment(root, {
+        NODE_ENV: 'production',
+        TEMP: tempRoot,
+        TMP: tempRoot,
+        VULNLAB_OA_FRONTEND_ROOT: frontendRoot,
+        VULNLAB_OA_INVITE_CODE: inviteCode,
+        VULNLAB_OA_JWT_SECRET: jwtSecret,
+        VULNLAB_OA_RUNTIME_ROOT: root,
+        VULNLAB_OA_UPLOAD_ROOT: uploadRoot,
+      }),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      shell: false,
+    })
+    try {
+      await new Promise<void>((resolveSpawn, rejectSpawn) => {
+        child.once('spawn', resolveSpawn)
+        child.once('error', rejectSpawn)
+        child.once('exit', code => rejectSpawn(new ProviderError('NATIVE_OA_PROCESS_EXITED', `OA 项目 API 子进程提前退出（${code}）。`, 503)))
+      })
+      await writeFile(join(root, 'vulnlab-runtime.json'), JSON.stringify({ port, provider: this.id, instanceId: input.instanceId, pid: child.pid }), 'utf8')
+    } catch (error) {
+      await stopChildGracefully(child)
+      throw error
+    }
+    await writeFile(join(root, 'vulnlab-runtime.json'), JSON.stringify({ port, provider: this.id, instanceId: input.instanceId, pid: child.pid, sandbox }), 'utf8')
+    if (!child.stdin || !child.stdout) {
+      await stopChildGracefully(child)
+      throw new ProviderError('NATIVE_OA_IPC_UNAVAILABLE', 'OA 项目 API IPC 流未建立。', 503)
+    }
+    let stderrTail = ''
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', chunk => { stderrTail = `${stderrTail}${String(chunk)}`.slice(-4_000) })
+    let signalReady!: () => void
+    let rejectReady!: (error: Error) => void
+    const ready = new Promise<void>((resolveReady, reject) => { signalReady = resolveReady; rejectReady = reject })
+    const peer = new RpcPeer(child.stdout, child.stdin, async (method, payload) => {
+      if (method === 'ready') {
+        signalReady()
+        return { ready: true }
+      }
+      if (method === 'mysql.query') return this.mysqlQuery(pool, payload)
+      if (method === 'redis.command') return this.redisCommand(cache, payload)
+      if (method === 'instance.config') return state
+      if (method === 'ssrf.request') return this.ssrfRequest(payload, new Set([port]))
+      throw new Error(`OA 项目内接口不支持此操作：${method}`)
+    })
+    child.once('exit', code => rejectReady(new ProviderError('NATIVE_OA_PROCESS_EXITED', `OA 项目 API 子进程退出（${code}）。${stderrTail.replace(/\s+/g, ' ').trim()}`, 503)))
+    let readyTimer: NodeJS.Timeout | undefined
+    try {
+      await Promise.race([
+        ready,
+        new Promise<never>((_, reject) => { readyTimer = setTimeout(() => reject(new ProviderError('NATIVE_OA_READY_TIMEOUT', 'OA 项目 API 子进程就绪超时。', 503)), 120_000) }),
+      ])
+    } catch (error) {
+      peer.close()
+      await stopChildGracefully(child)
+      throw error
+    } finally {
+      if (readyTimer) clearTimeout(readyTimer)
+    }
+    const server = createHttpServer((request, response) => {
+      void (async () => {
+        const body = await collectHttpBody(request, 32 * 1024 * 1024)
+        const result = await peer.call('http', {
+          methodName: request.method ?? 'GET',
+          url: request.url ?? '/',
+          headers: request.headers,
+          ...(body.length ? { bodyBase64: body.toString('base64') } : {}),
+        }) as { statusCode: number; headers: Record<string, string | string[]>; bodyBase64: string }
+        const headers = { ...result.headers }
+        for (const name of Object.keys(headers)) {
+          if (['connection', 'transfer-encoding', 'content-length'].includes(name.toLowerCase())) delete headers[name]
+        }
+        response.writeHead(result.statusCode, headers)
+        response.end(Buffer.from(result.bodyBase64, 'base64'))
+      })().catch(error => {
+        if (response.headersSent) return response.destroy(error instanceof Error ? error : undefined)
+        const statusCode = error instanceof ProviderError ? error.statusCode : 502
+        response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ code: 'OA_BRIDGE_ERROR', message: error instanceof Error ? error.message : 'OA 请求转发失败。' }))
+      })
+    })
+    server.maxConnections = 8
+    server.headersTimeout = 10_000
+    server.requestTimeout = 20_000
+    server.keepAliveTimeout = 5_000
+    server.maxHeadersCount = 100
+    try {
+      await new Promise<void>((resolveListen, rejectListen) => {
+        server.once('error', rejectListen)
+        server.listen(port, '127.0.0.1', () => {
+          server.off('error', rejectListen)
+          resolveListen()
+        })
+      })
+    } catch (error) {
+      peer.close()
+      await stopChildGracefully(child)
+      throw error
+    }
+    return { child, peer, server, cache, sandbox }
+  }
+
+  private async cleanupRuntime(runtime: NativeOaRuntime, destroyDatabase = true) {
+    if (runtime.cleanup) return runtime.cleanup
+    runtime.cleanup = (async () => {
+      for (const [instanceId, active] of this.runtimes) if (active === runtime) this.runtimes.delete(instanceId)
+      this.reservedPorts.delete(runtime.port)
+      await closeHttpServer(runtime.server).catch(() => undefined)
+      runtime.peer.close()
+      await stopChildGracefully(runtime.child)
+      runtime.cache.clear()
+      await runtime.pool.end().catch(() => undefined)
+      let databaseError: unknown
+      if (destroyDatabase) await this.mysqlManager.destroy(runtime.database).catch(error => { databaseError = error })
+      await removeTree(runtime.root)
+      if (databaseError) throw new ProviderError('NATIVE_OA_DB_CLEANUP_FAILED', `OA 数据库资源回收失败：${databaseError instanceof Error ? databaseError.message : String(databaseError)}`, 503)
+    })()
+    return runtime.cleanup
+  }
+
+  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
+    if (!input.lab.localPath) throw new ProviderError('NATIVE_OA_SOURCE_NOT_READY', 'OA 靶场资源尚未准备。', 409)
+    if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError('NATIVE_OA_INSTANCE_ID_INVALID', 'OA 实例 ID 格式无效。', 400)
+    const mysqlConfig = input.runtime.mysql
+    if (!mysqlConfig) throw new ProviderError('NATIVE_OA_MYSQL_NOT_CONFIGURED', 'OA 靶场需要项目托管的 MariaDB。', 409)
+    const projectNodePath = await this.verifyProjectRuntime(input)
+    const paths = dataPaths(input.dataDir)
+    const [dataRoot, sourcePath] = await Promise.all([realpath(paths.root), realpath(input.lab.localPath)])
+    const sourceRelative = relative(dataRoot.toLowerCase(), sourcePath.toLowerCase())
+    if (sourceRelative === '..' || sourceRelative.startsWith(`..${sep}`) || isAbsolute(sourceRelative)) {
+      throw new ProviderError('NATIVE_OA_SOURCE_OUTSIDE_DATA', 'OA 靶场资源必须位于 VulnLab 数据目录内。', 409)
+    }
+    const safeInput = { ...input, lab: { ...input.lab, localPath: sourcePath } }
+    const root = paths.runtimeInstance(input.instanceId)
+    const port = await this.claimPort(input.runtime, '127.0.0.1')
+    let database: MySqlResource | null = null
+    let pool: Pool | null = null
+    let child: ChildProcess | null = null
+    let peer: RpcPeer | null = null
+    let server: HttpServer | null = null
+    let sandbox: OaSandboxState | null = null
+    try {
+      await removeTree(root)
+      await mkdir(root, { recursive: true })
+      database = await this.mysqlManager.provision({ labSlug: input.lab.slug, instanceId: input.instanceId, config: mysqlConfig })
+      pool = await this.seedDatabase(safeInput, root, database)
+      const launched = await this.launch(safeInput, root, port, database, pool, projectNodePath)
+      child = launched.child
+      peer = launched.peer
+      server = launched.server
+      sandbox = launched.sandbox
+      const runtime: NativeOaRuntime = { child, peer, root, port, server, pool, database, cache: launched.cache, instanceId: input.instanceId, sandbox: { ...launched.sandbox } }
+      this.runtimes.set(input.instanceId, runtime)
+      await writeFile(join(root, 'vulnlab-runtime.json'), JSON.stringify({ port, provider: this.id, instanceId: input.instanceId, sandbox }), 'utf8')
+      child.once('exit', () => { void this.cleanupRuntime(runtime).catch(() => undefined) })
+      const timestamps = lease(input.lifetimeMinutes)
+      return {
+        ...timestamps,
+        endpoint: `${runtimeOrigin(input.publicOrigin, port, input.runtime.publicOriginTemplate)}/`,
+        logs: [
+          `${timestamps.createdAt} 启动 OA 本地安全模式（仅绑定 127.0.0.1）`,
+          `${timestamps.createdAt} HTTP 端口=${port} · 实例缓存为进程内隔离`,
+          `${timestamps.createdAt} API 子进程使用 Node.js 权限模型；读写范围限定在项目运行代码和本实例目录，不启用操作系统沙盒`,
+          `${timestamps.createdAt} SSTI exec 返回模拟结果，不调用系统命令`,
+          `${timestamps.createdAt} MariaDB 数据库=${database.database}`,
+          `${timestamps.createdAt} 6 个默认账号与业务数据已校验`,
+        ],
+      }
+    } catch (error) {
+      if (server) await closeHttpServer(server).catch(() => undefined)
+      peer?.close()
+      if (child) await stopChildGracefully(child)
+      if (pool) await pool.end().catch(() => undefined)
+      if (database) await this.mysqlManager.destroy(database).catch(() => undefined)
+      this.reservedPorts.delete(port)
+      await removeTree(root)
+      if (error instanceof ProviderError) throw error
+      const code = (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'NATIVE_OA_BINARY_NOT_FOUND' : 'NATIVE_OA_START_FAILED'
+      throw new ProviderError(code, error instanceof Error ? error.message : 'OA 靶场启动失败。', 503)
+    }
+  }
+
+  async renew(input: ProviderRenewInput) {
+    if (!this.runtimes.has(input.instance.id)) throw new ProviderError('NATIVE_OA_PROCESS_MISSING', 'OA 实例进程已退出。', 409)
+    const { expiresAt } = renewalLease(input.instance, input.lifetimeMinutes)
+    return { expiresAt, log: `${new Date().toISOString()} OA 项目托管实例续期` }
+  }
+
+  getProxyTarget(instanceId: string) {
+    const runtime = this.runtimes.get(instanceId)
+    if (!runtime) return null
+    return `http://127.0.0.1:${runtime.port}`
+  }
+
+  async stop(input: ProviderStopInput) {
+    const runtime = this.runtimes.get(input.instance.id)
+    if (runtime) {
+      await this.cleanupRuntime(runtime)
+    } else if (input.dataDir) {
+      await this.recover({ lab: input.lab, instance: input.instance, runtime: input.runtime, dataDir: input.dataDir })
+    } else {
+      const mysql = input.runtime?.mysql ?? mysqlRuntimeConfigFromEnv()
+      if (mysql && input.runtime?.mysqlManaged === true) await this.mysqlManager.destroyForInstance({ labSlug: input.lab.slug, instanceId: input.instance.id, config: mysql })
+    }
+    return { log: `${new Date().toISOString()} OA 本地安全模式实例结束并清理独立资源` }
+  }
+
+  async recover(input: ProviderRecoverInput) {
+    if (!input.dataDir) return
+    const root = dataPaths(input.dataDir).runtimeInstance(input.instance.id)
+    const state = await readFile(join(root, 'vulnlab-runtime.json'), 'utf8')
+      .then(value => JSON.parse(value) as { pid?: unknown; provider?: unknown; instanceId?: unknown; nodePath?: unknown; sandbox?: unknown })
+      .catch(() => null)
+    if (state?.instanceId !== undefined && state.instanceId !== input.instance.id) throw new ProviderError('NATIVE_OA_RUNTIME_STATE_INVALID', 'OA 本地实例运行记录与实例 ID 不匹配，未执行进程回收。', 409)
+    if (state?.pid && Number.isInteger(state.pid) && Number(state.pid) > 0) {
+      if (!['oa-local', 'oa-project', 'oa-appcontainer'].includes(String(state.provider))) throw new ProviderError('NATIVE_OA_RUNTIME_STATE_INVALID', 'OA 本地实例 Provider 记录无效，未执行进程回收。', 409)
+      const nodePath = typeof state.nodePath === 'string' ? state.nodePath : (state.sandbox as { nodePath?: unknown } | undefined)?.nodePath
+      if (typeof nodePath !== 'string') throw new ProviderError('NATIVE_OA_RUNTIME_STATE_INVALID', 'OA 本地实例 Node.js 路径缺失，未执行进程回收。', 409)
+      await this.validateProjectNodePath(input.dataDir, nodePath)
+      await terminatePid(Number(state.pid))
+    }
+    if (state?.sandbox && typeof (state.sandbox as { launcherPath?: unknown }).launcherPath === 'string' && (state.sandbox as { launcherPath: string }).launcherPath) {
+      const expected = await this.sandboxForRecovery(input.dataDir, input.instance.id, root, state.sandbox)
+      if (expected) await this.runSandboxCleanup(expected)
+    }
+    await removeTree(root)
+    const mysql = input.runtime?.mysql ?? mysqlRuntimeConfigFromEnv()
+    if (mysql && input.runtime?.mysqlManaged === true) await this.mysqlManager.destroyForInstance({ labSlug: input.lab.slug, instanceId: input.instance.id, config: mysql })
+  }
+
+  async shutdown() {
+    await Promise.allSettled([...this.runtimes.values()].map(runtime => this.cleanupRuntime(runtime)))
+    this.runtimes.clear()
+  }
+}
+
+interface OaDockerState {
+  provider: 'oa-docker'
+  instanceId: string
+  projectName: string
+  port: number
+  cleanupPending: boolean
+  updatedAt: string
+}
+
+interface OaDockerRuntime {
+  root: string
+  projectName: string
+  port: number
+  instanceId: string
+  cleanup?: Promise<void>
+}
+
+export interface OaDockerProviderOptions {
+  runDocker?: (args: string[], timeoutMs?: number) => Promise<DockerCommandResult>
+  allocatePort?: PortAllocator
+}
+
+const dockerComposePath = (root: string) => join(root, 'compose.json')
+const dockerStatePath = (root: string) => join(root, 'oa-docker.json')
+
+export class DockerOaProvider implements LabProvider {
+  readonly id = 'oa-docker'
+  readonly supportedRuntimeKinds: readonly RuntimeKind[] = ['native-oa']
+  private readonly runDocker: (args: string[], timeoutMs?: number) => Promise<DockerCommandResult>
+  private readonly allocatePortImpl: PortAllocator
+  private readonly runtimes = new Map<string, OaDockerRuntime>()
+  private readonly starting = new Set<string>()
+  private readonly cleanups = new Map<string, Promise<void>>()
+  private readonly reservedPorts = new Set<number>()
+  private portAllocation = Promise.resolve()
+
+  constructor(options: OaDockerProviderOptions = {}) {
+    this.runDocker = options.runDocker ?? runDockerCommand
+    this.allocatePortImpl = options.allocatePort ?? allocatePort
+  }
+
+  private composeArgs(root: string, projectName: string, args: string[]) {
+    return ['compose', '--project-name', projectName, '--file', dockerComposePath(root), '--project-directory', root, ...args]
+  }
+
+  private async writeCompose(root: string, state: Pick<OaDockerState, 'instanceId' | 'projectName' | 'port'>, recovery = false) {
+    const context = join(root, 'build-context')
+    const sqlPath = join(context, 'database', 'init.sql')
+    const mysqlContext = join(root, 'mysql-context')
+    const ingressContext = join(root, 'ingress-context')
+    const ingressDockerfile = join(ingressContext, 'Dockerfile')
+    await mkdir(ingressContext, { recursive: true })
+    await writeFile(ingressDockerfile, oaDockerIngressDockerfile, 'utf8')
+    await mkdir(mysqlContext, { recursive: true })
+    await writeFile(join(mysqlContext, 'Dockerfile'), oaDockerMysqlDockerfile, 'utf8')
+    if (!recovery) {
+      const sqlInfo = await stat(sqlPath).catch(() => null)
+      if (!sqlInfo?.isFile()) throw new ProviderError('OA_DOCKER_SEED_MISSING', 'OA Docker 资源中的 MySQL 初始化 SQL 文件缺失。', 409)
+      await copyFile(sqlPath, join(mysqlContext, 'init.sql'))
+    }
+    const config = createOaDockerComposeConfig({
+      projectName: state.projectName,
+      buildContext: context,
+      mysqlContext,
+      ingressContext,
+      port: state.port,
+      databasePassword: recovery ? 'cleanup-only-db' : randomBytes(24).toString('base64url'),
+      redisPassword: recovery ? 'cleanup-only-cache' : randomBytes(24).toString('base64url'),
+      jwtSecret: recovery ? 'cleanup-only-jwt' : randomBytes(32).toString('base64url'),
+      instanceId: state.instanceId,
+    })
+    await writeFile(dockerComposePath(root), JSON.stringify(config), 'utf8')
+  }
+
+  private async claimPort(config: NativeRuntimeConfig) {
+    let release!: () => void
+    const turn = new Promise<void>(resolveTurn => { release = resolveTurn })
+    const previous = this.portAllocation
+    this.portAllocation = previous.then(() => turn)
+    await previous
+    try {
+      for (let attempt = 0; attempt <= config.portEnd - config.portStart; attempt += 1) {
+        const port = await this.allocatePortImpl('127.0.0.1', config.portStart, config.portEnd)
+        if (!this.reservedPorts.has(port)) {
+          this.reservedPorts.add(port)
+          return port
+        }
+      }
+      throw new ProviderError('OA_DOCKER_PORT_EXHAUSTED', 'OA Docker 模式的回环端口已用尽。', 409)
+    } finally {
+      release()
+    }
+  }
+
+  private async assertReady() {
+    const [runtime, asset] = await Promise.all([inspectOaDockerRuntime(this.runDocker), inspectOaDockerAsset(oaDockerAssetPath())])
+    const missing = [...runtime.missing]
+    if (!asset.available) missing.push(asset.detail)
+    if (missing.length) {
+      const details = [runtime.cli.detail, runtime.compose.detail, runtime.engine.detail, ...(asset.available ? [] : [asset.detail])]
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+      throw new ProviderError('OA_DOCKER_DEPENDENCY_MISSING', `Docker 模式不可用：${details.join('；')}`, 409)
+    }
+  }
+
+  private async runCompose(root: string, projectName: string, args: string[], timeoutMs = 30_000) {
+    return this.runDocker(this.composeArgs(root, projectName, args), timeoutMs)
+  }
+
+  private async waitUntilReady(port: number) {
+    const deadline = Date.now() + 180_000
+    let lastError = 'Web 容器尚未响应。'
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual', signal: AbortSignal.timeout(2_000) })
+        if (response.status >= 200 && response.status < 400) {
+          await response.body?.cancel().catch(() => undefined)
+          return
+        }
+        lastError = `OA Web 入口返回 HTTP ${response.status}。`
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError
+      }
+      await sleep(1_000)
+    }
+    throw new ProviderError('OA_DOCKER_WEB_NOT_READY', `Docker 模式启动超时：${lastError}`, 503)
+  }
+
+  private async writeState(root: string, state: OaDockerState) {
+    await writeFile(dockerStatePath(root), JSON.stringify({ ...state, updatedAt: new Date().toISOString() }), 'utf8')
+  }
+
+  private async cleanup(root: string, instanceId: string, projectName: string, port: number) {
+    const existing = this.cleanups.get(instanceId)
+    if (existing) return existing
+    const cleanup = (async () => {
+      const baseState = { provider: 'oa-docker' as const, instanceId, projectName, port, cleanupPending: true, updatedAt: new Date().toISOString() }
+      await this.writeState(root, baseState)
+      await this.writeCompose(root, baseState, true)
+      const result = await this.runCompose(root, projectName, ['down', '--volumes', '--remove-orphans'], 120_000)
+      if (!result.ok) {
+        const detail = `${result.stdout} ${result.stderr}`.replace(/\s+/g, ' ').trim().slice(-700) || result.errorCode || 'Docker 清理命令失败。'
+        throw new ProviderError('OA_DOCKER_CLEANUP_PENDING', `OA Docker 实例 ${instanceId} 的容器和数据卷尚未回收；已保留待重试状态：${detail}`, 503)
+      }
+      await removeTree(root)
+      this.reservedPorts.delete(port)
+      this.runtimes.delete(instanceId)
+    })()
+    this.cleanups.set(instanceId, cleanup)
+    try {
+      await cleanup
+    } finally {
+      if (this.cleanups.get(instanceId) === cleanup) this.cleanups.delete(instanceId)
+    }
+  }
+
+  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
+    if (!input.lab.localPath) throw new ProviderError('NATIVE_OA_SOURCE_NOT_READY', 'OA 靶场资源尚未准备。', 409)
+    if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError('NATIVE_OA_INSTANCE_ID_INVALID', 'OA 实例 ID 格式无效。', 400)
+    await this.assertReady()
+    const root = dataPaths(input.dataDir).runtimeInstance(input.instanceId)
+    const projectName = oaDockerProjectName(input.instanceId)
+    const port = await this.claimPort(input.runtime)
+    let composeCreated = false
+    this.starting.add(input.instanceId)
+    try {
+      await removeTree(root)
+      await mkdir(root, { recursive: true })
+      const buildContext = join(root, 'build-context')
+      await unpackOaDockerAsset(buildContext)
+      const jwtSecret = randomBytes(32).toString('base64url')
+      const inviteCode = randomBytes(18).toString('base64url')
+      await configureOaFrontendSecrets(join(buildContext, 'dist'), jwtSecret, inviteCode)
+      const state: OaDockerState = { provider: 'oa-docker', instanceId: input.instanceId, projectName, port, cleanupPending: false, updatedAt: new Date().toISOString() }
+      await this.writeCompose(root, state)
+      const composeConfig = JSON.parse(await readFile(dockerComposePath(root), 'utf8')) as { services: { web: { environment: Record<string, string> } } }
+      composeConfig.services.web.environment.JWT_SECRET = jwtSecret
+      await writeFile(dockerComposePath(root), JSON.stringify(composeConfig), 'utf8')
+      await this.writeState(root, state)
+      composeCreated = true
+      const up = await this.runCompose(root, projectName, ['up', '--detach', '--build'], 30 * 60_000)
+      if (!up.ok) {
+        const detail = `${up.stdout} ${up.stderr}`.replace(/\s+/g, ' ').trim().slice(-900) || up.errorCode || 'Compose 启动失败。'
+        const code = /port is already allocated|address already in use/i.test(detail) ? 'OA_DOCKER_PORT_IN_USE' : 'OA_DOCKER_START_FAILED'
+        throw new ProviderError(code, `OA Docker 模式启动失败：${detail}`, 503)
+      }
+      await this.waitUntilReady(port)
+      this.runtimes.set(input.instanceId, { root, projectName, port, instanceId: input.instanceId })
+      const timestamps = lease(input.lifetimeMinutes)
+      return {
+        ...timestamps,
+        endpoint: `${runtimeOrigin(input.publicOrigin, port, input.runtime.publicOriginTemplate)}/`,
+        logs: [
+          `${timestamps.createdAt} 启动 OA Docker 原版模式（Compose 项目=${projectName}）`,
+          `${timestamps.createdAt} Web 仅发布到 127.0.0.1:${port}；MySQL/Redis 不发布宿主端口`,
+          `${timestamps.createdAt} 容器使用实例专属网络、数据库/缓存/上传卷；网络启用 internal`,
+          `${timestamps.createdAt} OA Web 进程以容器内 UID 65532 运行；SSTI exec 在容器内执行`,
+        ],
+      }
+    } catch (error) {
+      this.reservedPorts.delete(port)
+      if (composeCreated) {
+        try {
+          await this.cleanup(root, input.instanceId, projectName, port)
+        } catch (cleanupError) {
+          if (error instanceof ProviderError) throw new ProviderError(error.code, `${error.message}；资源回收还在重试：${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`, error.statusCode)
+          throw cleanupError
+        }
+      } else {
+        await removeTree(root)
+      }
+      if (error instanceof ProviderError) throw error
+      throw new ProviderError('OA_DOCKER_START_FAILED', `OA Docker 模式启动失败：${error instanceof Error ? error.message : String(error)}`, 503)
+    } finally {
+      this.starting.delete(input.instanceId)
+    }
+  }
+
+  async renew(input: ProviderRenewInput) {
+    if (!this.runtimes.has(input.instance.id)) throw new ProviderError('OA_DOCKER_INSTANCE_MISSING', 'OA Docker 实例没有可续期的 Compose 运行状态。', 409)
+    const { expiresAt } = renewalLease(input.instance, input.lifetimeMinutes)
+    return { expiresAt, log: `${new Date().toISOString()} OA Docker 原版实例续期` }
+  }
+
+  async stop(input: ProviderStopInput) {
+    const active = this.runtimes.get(input.instance.id)
+    if (active) {
+      await this.cleanup(active.root, active.instanceId, active.projectName, active.port)
+    } else if (input.dataDir) {
+      await this.recover({ lab: input.lab, instance: input.instance, runtime: input.runtime, dataDir: input.dataDir })
+    }
+    return { log: `${new Date().toISOString()} OA Docker 实例与专属数据卷已回收` }
+  }
+
+  async recover(input: ProviderRecoverInput) {
+    if (!input.dataDir) return
+    const root = dataPaths(input.dataDir).runtimeInstance(input.instance.id)
+    const marker = await readFile(dockerStatePath(root), 'utf8').then(value => JSON.parse(value) as Partial<OaDockerState>).catch(() => null)
+    const projectName = oaDockerProjectName(input.instance.id)
+    if (marker && (marker.provider !== 'oa-docker' || marker.instanceId !== input.instance.id || marker.projectName !== projectName)) {
+      throw new ProviderError('OA_DOCKER_STATE_INVALID', 'OA Docker 实例清单与运行记录不匹配，未执行清理。', 409)
+    }
+    const port = Number.isInteger(marker?.port) && Number(marker?.port) >= 1024 && Number(marker?.port) <= 65535 ? Number(marker?.port) : 6800
+    await mkdir(root, { recursive: true })
+    await this.cleanup(root, input.instance.id, projectName, port)
+  }
+
+  async recoverPending(dataDir: string, activeInstanceIds: ReadonlySet<string>) {
+    const runtimeRoot = dataPaths(dataDir).runtime
+    const entries = await readdir(runtimeRoot, { withFileTypes: true }).catch(() => [])
+    const cleaned: string[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[A-Za-z0-9-]+$/.test(entry.name)) continue
+      const root = join(runtimeRoot, entry.name)
+      const marker = await readFile(dockerStatePath(root), 'utf8').then(value => JSON.parse(value) as Partial<OaDockerState>).catch(() => null)
+      if (!marker) continue
+      const projectName = oaDockerProjectName(entry.name)
+      if (marker.provider !== 'oa-docker' || marker.instanceId !== entry.name || marker.projectName !== projectName) continue
+      if (this.starting.has(entry.name)) continue
+      if (activeInstanceIds.has(entry.name) && marker.cleanupPending !== true) continue
+      const port = Number.isInteger(marker.port) && Number(marker.port) >= 1024 && Number(marker.port) <= 65535 ? Number(marker.port) : 6800
+      try {
+        await this.cleanup(root, entry.name, projectName, port)
+        if (activeInstanceIds.has(entry.name)) cleaned.push(entry.name)
+      } catch (error) {
+        throw error
+      }
+    }
+    return cleaned
+  }
+
+  async shutdown() {
+    const runtimes = [...this.runtimes.values()]
+    await Promise.allSettled(runtimes.map(runtime => this.cleanup(runtime.root, runtime.instanceId, runtime.projectName, runtime.port)))
+  }
+}
+
 interface NativeProcessRuntime {
   child: ChildProcess
   root: string
@@ -1252,6 +2311,10 @@ export class ProviderRegistry {
     for (const provider of providers) {
       if (this.providers.has(provider.id)) throw new Error(`Provider ID 重复：${provider.id}`)
       this.providers.set(provider.id, provider)
+      if (provider.id === 'oa-local') {
+        this.providers.set('oa-project', provider)
+        this.providers.set('oa-appcontainer', provider)
+      }
     }
   }
 
@@ -1269,12 +2332,22 @@ export class ProviderRegistry {
   }
 
   async shutdown(): Promise<void> {
-    await Promise.allSettled([...this.providers.values()].map(provider => provider.shutdown?.()))
+    await Promise.allSettled([...new Set(this.providers.values())].map(provider => provider.shutdown?.()))
+  }
+
+  async recoverPending(dataDir: string, activeInstanceIds: ReadonlySet<string>) {
+    const recovered: string[] = []
+    for (const provider of new Set(this.providers.values())) {
+      if (provider.recoverPending) recovered.push(...await provider.recoverPending(dataDir, activeInstanceIds))
+    }
+    return recovered
   }
 }
 
 export const providerRegistry = new ProviderRegistry([
   new NativePhpProvider(),
+  new NativeOaProvider(),
+  new DockerOaProvider(),
   new NativeProcessProvider('native-node'),
   new NativeProcessProvider('native-java'),
   new NativeProcessProvider('native-python'),

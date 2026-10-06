@@ -42,6 +42,11 @@ const state = {
   labs: [],
   jobs: [],
   instances: [],
+  oaModes: null,
+  oaModesLoading: false,
+  oaModesError: '',
+  oaMode: 'local',
+  oaModeMenuOpen: false,
   loading: true,
   busy: false,
   busyActions: [],
@@ -61,8 +66,7 @@ const state = {
   labDetailId: null,
   adminPanelOpen: false,
   adminView: 'profile',
-  adminLabAdvancedOpen: false,
-  adminLabDisplayOpen: false,
+  adminLabEditorOpen: false,
   adminLabEditId: null,
   adminLabInspection: null,
   adminLabInspectionLoading: false,
@@ -281,13 +285,20 @@ function resetAdminLabDraft() {
     documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
     category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
   }
-  state.adminLabAdvancedOpen = false
-  state.adminLabDisplayOpen = false
+  state.adminLabEditorOpen = false
   state.adminLabEditId = null
   state.adminLabInspection = null
   state.adminLabInspectionLoading = false
   state.adminLabInspectionError = ''
   state.adminLabArchiveFile = null
+}
+
+function focusAdminLabTitle() {
+  window.queueMicrotask(() => {
+    const content = app.querySelector('.admin-dialog-content')
+    if (content) content.scrollTop = 0
+    app.querySelector('#admin-lab-form [name="title"]')?.focus({ preventScroll: true })
+  })
 }
 
 async function loadAdminRecords(panel, append = false) {
@@ -427,7 +438,23 @@ async function refresh() {
   state.jobs = jobs
   state.instances = instances
   state.error = ''
-  if (state.adminPanelOpen && state.adminView === 'system') await refreshAdminOverview()
+  if (state.adminPanelOpen && state.adminView === 'system') await refreshAdminOverview({ showLoading: false })
+}
+
+async function loadOaRuntimeModes(labId) {
+  if (state.oaModesLoading) return
+  state.oaModesLoading = true
+  state.oaModesError = ''
+  render()
+  try {
+    const status = await request('/api/runtime-status', { cache: 'no-store' })
+    if (state.labDetailId === labId) state.oaModes = status.oaModes ?? null
+  } catch (error) {
+    if (state.labDetailId === labId) state.oaModesError = error.message
+  } finally {
+    state.oaModesLoading = false
+    if (state.labDetailId === labId) render()
+  }
 }
 
 async function bootstrap() {
@@ -573,6 +600,7 @@ function labsShell() {
 }
 
 const coverAssets = Object.freeze({
+  'oa-vuln-labs': '/covers/oa-vuln-labs.svg',
   dvwa: '/covers/dvwa.png',
   pikachu: '/covers/pikachu.png',
   'sqli-labs': '/covers/sqli-labs.jpg',
@@ -643,22 +671,36 @@ function labDetailModal() {
   } else if (preparing) {
     primaryAction = '<span class="button button-quiet lab-detail-action" aria-busy="true">准备中…</span>'
   } else if (admin) {
-    primaryAction = `<button class="button ${failed ? 'button-danger' : 'button-primary'} lab-detail-action" type="button" data-action="start-instance" data-id="${esc(lab.id)}">${failed ? '重试启动' : '启动环境'}</button>`
+    const oaStart = lab.runtimeKind === 'native-oa'
+    primaryAction = `<button class="button ${failed ? 'button-danger' : 'button-primary'} lab-detail-action${oaStart ? ' oa-start-trigger' : ''}" type="button" data-action="${oaStart ? 'toggle-oa-start-menu' : 'start-instance'}" data-id="${esc(lab.id)}"${oaStart ? ` aria-haspopup="true" aria-expanded="${state.oaModeMenuOpen}" aria-controls="oa-mode-menu"` : ''}>${failed ? '重试启动' : '启动环境'}</button>`
   } else {
     primaryAction = '<span class="button button-quiet lab-detail-action">等待准备</span>'
   }
   const detailState = instance ? 'running' : starting ? 'starting' : preparing ? 'preparing' : failed ? 'error' : cataloged ? 'cataloged' : 'ready'
+  const oaModeMenu = lab.runtimeKind === 'native-oa' && state.oaModeMenuOpen && !instance && admin && !preparing && !starting
+    ? (() => {
+      const local = state.oaModes?.local
+      const docker = state.oaModes?.docker
+      const localStatus = state.oaModesLoading ? '检测中' : local?.available ? '可用' : '需准备'
+      const localDetail = state.oaModesLoading ? '检测 Node.js、MariaDB…'
+        : local?.available ? 'Node.js、MariaDB · exec 模拟'
+          : `${state.oaModesError || `需准备：${(local?.missing ?? []).join('、') || 'Node.js、MariaDB'}`} · exec 模拟`
+      const dockerDetail = state.oaModesLoading ? '检测 Docker、Compose、Engine…'
+        : state.oaModesError || docker?.detail || '打开靶场详情后检测运行依赖。'
+      return `<div class="oa-mode-menu" id="oa-mode-menu" role="group" aria-label="选择 OA 启动模式"><button class="oa-mode-option" type="button" data-action="start-instance" data-id="${esc(lab.id)}" data-mode="local" title="${esc(localDetail)}"><span class="oa-mode-option-heading"><strong>本地安全模式</strong><span class="oa-mode-status${local?.available ? ' is-ready' : ' is-pending'}">${esc(localStatus)}</span></span></button><button class="oa-mode-option" type="button" data-action="start-instance" data-id="${esc(lab.id)}" data-mode="docker" title="${esc(dockerDetail)} 真实命令仅在靶场容器内执行"><span class="oa-mode-option-heading"><strong>Docker 原版模式</strong><span class="oa-mode-status${docker?.available ? ' is-ready' : ' is-unavailable'}">${esc(state.oaModesLoading ? '检测中' : docker?.available ? '可用' : '不可用')}</span></span></button><p class="oa-mode-note">本地非沙盒，exec 模拟；Docker 命令限容器。</p></div>`
+    })()
+    : ''
   const stateLabel = preparing ? '准备中' : ''
   const facts = [lab.category, lab.difficulty].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>')
   const tags = Array.isArray(lab.tags) && lab.tags.length ? `<div class="lab-detail-tags">${lab.tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''
   const preparationInfo = preparing ? `<div class="lab-detail-progress" role="status" aria-live="polite"><div class="lab-detail-progress-head"><span>${esc(jobStageLabel(activeJob?.stage))}</span><strong>${jobProgress(activeJob)}%</strong></div><div class="lab-detail-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jobProgress(activeJob)}"><span class="lab-detail-progress-fill" style="--progress:${jobProgress(activeJob)}%"></span></div><p class="lab-detail-progress-message">${esc(activeJob?.message ?? '正在准备靶场资源，请稍候。')}</p></div>` : ''
   const runningInfo = instance
-    ? (() => { const lease = leaseDisplay(instance.expiresAt); return `<section class="lab-detail-runtime" aria-label="运行状态"><div class="lab-detail-runtime-head"><div><span class="lab-detail-running-dot" aria-hidden="true"></span><strong>运行中</strong></div><strong class="lab-detail-remaining">${esc(lease.remaining)}</strong></div><div class="lab-detail-runtime-meta"><time datetime="${esc(instance.expiresAt)}">${esc(lease.expires)}</time><div class="lab-detail-endpoint" aria-label="入口 ${esc(instance.endpoint)}"><code>${esc(instance.endpoint)}</code></div></div></section>` })()
+    ? (() => { const lease = leaseDisplay(instance.expiresAt); const modeLabel = instance.provider === 'oa-docker' ? 'Docker 模式' : '本地安全模式'; return `<section class="lab-detail-runtime" aria-label="运行状态"><div class="lab-detail-runtime-head"><div><span class="lab-detail-running-dot" aria-hidden="true"></span><strong>运行中 · ${lab.runtimeKind === 'native-oa' ? modeLabel : '本地运行'}</strong></div><strong class="lab-detail-remaining">${esc(lease.remaining)}</strong></div><div class="lab-detail-runtime-meta"><time datetime="${esc(instance.expiresAt)}">${esc(lease.expires)}</time><div class="lab-detail-endpoint" aria-label="入口 ${esc(instance.endpoint)}"><code>${esc(instance.endpoint)}</code></div></div></section>` })()
     : ''
   const managementActions = instance && admin
     ? `<button class="button button-quiet lab-detail-stop lab-detail-action" type="button" data-action="destroy-instance" data-id="${esc(instance.id)}">停止</button><button class="button button-outline lab-detail-action" type="button" data-action="renew-instance" data-id="${esc(instance.id)}">续期</button>`
     : ''
-  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div></section></div>`
+  return `<div class="dialog-backdrop workspace-dialog-backdrop lab-detail-backdrop" data-action="close-lab-details"><section class="dialog lab-detail-dialog" data-state="${detailState}" role="dialog" aria-modal="true" aria-labelledby="lab-detail-title"><div class="lab-card-media lab-detail-cover" data-cover="${coverVariant(lab)}">${coverArt(lab)}<button class="dialog-close lab-detail-close" type="button" data-action="close-lab-details" aria-label="关闭靶场信息">×</button></div><div class="lab-detail-body"><div class="lab-detail-heading"><div><h2 id="lab-detail-title">${esc(lab.title)}</h2><div class="lab-detail-facts">${facts}</div></div>${stateLabel ? `<span class="lab-detail-state">${esc(stateLabel)}</span>` : ''}</div>${lab.summary ? `<p class="lab-detail-summary">${esc(lab.summary)}</p>` : ''}${tags}${preparationInfo}${runningInfo}<div class="lab-detail-actions">${managementActions}${primaryAction}</div></div>${oaModeMenu}</section></div>`
 }
 
 function passwordToggleIcon(visible) {
@@ -863,19 +905,17 @@ function scheduleDetailPolling() {
 
 const sleep = milliseconds => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 
-async function waitForStartedInstance(labId) {
+async function waitForStartedInstance(labId, jobId) {
   const deadline = Date.now() + START_WAIT_TIMEOUT_MS
   while (Date.now() < deadline) {
     await sleep(Math.min(1000, deadline - Date.now()))
     await refresh()
     if (state.instances.some(instance => instance.labId === labId && instance.status === 'running')) return
     const lab = state.labs.find(item => item.id === labId)
-    const job = state.jobs.find(item => item.labId === labId && ['queued', 'importing'].includes(item.status))
-    const completedWithError = state.jobs.find(item => item.labId === labId && item.status === 'completed' && item.error)
-    if (completedWithError?.error) throw new ApiError(completedWithError.error, 409)
-    if (lab?.status === 'error' || (!job && state.jobs.some(item => item.labId === labId && item.status === 'error'))) {
-      const failedJob = state.jobs.find(item => item.labId === labId && item.status === 'error')
-      throw new ApiError(failedJob?.error ?? '靶场启动未完成，请稍后查看状态。', 409)
+    const preparationJob = state.jobs.find(item => item.id === jobId)
+    if (preparationJob?.error) throw new ApiError(preparationJob.error, 409)
+    if (lab?.status === 'error' || preparationJob?.status === 'error') {
+      throw new ApiError(preparationJob?.message ?? '靶场启动未完成，请稍后查看状态。', 409)
     }
   }
   throw new ApiError('靶场准备超时，请稍后重新查看。', 504)
@@ -929,6 +969,30 @@ function positionAuditActionMenu(details) {
 
 function positionOpenAuditActionMenus() {
   app.querySelectorAll('.admin-action-select[open]').forEach(positionAuditActionMenu)
+}
+
+function positionOaModeMenu() {
+  const menu = app.querySelector('.oa-mode-menu')
+  const trigger = app.querySelector('.oa-start-trigger')
+  const dialog = app.querySelector('.lab-detail-dialog')
+  if (!menu || !trigger || !dialog || !state.oaModeMenuOpen) return
+
+  const dialogBox = dialog.getBoundingClientRect()
+  const triggerBox = trigger.getBoundingClientRect()
+  const edge = 12
+  const gap = 8
+  const width = Math.max(0, Math.min(224, dialog.clientWidth - edge * 2))
+  const left = Math.max(edge, Math.min(triggerBox.right - dialogBox.left - dialog.clientLeft - width, dialog.clientWidth - width - edge))
+  const topLimit = dialog.clientTop + edge
+  const triggerTop = triggerBox.top - dialogBox.top - dialog.clientTop
+  const availableAbove = Math.max(0, triggerTop - topLimit - gap)
+
+  menu.style.left = `${left}px`
+  menu.style.width = `${width}px`
+  const naturalHeight = menu.scrollHeight + menu.offsetHeight - menu.clientHeight
+  const height = Math.min(naturalHeight, availableAbove)
+  menu.style.top = `${Math.max(topLimit, triggerTop - height - gap)}px`
+  menu.style.maxHeight = `${height}px`
 }
 
 function patchLabs() {
@@ -1065,8 +1129,12 @@ function adminPanel() {
   const generateLabel = busyFor('generate-invitation') ? '生成中…' : '生成邀请码'
   const footer = isAdmin && view === 'invitations' ? `<button class="button button-primary" type="button" data-action="generate-invitation" ${busyFor('generate-invitation') ? 'disabled' : ''}>${generateLabel}</button>` : ''
   const selectionActions = recordSelection?.selectionActions ?? ''
+  const logoutAction = view === 'profile' ? `<button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button>` : ''
   const dialogVariant = view === 'profile' ? 'admin-dialog-profile' : 'admin-dialog-records'
-  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div><div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div>${selectionActions}<button class="button button-danger" type="button" data-action="logout" ${busyFor('logout') ? 'disabled' : ''}>退出系统</button></div></div></div></section></div>`
+  const footerActions = footer || selectionActions || logoutAction
+    ? `<div class="dialog-actions"><div class="admin-dialog-primary">${footer}</div>${selectionActions}${logoutAction}</div>`
+    : ''
+  return `<div class="dialog-backdrop workspace-dialog-backdrop" data-action="close-admin-panel"><section class="dialog admin-dialog ${dialogVariant}" data-admin-dialog-view="${view}" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title"><div class="admin-layout"><aside class="admin-sidebar"><nav class="admin-nav" aria-label="${title}导航">${nav}</nav></aside><div class="admin-dialog-main"><h2 id="admin-dialog-title" class="sr-only">${title}</h2><div class="admin-dialog-tools"><button class="dialog-close" type="button" data-action="close-admin-panel" aria-label="关闭${title}">×</button></div><div class="admin-dialog-content">${content}</div>${footerActions}</div></div></section></div>`
 }
 
 function adminRecordSelection(panel = state.adminRecordsPanel) {
@@ -1107,16 +1175,17 @@ const customRuntimeModes = {
 
 function customRuntimeModeFor(lab) {
   const match = Object.entries(customRuntimeModes).find(([, mode]) => mode.kind === lab.runtimeKind && mode.profile === lab.runtimeConfig?.profile)
-  return match?.[0] ?? ({ 'native-php': 'php-static', 'native-node': 'node', 'native-java': 'java-jar', 'native-python': 'python' })[lab.runtimeKind] ?? 'php-static'
+  return match?.[0] ?? ({ 'native-php': 'php-static', 'native-node': 'node', 'native-java': 'java-jar', 'native-python': 'python' })[lab.runtimeKind] ?? ''
 }
 
 function adminLabsPanel() {
   const draft = state.adminLabDraft
   const customLabs = state.labs.filter(lab => !lab.builtin)
+  const editorOpen = state.adminLabEditorOpen
   const statusLabels = { cataloged: '待准备', queued: '排队中', importing: '准备中', ready: '已就绪', error: '准备失败', disabled: '已停用' }
   const option = (value, label, current) => `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`
   const runtimeMode = customRuntimeModes[draft.runtimeMode] ? draft.runtimeMode : customRuntimeModeFor(draft)
-  const runtimeProfile = customRuntimeModes[runtimeMode].profile
+  const runtimeProfile = customRuntimeModes[runtimeMode]?.profile
   const editingLab = state.adminLabEditId ? customLabs.find(lab => lab.id === state.adminLabEditId) : null
   const runtimeField = (name, label, value, placeholder, type = 'text') => `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`
   let runtimeFields = ''
@@ -1130,10 +1199,12 @@ function adminLabsPanel() {
     runtimeFields = `${runtimeField('entryPath', 'Java JAR 文件', draft.entryPath || 'app.jar', 'app.jar')}${runtimeField('portArg', '端口参数（可选）', draft.portArg, '--server.port={port}')}<label>启动参数（可选）<textarea name="javaArgs" rows="2" placeholder="每行一个参数">${esc(draft.javaArgs)}</textarea></label>`
   } else if (runtimeProfile === 'python-script') {
     runtimeFields = `${runtimeField('entryPath', 'Python 入口文件', draft.entryPath || 'app.py', 'app.py')}${runtimeField('portArg', '端口参数（可选）', draft.portArg, '--port={port}')}<label>启动参数（可选）<textarea name="pythonArgs" rows="2" placeholder="每行一个参数">${esc(draft.pythonArgs)}</textarea></label>`
-  } else {
+  } else if (runtimeProfile === 'pygoat') {
     runtimeFields = `${runtimeField('entryPath', 'Django 入口文件', draft.entryPath || 'manage.py', 'manage.py')}${runtimeField('settingsPath', 'Django 设置文件', draft.settingsPath || 'pygoat/settings.py', 'pygoat/settings.py')}`
   }
-  const runtimeHelp = runtimeProfile === 'prebuilt-node'
+  const runtimeHelp = !runtimeProfile
+    ? '该记录来自旧 Compose 配置；当前未接入 Compose 运行，请明确选择一个现有固定运行方式后再保存。'
+    : runtimeProfile === 'prebuilt-node'
     ? '声明运行依赖时需提供 package-lock.json 或 npm-shrinkwrap.json；安装使用锁文件，且不执行项目安装脚本。'
     : runtimeProfile === 'python-script' || runtimeProfile === 'pygoat'
       ? '如包含 requirements.txt，需使用哈希锁定依赖，并提前准备本机离线 wheelhouse。'
@@ -1168,32 +1239,28 @@ function adminLabsPanel() {
       const sourceLabel = lab.sourceType === 'git'
         ? (() => { try { const url = new URL(lab.sourceUrl); return `${url.hostname.replace(/^www\./, '')}/${url.pathname.replace(/^\/+|\/+$/g, '')}` } catch { return 'Git 仓库' } })()
         : 'ZIP 压缩包'
-      const modeLabel = customRuntimeModes[customRuntimeModeFor(lab)]?.label ?? '固定运行方式'
-      const actions = `<div class="admin-lab-row-actions"><button class="button button-quiet" type="button" data-action="copy-custom-lab-config" data-id="${esc(lab.id)}">复制配置</button>${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-custom-lab" data-id="${esc(lab.id)}" ${busyFor('retry-custom-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-custom-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button><button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-custom-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button></div>`
-      return `<article class="admin-lab-row" data-lab-id="${esc(lab.id)}"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><span>${esc(modeLabel)} <i aria-hidden="true">·</i> ${esc(sourceLabel)}</span></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>${progressView}${errorView}${actions}</article>`
+      const runtimeMode = customRuntimeModeFor(lab)
+      const modeLabel = customRuntimeModes[runtimeMode]?.label ?? (String(lab.runtimeKind) === 'container' ? 'Compose（当前未接入）' : '未识别运行方式')
+      const addedAt = auditTimestamp(lab.createdAt)
+      const actions = `<div class="admin-lab-row-actions"><button class="button button-quiet" type="button" data-action="copy-custom-lab-config" data-id="${esc(lab.id)}">复制配置</button>${lab.status === 'error' ? `<button class="button button-outline" type="button" data-action="retry-custom-lab" data-id="${esc(lab.id)}" ${busyFor('retry-custom-lab', lab.id) ? 'disabled' : ''}>${busyFor('retry-custom-lab', lab.id) ? '重试中…' : '重试'}</button>` : ''}<button class="button button-quiet" type="button" data-action="edit-custom-lab" data-id="${esc(lab.id)}">编辑</button><button class="button ${lab.status === 'disabled' ? 'button-outline' : 'button-quiet'}" type="button" data-action="toggle-custom-lab" data-id="${esc(lab.id)}" data-disabled="${lab.status !== 'disabled'}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>${lab.status === 'disabled' ? '恢复' : '停用'}</button><details class="admin-lab-more"><summary class="button button-quiet" aria-label="${esc(lab.title)}更多操作">更多</summary><div class="admin-lab-more-menu"><button class="button button-danger" type="button" data-action="delete-custom-lab" data-id="${esc(lab.id)}" ${running || ['queued', 'importing'].includes(lab.status) ? 'disabled' : ''}>删除</button></div></details></div>`
+      return `<article class="admin-lab-row" data-lab-id="${esc(lab.id)}"><div class="admin-lab-row-copy"><strong title="${esc(lab.title)}">${esc(lab.title)}</strong><div class="admin-lab-row-meta"><span>${esc(modeLabel)} <i aria-hidden="true">·</i> ${esc(sourceLabel)}</span><time class="admin-lab-row-created" datetime="${esc(lab.createdAt)}" title="添加于 ${esc(addedAt.date)} ${esc(addedAt.time)}">添加于 ${esc(addedAt.date)} ${esc(addedAt.time.slice(0, 5))}</time></div></div><span class="admin-lab-row-state admin-lab-row-state-${esc(lab.status)}">${esc(statusLabels[lab.status] ?? lab.status)}</span>${progressView}${errorView}${actions}</article>`
     }).join('')
     : '<div class="admin-empty-state">还没有自定义靶场。</div>'
-  return `<section class="admin-lab-view" data-admin-view="labs" aria-label="靶场管理">
-    <div class="admin-lab-heading"><h3>${editingLab ? '编辑靶场' : '添加靶场'}</h3></div>
-    <form class="admin-lab-form" id="admin-lab-form">
+  const form = `<form class="admin-lab-form" id="admin-lab-form">
       <div class="admin-lab-form-primary">
         <label>名称<input name="title" required maxlength="80" value="${esc(draft.title)}" placeholder="例如：OWASP WebGoat"></label>
-        <fieldset class="admin-lab-source-toggle"><legend>来源</legend><input type="hidden" name="sourceType" value="${esc(draft.sourceType)}"><div role="group" aria-label="来源类型"><button class="${draft.sourceType === 'git' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="git" aria-pressed="${draft.sourceType === 'git'}">Git 仓库</button><button class="${draft.sourceType === 'archive' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="archive" aria-pressed="${draft.sourceType === 'archive'}">ZIP 文件</button></div></fieldset>
-        <div class="admin-lab-source-value">${sourceValueField}</div>
-        <div class="admin-lab-inspection-actions"><button class="button button-quiet" type="button" data-action="inspect-custom-lab" ${state.adminLabInspectionLoading ? 'disabled' : ''}>${state.adminLabInspectionLoading ? '正在检查…' : '检查项目结构'}</button><span>只读文件特征，不会运行项目脚本</span></div>${inspectionView}
-        <label>运行方式<select name="runtimeMode">${Object.entries(customRuntimeModes).map(([value, mode]) => option(value, mode.label, runtimeMode)).join('')}</select><span class="admin-lab-template-hint">${runtimeHelp}</span></label>
+        <div class="admin-lab-source-row"><fieldset class="admin-lab-source-toggle"><legend>来源</legend><input type="hidden" name="sourceType" value="${esc(draft.sourceType)}"><div role="group" aria-label="来源类型"><button class="${draft.sourceType === 'git' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="git" aria-pressed="${draft.sourceType === 'git'}">Git 仓库</button><button class="${draft.sourceType === 'archive' ? 'is-active' : ''}" type="button" data-action="select-lab-source" data-source="archive" aria-pressed="${draft.sourceType === 'archive'}">ZIP 文件</button></div></fieldset><div class="admin-lab-source-value">${sourceValueField}</div></div>
+        <label>运行方式<select name="runtimeMode" required>${runtimeMode ? '' : '<option value="" selected disabled>请选择固定运行方式</option>'}${Object.entries(customRuntimeModes).map(([value, mode]) => option(value, mode.label, runtimeMode)).join('')}</select><span class="admin-lab-template-hint">${runtimeHelp}</span></label>
       </div>
-      <details class="admin-lab-advanced"${state.adminLabAdvancedOpen ? ' open' : ''}>
-        <summary><strong>高级运行参数</strong><span>分支、入口与启动参数</span></summary>
-        <div class="admin-lab-advanced-body">${sourceRefField}<div class="admin-lab-form-grid admin-lab-runtime-grid">${runtimeFields}</div></div>
-      </details>
-      <details class="admin-lab-advanced admin-lab-display-settings"${state.adminLabDisplayOpen ? ' open' : ''}>
-        <summary><strong>展示资料</strong><span>分类、难度与简介</span></summary>
-        <div class="admin-lab-advanced-body"><div class="admin-lab-form-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label></div><label>许可证<input name="license" value="${esc(draft.license)}" placeholder="未声明"></label><label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label><label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label></div>
-      </details>
-      <div class="admin-lab-form-actions">${editingLab ? '<button class="button button-quiet" type="button" data-action="cancel-custom-lab-edit">取消</button>' : ''}<button class="button button-primary" type="submit" ${busyFor('save-lab') ? 'disabled' : ''}>${busyFor('save-lab') ? '保存中…' : editingLab ? '保存修改' : '添加靶场'}</button></div>
-    </form>
-    <section class="admin-lab-list" aria-label="自定义靶场列表"><div class="admin-system-card-heading"><h3>已添加</h3></div>${rows}</section>
+      <section class="admin-lab-section admin-lab-precheck" aria-labelledby="admin-lab-precheck-title"><div class="admin-lab-section-heading"><div><h4 id="admin-lab-precheck-title">项目结构预检</h4><p>可选，只读识别，不执行项目脚本</p></div><button class="button button-quiet" type="button" data-action="inspect-custom-lab" ${state.adminLabInspectionLoading ? 'disabled' : ''}>${state.adminLabInspectionLoading ? '检查中…' : '检查结构'}</button></div>${inspectionView}</section>
+      <section class="admin-lab-section admin-lab-runtime-settings" aria-labelledby="admin-lab-runtime-title"><div class="admin-lab-section-heading"><div><h4 id="admin-lab-runtime-title">运行参数</h4><p>按所选运行方式显示</p></div></div>${sourceRefField ? `<div class="admin-lab-source-ref">${sourceRefField}</div>` : ''}<div class="admin-lab-form-grid admin-lab-runtime-grid">${runtimeFields}</div></section>
+      <section class="admin-lab-section admin-lab-display-settings" aria-labelledby="admin-lab-display-title"><div class="admin-lab-section-heading"><div><h4 id="admin-lab-display-title">展示资料</h4><p>用于主页面靶场卡片和详情</p></div></div><div class="admin-lab-display-grid"><label>分类<input name="category" value="${esc(draft.category)}" placeholder="Web"></label><label>难度<select name="difficulty">${option('入门', '入门', draft.difficulty)}${option('简单', '简单', draft.difficulty)}${option('中等', '中等', draft.difficulty)}${option('困难', '困难', draft.difficulty)}</select></label><label>许可证<input name="license" value="${esc(draft.license)}" placeholder="未声明"></label><label>标签<input name="tags" value="${esc(draft.tags)}" placeholder="SQL 注入, 文件上传"></label><label>简介<textarea name="summary" maxlength="240" placeholder="简短描述靶场内容">${esc(draft.summary)}</textarea></label></div></section>
+      <div class="admin-lab-form-actions"><button class="button button-quiet" type="button" data-action="cancel-custom-lab-editor">取消</button><button class="button button-primary" type="submit" ${busyFor('save-lab') ? 'disabled' : ''}>${busyFor('save-lab') ? '保存中…' : editingLab ? '保存修改' : '添加靶场'}</button></div>
+    </form>`
+  const list = `<section class="admin-lab-list" aria-label="自定义靶场列表">${rows}</section>`
+  return `<section class="admin-lab-view" data-admin-view="labs" aria-label="靶场管理">
+    <div class="admin-lab-heading"><h3>${editorOpen ? editingLab ? '编辑靶场' : '添加靶场' : '靶场管理'}</h3>${editorOpen ? '' : '<button class="button button-primary" type="button" data-action="start-custom-lab-create">添加靶场</button>'}</div>
+    ${editorOpen ? form : list}
   </section>`
 }
 
@@ -1388,6 +1455,7 @@ function render() {
   patchLabs()
   updateLabCanvasScrollState()
   patchOverlays()
+  positionOaModeMenu()
   scheduleImportPolling()
   scheduleDetailPolling()
 }
@@ -1494,7 +1562,7 @@ async function runAction(action, element) {
     }, 0)
     return
   }
-  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'edit-custom-lab', 'copy-custom-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
+  const canRunWhileBusy = ['nav', 'open-lab-details', 'open-system-lab', 'open-audit-for-date', 'return-to-system-data', 'refresh-system-data', 'retry-admin-records', 'close-lab-details', 'open-admin-panel', 'open-admin-lab-form', 'open-admin-section', 'close-admin-panel', 'open-admin-records', 'close-admin-records', 'toggle-password', 'switch-auth-mode', 'dismiss-login-success', 'dismiss-auth-notice', 'cancel-confirm', 'start-custom-lab-create', 'cancel-custom-lab-editor', 'edit-custom-lab', 'copy-custom-lab-config', 'cancel-custom-lab-edit', 'select-lab-source', 'apply-lab-inspection', 'inspect-custom-lab'].includes(action)
   const operationId = element?.dataset?.id ?? ''
   const duplicateOperation = state.busyActions.some(item => item.action === action && item.id === operationId)
   const logoutBusy = action === 'logout' && state.busyActions.length > 0
@@ -1515,10 +1583,17 @@ async function runAction(action, element) {
     else await refreshAdminPanel()
     return
   }
-  if (action === 'cancel-custom-lab-edit') {
-    if (!state.adminLabEditId) return
+  if (action === 'start-custom-lab-create') {
+    resetAdminLabDraft()
+    state.adminLabEditorOpen = true
+    render()
+    focusAdminLabTitle()
+    return
+  }
+  if (action === 'cancel-custom-lab-editor' || action === 'cancel-custom-lab-edit') {
     resetAdminLabDraft()
     render()
+    app.querySelector('[data-action="start-custom-lab-create"]')?.focus({ preventScroll: true })
     return
   }
   if (action === 'select-lab-source') {
@@ -1584,7 +1659,6 @@ async function runAction(action, element) {
     state.adminLabInspection = null
     state.adminLabInspectionError = ''
     for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath']) state.adminLabDraft[field] = ''
-    state.adminLabAdvancedOpen = true
     render()
     return
   }
@@ -1592,7 +1666,7 @@ async function runAction(action, element) {
     const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
     if (!lab) return
     state.adminLabEditId = lab.id
-    state.adminLabAdvancedOpen = true
+    state.adminLabEditorOpen = true
     state.adminLabArchiveFile = null
     state.adminLabDraft = {
       title: lab.title,
@@ -1618,20 +1692,17 @@ async function runAction(action, element) {
       summary: lab.summary,
       tags: lab.tags.join(', '),
     }
-    state.adminLabAdvancedOpen = true
-    state.adminLabDisplayOpen = false
     state.adminLabInspection = null
     state.adminLabInspectionError = ''
     render()
-    const titleInput = app.querySelector('#admin-lab-form [name="title"]')
-    titleInput?.focus()
-    titleInput?.scrollIntoView({ block: 'nearest' })
+    focusAdminLabTitle()
     return
   }
   if (action === 'copy-custom-lab-config') {
     const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
     if (!lab) return
     state.adminLabEditId = null
+    state.adminLabEditorOpen = true
     state.adminLabArchiveFile = null
     state.adminLabDraft = {
       title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '',
@@ -1641,12 +1712,10 @@ async function runAction(action, element) {
       portArg: lab.runtimeConfig?.portArg ?? '', settingsPath: lab.runtimeConfig?.settingsPath ?? '',
       category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
     }
-    state.adminLabAdvancedOpen = true
-    state.adminLabDisplayOpen = false
     state.adminLabInspection = null
     state.adminLabInspectionError = ''
     render()
-    app.querySelector('#admin-lab-form [name="title"]')?.focus()
+    focusAdminLabTitle()
     return
   }
   if (action === 'retry-custom-lab') {
@@ -1674,6 +1743,22 @@ async function runAction(action, element) {
       await refresh()
       setToast('靶场已恢复。')
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, lab.id); render() }
+    return
+  }
+  if (action === 'delete-custom-lab') {
+    const lab = state.labs.find(item => item.id === element.dataset.id && !item.builtin)
+    if (!lab) return
+    openConfirm('删除靶场', `删除“${lab.title}”会移除这条配置、关联导入任务和独占导入副本；仍被其他靶场引用的 ZIP 会保留。此操作无法撤销。`, { action: 'confirm-delete-custom-lab', id: lab.id }, '删除靶场')
+    return
+  }
+  if (action === 'confirm-delete-custom-lab') {
+    const labId = element.dataset.id
+    if (!labId || !beginBusy(action, labId)) return
+    try {
+      const result = await request(`/api/labs/${encodeURIComponent(labId)}`, { method: 'DELETE' })
+      await refresh()
+      setToast(result.cleanupPending ? '靶场记录已删除，部分本地资源待清理。' : '靶场及其独占资源已删除。', result.cleanupPending ? 'error' : 'success')
+    } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, labId); render() }
     return
   }
   if (action === 'apply-custom-lab-status') {
@@ -1738,17 +1823,21 @@ async function runAction(action, element) {
     state.adminRecordsPanel = null
     state.labDetailId = element.dataset.id
     render()
+    if (state.labs.find(item => item.id === element.dataset.id)?.runtimeKind === 'native-oa') void loadOaRuntimeModes(element.dataset.id)
     return
   }
   if (action === 'open-lab-details') {
     if (!state.labs.some(item => item.id === element.dataset.id)) return
     rememberModalFocus(element)
     state.labDetailId = element.dataset.id
+    state.oaModeMenuOpen = false
     render()
+    if (state.labs.find(item => item.id === element.dataset.id)?.runtimeKind === 'native-oa') void loadOaRuntimeModes(element.dataset.id)
     return
   }
   if (action === 'close-lab-details') {
     state.labDetailId = null
+    state.oaModeMenuOpen = false
     render()
     restoreModalFocus()
     return
@@ -1769,11 +1858,14 @@ async function runAction(action, element) {
   if (action === 'open-admin-lab-form') {
     if (!state.session || state.session.role !== 'admin') return
     rememberModalFocus(element)
+    resetAdminLabDraft()
+    state.adminLabEditorOpen = true
     state.adminPanelOpen = true
     state.adminView = 'labs'
     state.adminRecordsPanel = null
     state.adminLoading = false
     render()
+    app.querySelector('#admin-lab-form [name="title"]')?.focus()
     return
   }
   if (action === 'open-admin-section') {
@@ -2047,16 +2139,29 @@ async function runAction(action, element) {
     try { await refresh(); setToast('靶场状态已更新。') } catch (error) { if (!state.labs.length) state.error = error.message; setToast(error.message, 'error') } finally { endBusy(action); render() }
     return
   }
+  if (action === 'toggle-oa-start-menu') {
+    state.oaModeMenuOpen = !state.oaModeMenuOpen
+    render()
+    if (state.oaModeMenuOpen) app.querySelector('.oa-mode-option')?.focus()
+    else app.querySelector('[data-action="toggle-oa-start-menu"]')?.focus()
+    return
+  }
   if (action === 'start-instance') {
     const lab = state.labs.find(item => item.id === element.dataset.id)
+    const mode = lab?.runtimeKind === 'native-oa' ? element.dataset.mode ?? state.oaMode : undefined
+    if (mode === 'local' || mode === 'docker') state.oaMode = mode
+    state.oaModeMenuOpen = false
     beginBusy(action, element.dataset.id)
     state.labDetailId = null
     render()
     restoreModalFocus()
     setToast(`${lab?.title ?? '靶场环境'}正在后台启动…`)
     try {
-      const result = await request(`/api/labs/${element.dataset.id}/instances`, { method: 'POST', timeout: START_REQUEST_TIMEOUT_MS })
-      if (result?.status === 'preparing') await waitForStartedInstance(element.dataset.id)
+      const result = await request(`/api/labs/${element.dataset.id}/instances`, {
+        method: 'POST', timeout: START_REQUEST_TIMEOUT_MS,
+        ...(lab?.runtimeKind === 'native-oa' ? { body: JSON.stringify({ mode }) } : {}),
+      })
+      if (result?.status === 'preparing') await waitForStartedInstance(element.dataset.id, result.job?.id)
       else await refresh()
       setToast(`${lab?.title ?? '靶场环境'}已启动，可直接打开页面。`)
     } catch (error) { setToast(error.message, 'error') } finally { endBusy(action, element.dataset.id); render() }
@@ -2086,7 +2191,13 @@ app.addEventListener('click', event => {
     return
   }
   const element = event.target.closest?.('[data-action]')
-  if (!element) return
+  if (!element) {
+    if (state.oaModeMenuOpen && !event.target.closest?.('.oa-mode-menu')) {
+      state.oaModeMenuOpen = false
+      render()
+    }
+    return
+  }
   if (['close-lab-details', 'close-admin-panel', 'close-admin-records'].includes(element.dataset.action) && element !== event.target) return
   if (element.dataset.action !== 'open-instance-page') event.preventDefault()
   runAction(element.dataset.action, element)
@@ -2109,26 +2220,22 @@ document.addEventListener('visibilitychange', () => {
 })
 
 document.addEventListener('pointerdown', event => {
-  if (event.target instanceof Element && event.target.closest('.admin-action-select')) return
-  document.querySelectorAll('.admin-action-select[open]').forEach(menu => { menu.open = false })
+  if (event.target instanceof Element && event.target.closest('.admin-action-select, .admin-lab-more')) return
+  document.querySelectorAll('.admin-action-select[open], .admin-lab-more[open]').forEach(menu => { menu.open = false })
 })
 
 window.addEventListener('resize', updateLabCanvasScrollState)
 window.addEventListener('resize', positionOpenAuditActionMenus)
+window.addEventListener('resize', positionOaModeMenu)
 
 document.addEventListener('scroll', event => {
+  if (event.target instanceof Element && event.target.closest('.lab-detail-body')) positionOaModeMenu()
   if (event.target instanceof Element && event.target.closest('.admin-dialog-content')) positionOpenAuditActionMenus()
 }, true)
 
 app.addEventListener('toggle', event => {
   const details = event.target
-  if (!(details instanceof HTMLDetailsElement)) return
-  if (details.matches('.admin-lab-advanced')) {
-    if (details.classList.contains('admin-lab-display-settings')) state.adminLabDisplayOpen = details.open
-    else state.adminLabAdvancedOpen = details.open
-    return
-  }
-  if (!details.matches('.admin-action-select')) return
+  if (!(details instanceof HTMLDetailsElement) || !details.matches('.admin-action-select')) return
   positionAuditActionMenu(details)
   window.requestAnimationFrame(() => positionAuditActionMenu(details))
 }, true)
@@ -2144,11 +2251,10 @@ app.addEventListener('change', event => {
     state.adminLabInspection = null
     state.adminLabInspectionError = ''
     const hint = input.form.querySelector('[data-archive-file-name]')
-    if (hint) hint.textContent = file ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB` : '选择 ZIP 文件，最大 256 MiB'
+    if (hint) hint.textContent = file ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB` : '最大 256 MiB'
     return
   }
   if (input.form?.id === 'admin-lab-form' && Object.hasOwn(state.adminLabDraft, input.name)) {
-    state.adminLabAdvancedOpen = Boolean(input.form.querySelector('.admin-lab-advanced:not(.admin-lab-display-settings)')?.open)
     state.adminLabDraft[input.name] = input.value
     if (input.name === 'runtimeMode') {
       const mode = Object.hasOwn(customRuntimeModes, input.value) ? customRuntimeModes[input.value] : customRuntimeModes['php-static']
@@ -2201,10 +2307,15 @@ app.addEventListener('submit', async event => {
     const values = Object.fromEntries(new FormData(form).entries())
     const sourceType = state.adminLabDraft.sourceType
     const modeKey = String(values.runtimeMode ?? state.adminLabDraft.runtimeMode)
+    if (!Object.hasOwn(customRuntimeModes, modeKey)) {
+      setToast('请先选择当前支持的固定运行方式。', 'error')
+      form.querySelector('[name="runtimeMode"]')?.focus()
+      return
+    }
     const mode = Object.hasOwn(customRuntimeModes, modeKey) ? customRuntimeModes[modeKey] : customRuntimeModes['php-static']
     const archiveValue = values.archiveFile
     const archiveFile = archiveValue && typeof archiveValue === 'object' && Number(archiveValue.size) > 0 ? archiveValue : state.adminLabArchiveFile
-    const profile = String(values.runtimeProfile ?? '').trim() || ({ 'native-php': 'static-php', 'native-node': 'prebuilt-node', 'native-java': 'webgoat', 'native-python': 'pygoat' })[String(values.runtimeKind ?? 'native-php')] || 'static-php'
+    const profile = mode.profile
     const runtimeConfig = { profile }
     const addConfigText = (name) => {
       const value = String(values[name] ?? '').trim()
@@ -2253,6 +2364,7 @@ app.addEventListener('submit', async event => {
       setToast('请填写靶场名称。', 'error')
       return
     }
+    const currentLab = editing ? state.labs.find(lab => lab.id === editId) : null
     if (sourceType === 'git' && !payload.sourceUrl) {
       setToast('请填写靶场来源地址。', 'error')
       return
@@ -2261,7 +2373,7 @@ app.addEventListener('submit', async event => {
       setToast('请选择有效的 ZIP 压缩包。', 'error')
       return
     }
-    if (sourceType === 'archive' && Number(archiveFile.size) > LAB_ARCHIVE_MAX_BYTES) {
+    if (sourceType === 'archive' && archiveFile && Number(archiveFile.size) > LAB_ARCHIVE_MAX_BYTES) {
       setToast('压缩包不能超过 256 MiB。', 'error')
       return
     }
@@ -2278,11 +2390,11 @@ app.addEventListener('submit', async event => {
       resetAdminLabDraft()
       state.adminView = 'labs'
       state.adminRecordsPanel = null
-      setToast('靶场已添加，资源将在后台准备。')
+      setToast(editing ? '靶场修改已保存。' : '靶场已添加，资源将在后台准备。')
     } catch (error) {
       setToast(error.message, 'error')
     } finally {
-      endBusy('create-lab')
+      endBusy(operation, editing ? editId : '')
       render()
     }
     return
@@ -2410,6 +2522,13 @@ document.addEventListener('keydown', event => {
   const dialog = dialogs[dialogs.length - 1]
   if (!dialog) return
   if (event.key === 'Escape') {
+    if (state.oaModeMenuOpen) {
+      event.preventDefault()
+      state.oaModeMenuOpen = false
+      render()
+      app.querySelector('[data-action="toggle-oa-start-menu"]')?.focus()
+      return
+    }
     const actionMenu = dialog.querySelector('.admin-action-select[open]')
     if (actionMenu) {
       event.preventDefault()
@@ -2417,10 +2536,17 @@ document.addEventListener('keydown', event => {
       actionMenu.querySelector('summary')?.focus()
       return
     }
+    const labMoreMenu = dialog.querySelector('.admin-lab-more[open]')
+    if (labMoreMenu) {
+      event.preventDefault()
+      labMoreMenu.open = false
+      labMoreMenu.querySelector('summary')?.focus()
+      return
+    }
     if (state.confirm) { state.confirm = null; render(); restoreConfirmFocus(); return }
     else if (state.adminRecordsPanel === 'audit' && state.adminAuditReturnToSystem) { returnToSystemData(); void refreshAdminOverview({ showLoading: false }); return }
     else if (state.adminRecordsPanel) { state.adminRecordsPanel = null; state.adminView = 'profile'; render(); restoreAdminRecordsFocus(); return }
-    else if (state.labDetailId) state.labDetailId = null
+    else if (state.labDetailId) { state.labDetailId = null; state.oaModeMenuOpen = false }
     else if (state.adminPanelOpen) { state.adminPanelOpen = false; state.adminView = 'profile'; render(); restoreModalFocus(); return }
     else return
     render()

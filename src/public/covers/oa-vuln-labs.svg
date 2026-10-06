@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="600" viewBox="0 0 1440 600" role="img" aria-labelledby="title desc">
+  <title id="title">中盛达企业办公管理系统示意界面</title>
+  <desc id="desc">工作台、审批列表和流程概览组成的 OA 靶场封面。</desc>
+  <rect width="1440" height="600" fill="#e8ecea"/>
+  <rect width="242" height="600" fill="#183c39"/>
+  <rect x="24" y="23" width="38" height="38" rx="8" fill="#de654e"/>
+  <path d="M34 42h18M43 33v18" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <text x="74" y="42" fill="#fff" font-family="Microsoft YaHei, sans-serif" font-size="18" font-weight="700">中盛达</text>
+  <text x="74" y="58" fill="#afc2be" font-family="Microsoft YaHei, sans-serif" font-size="10">企业办公管理系统</text>
+
+  <rect x="14" y="91" width="214" height="42" rx="7" fill="#2b6258"/>
+  <rect x="30" y="105" width="13" height="13" rx="3" fill="#d8ece5"/>
+  <text x="56" y="115" fill="#fff" font-family="Microsoft YaHei, sans-serif" font-size="14" font-weight="600">工作台</text>
+  <g fill="#c1d0cd" font-family="Microsoft YaHei, sans-serif" font-size="13">
+    <circle cx="36" cy="161" r="6" fill="none" stroke="#96afaa" stroke-width="1.5"/><text x="56" y="165">用户中心</text>
+    <rect x="30" y="190" width="13" height="13" rx="3" fill="none" stroke="#96afaa" stroke-width="1.5"/><text x="56" y="202">组织架构</text>
+    <path d="M30 231h13v12H30zM33 227v4m7-4v4" fill="none" stroke="#96afaa" stroke-width="1.5"/><text x="56" y="241">审批中心</text>
+    <path d="M30 271h13v12H30zM33 275h7m-7 4h5" fill="none" stroke="#96afaa" stroke-width="1.5"/><text x="56" y="282">消息中心</text>
+    <path d="M30 311h13v13H30zM33 315h7m-7 4h7" fill="none" stroke="#96afaa" stroke-width="1.5"/><text x="56" y="323">文件中心</text>
+  </g>
+  <path d="M24 559h194" stroke="#41625d"/>
+  <circle cx="43" cy="581" r="13" fill="#73958b"/>
+  <text x="67" y="579" fill="#e9f0ed" font-family="Microsoft YaHei, sans-serif" font-size="12">OA 安全训练环境</text>
+
+  <rect x="242" width="1198" height="67" fill="#fff"/>
+  <path d="M242 66h1198" stroke="#e3e8e5"/>
+  <text x="274" y="41" fill="#33423f" font-family="Microsoft YaHei, sans-serif" font-size="15" font-weight="600">企业协同办公</text>
+  <rect x="1152" y="17" width="174" height="33" rx="6" fill="#f4f6f5"/>
+  <circle cx="1170" cy="33" r="5" fill="none" stroke="#81918d" stroke-width="1.5"/>
+  <path d="m1174 37 4 4" stroke="#81918d" stroke-width="1.5" stroke-linecap="round"/>
+  <text x="1186" y="37" fill="#98a39f" font-family="Microsoft YaHei, sans-serif" font-size="11">搜索事项</text>
+  <circle cx="1367" cy="33" r="16" fill="#d9e8e1"/>
+  <text x="1367" y="37" text-anchor="middle" fill="#315e50" font-family="Microsoft YaHei, sans-serif" font-size="11" font-weight="600">林</text>
+
+  <text x="274" y="106" fill="#293936" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="700">工作台</text>
+  <text x="274" y="128" fill="#899490" font-family="Microsoft YaHei, sans-serif" font-size="11">待办审批与业务流程一览</text>
+  <rect x="1261" y="88" width="145" height="34" rx="6" fill="#c45e49"/>
+  <text x="1333" y="110" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, sans-serif" font-size="12" font-weight="600">新建申请</text>
+
+  <g font-family="Microsoft YaHei, sans-serif">
+    <rect x="274" y="148" width="352" height="76" rx="7" fill="#fff"/>
+    <rect x="274" y="148" width="4" height="76" rx="2" fill="#d9775f"/>
+    <text x="294" y="174" fill="#87928e" font-size="11">待我审批</text><text x="294" y="205" fill="#293936" font-size="23" font-weight="700">12</text>
+    <text x="347" y="202" fill="#9ba5a1" font-size="10">项流程等待处理</text>
+    <rect x="640" y="148" width="352" height="76" rx="7" fill="#fff"/>
+    <rect x="640" y="148" width="4" height="76" rx="2" fill="#5b9b83"/>
+    <text x="660" y="174" fill="#87928e" font-size="11">本周已完成</text><text x="660" y="205" fill="#293936" font-size="23" font-weight="700">28</text>
+    <text x="713" y="202" fill="#9ba5a1" font-size="10">项业务流程</text>
+    <rect x="1006" y="148" width="400" height="76" rx="7" fill="#fff"/>
+    <rect x="1006" y="148" width="4" height="76" rx="2" fill="#6e8ea5"/>
+    <text x="1026" y="174" fill="#87928e" font-size="11">我的申请</text><text x="1026" y="205" fill="#293936" font-size="23" font-weight="700">04</text>
+    <text x="1079" y="202" fill="#9ba5a1" font-size="10">项正在流转</text>
+  </g>
+
+  <rect x="274" y="241" width="732" height="330" rx="7" fill="#fff"/>
+  <text x="295" y="271" fill="#34423f" font-family="Microsoft YaHei, sans-serif" font-size="14" font-weight="600">最近待办</text>
+  <text x="965" y="271" text-anchor="end" fill="#6d9486" font-family="Microsoft YaHei, sans-serif" font-size="10">查看全部</text>
+  <path d="M295 288h690" stroke="#edf0ee"/>
+  <g fill="#929c98" font-family="Microsoft YaHei, sans-serif" font-size="10">
+    <text x="296" y="312">事项</text><text x="596" y="312">申请人</text><text x="730" y="312">提交时间</text><text x="898" y="312">状态</text>
+  </g>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="11">
+    <path d="M295 326h690M295 383h690M295 440h690M295 497h690" stroke="#f0f2f1"/>
+    <text x="296" y="359" fill="#43504c">办公用品申领</text><text x="596" y="359" fill="#66726e">李倩</text><text x="730" y="359" fill="#89938f">09:30</text>
+    <rect x="884" y="342" width="58" height="23" rx="5" fill="#fff1e9"/><text x="913" y="357" text-anchor="middle" fill="#bd6846" font-size="10">待处理</text>
+    <text x="296" y="416" fill="#43504c">出差审批</text><text x="596" y="416" fill="#66726e">周明</text><text x="730" y="416" fill="#89938f">09:12</text>
+    <rect x="884" y="399" width="58" height="23" rx="5" fill="#fff1e9"/><text x="913" y="414" text-anchor="middle" fill="#bd6846" font-size="10">待处理</text>
+    <text x="296" y="473" fill="#43504c">合同用印申请</text><text x="596" y="473" fill="#66726e">陈琪</text><text x="730" y="473" fill="#89938f">昨天</text>
+    <rect x="884" y="456" width="58" height="23" rx="5" fill="#fff1e9"/><text x="913" y="471" text-anchor="middle" fill="#bd6846" font-size="10">待处理</text>
+    <text x="296" y="530" fill="#43504c">费用报销</text><text x="596" y="530" fill="#66726e">赵敏</text><text x="730" y="530" fill="#89938f">昨天</text>
+    <rect x="884" y="513" width="58" height="23" rx="5" fill="#eaf4ef"/><text x="913" y="528" text-anchor="middle" fill="#4c8b70" font-size="10">流转中</text>
+  </g>
+
+  <rect x="1020" y="241" width="386" height="330" rx="7" fill="#fff"/>
+  <text x="1042" y="271" fill="#34423f" font-family="Microsoft YaHei, sans-serif" font-size="14" font-weight="600">流程概览</text>
+  <text x="1042" y="296" fill="#929c98" font-family="Microsoft YaHei, sans-serif" font-size="10">近 7 日审批处理情况</text>
+  <path d="M1042 314h342" stroke="#edf0ee"/>
+  <g fill="#7f8b86" font-family="Microsoft YaHei, sans-serif" font-size="10">
+    <text x="1043" y="348">已通过</text><text x="1043" y="390">审批中</text><text x="1043" y="432">待补充</text>
+  </g>
+  <g>
+    <rect x="1101" y="337" width="208" height="8" rx="4" fill="#edf1ef"/><rect x="1101" y="337" width="157" height="8" rx="4" fill="#6ea68d"/>
+    <rect x="1101" y="379" width="208" height="8" rx="4" fill="#edf1ef"/><rect x="1101" y="379" width="88" height="8" rx="4" fill="#7b99ad"/>
+    <rect x="1101" y="421" width="208" height="8" rx="4" fill="#edf1ef"/><rect x="1101" y="421" width="34" height="8" rx="4" fill="#d68163"/>
+  </g>
+  <rect x="1042" y="462" width="342" height="82" rx="6" fill="#f3f7f4"/>
+  <circle cx="1071" cy="503" r="15" fill="#dcebe2"/>
+  <path d="m1065 503 4 4 8-9" fill="none" stroke="#4b8a70" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1098" y="496" fill="#53615b" font-family="Microsoft YaHei, sans-serif" font-size="11" font-weight="600">业务流程正常运行</text>
+  <text x="1098" y="517" fill="#929c98" font-family="Microsoft YaHei, sans-serif" font-size="10">审批与协作事项集中管理</text>
+</svg>

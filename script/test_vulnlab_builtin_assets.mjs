@@ -61,6 +61,30 @@ try {
   })
   assert.equal(await readFile(join(offlineManifest.localPath, 'build', 'app.js'), 'utf8'), content)
 
+  const oaManifest = await installBuiltinAsset({
+    lab: {
+      ...manifest,
+      id: 'oa-vuln-labs',
+      slug: 'oa-vuln-labs',
+      title: 'OA-Vuln-Labs',
+      sourceUrl: 'bundle://oa-vuln-labs/source.zip',
+      sourceRef: 'oa-vuln-labs@1.0.0-beta',
+      runtimeKind: 'native-oa',
+      providerId: 'oa-appcontainer',
+      version: '1.0.0-beta',
+      localPath: null,
+    },
+    jobId: 'oa-native-job',
+    dataDir: root,
+    fetchImpl: async () => { throw new Error('内置 OA 包不应联网') },
+  })
+  const originalSeed = await readFile(join(oaManifest.localPath, 'database', 'init.sql'), 'utf8')
+  const nativeSeed = await readFile(join(oaManifest.localPath, 'database', 'init.native.sql'), 'utf8')
+  assert.match(originalSeed, /CREATE DATABASE IF NOT EXISTS `?oa_system`?/)
+  assert.match(nativeSeed, /CREATE TABLE IF NOT EXISTS `users`/)
+  assert.doesNotMatch(nativeSeed, /^\s*(?:CREATE DATABASE|USE\s+oa_system)\b/im)
+  assert.equal(await readFile(join(oaManifest.localPath, 'backend', 'dist', 'index.html'), 'utf8').then(value => value.includes('<html')), true)
+
   const unsafeArchive = Buffer.from(zipSync({ '../outside.txt': Buffer.from('blocked') }))
   const unsafeSha256 = createHash('sha256').update(unsafeArchive).digest('hex')
   await assert.rejects(() => installBuiltinAsset({

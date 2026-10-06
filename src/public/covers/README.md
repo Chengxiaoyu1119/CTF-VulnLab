@@ -4,6 +4,7 @@
 
 | 文件 | 来源 |
 | --- | --- |
+| `oa-vuln-labs.svg` | 本项目根据内置 OA 前端的站点名称和导航绘制的示意封面，不是靶场页面截图 |
 | `dvwa.png` | [digininja/DVWA](https://github.com/digininja/DVWA/blob/master/dvwa/images/logo.png) |
 | `pikachu.png` | [zhuifengshaonianhanlu/pikachu](https://github.com/zhuifengshaonianhanlu/pikachu/blob/master/assets/images/avatars/pikachu1.png) |
 | `sqli-labs.jpg` | [Audi-1/sqli-labs](https://github.com/Audi-1/sqli-labs/blob/master/images/Less-1.jpg) |

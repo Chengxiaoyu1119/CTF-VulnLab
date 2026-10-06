@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../src/dist/providers.js'
+import { DockerOaProvider, NativeOaProvider, NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../src/dist/providers.js'
 
 const lab = {
   id: 'lab-dvwa',
@@ -33,13 +33,19 @@ const native = new NativePhpProvider()
 const nativeNode = new NativeProcessProvider('native-node')
 const nativeJava = new NativeProcessProvider('native-java')
 const nativePython = new NativeProcessProvider('native-python')
-const registry = new ProviderRegistry([native, nativeNode, nativeJava, nativePython])
+const nativeOa = new NativeOaProvider()
+const dockerOa = new DockerOaProvider()
+const registry = new ProviderRegistry([native, nativeNode, nativeJava, nativePython, nativeOa, dockerOa])
 
 assert.equal(registry.get('native-php'), native)
 assert.equal(registry.resolve('native-php', 'native-php'), native)
 assert.equal(registry.resolve('native-node', 'native-node'), nativeNode)
 assert.equal(registry.resolve('native-java', 'native-java'), nativeJava)
 assert.equal(registry.resolve('native-python', 'native-python'), nativePython)
+assert.equal(registry.resolve('oa-local', 'native-oa'), nativeOa)
+assert.equal(registry.resolve('oa-project', 'native-oa'), nativeOa)
+assert.equal(registry.resolve('oa-appcontainer', 'native-oa'), nativeOa)
+assert.equal(registry.resolve('oa-docker', 'native-oa'), dockerOa)
 assert.throws(() => registry.resolve('native-php', 'native-node'), error => error instanceof ProviderError && error.code === 'PROVIDER_RUNTIME_UNSUPPORTED')
 assert.throws(() => registry.resolve('missing', 'native-php'), error => error instanceof ProviderError && error.code === 'PROVIDER_NOT_FOUND')
 assert.throws(() => new ProviderRegistry([native, native]), /Provider ID 重复/)
@@ -62,6 +68,74 @@ await managedNative.recover({ lab, instance, runtime: { bindHost: '127.0.0.1', p
 assert.equal(recoveries.length, 1)
 assert.equal(recoveries[0].labSlug, 'dvwa')
 assert.equal(recoveries[0].instanceId, instance.id)
+
+const oaCleanupRoot = await mkdtemp(join(tmpdir(), 'vulnlab-oa-provider-recovery-'))
+try {
+  let oaCleanupCount = 0
+  const oaProvider = new NativeOaProvider({
+    mysqlManager: {
+      provision: async () => { throw new Error('not used in recovery fixture') },
+      verify: async () => undefined,
+      destroy: async () => undefined,
+      destroyForInstance: async () => { oaCleanupCount += 1 },
+    },
+  })
+  await oaProvider.stop({
+    lab: { ...lab, id: 'lab-oa', slug: 'oa-vuln-labs', title: 'OA', runtimeKind: 'native-oa', providerId: 'oa-appcontainer' },
+    instance: { ...instance, id: 'oa-recovery', provider: 'oa-appcontainer' },
+    runtime: { bindHost: '127.0.0.1', portStart: 6800, portEnd: 6899, phpBinary: 'php', nodeBinary: 'node', javaBinary: 'java', pythonBinary: 'python', mysql: mysqlConfig, mysqlManaged: true },
+    dataDir: oaCleanupRoot,
+  })
+  assert.equal(oaCleanupCount, 1)
+} finally {
+  await rm(oaCleanupRoot, { recursive: true, force: true })
+}
+
+const oaBoundaryRoot = await mkdtemp(join(tmpdir(), 'vulnlab-oa-project-boundary-'))
+try {
+  const toolchainRoot = join(oaBoundaryRoot, 'runtime', 'toolchains')
+  const nodeRoot = join(toolchainRoot, 'node', '22.23.1', 'win32-x64')
+  const mariaRoot = join(toolchainRoot, 'mariadb', '11.4.10', 'win32-x64', 'bin')
+  await mkdir(nodeRoot, { recursive: true })
+  await mkdir(mariaRoot, { recursive: true })
+  const nodeBinary = join(nodeRoot, 'node.exe')
+  const mysqlBinary = join(mariaRoot, 'mariadb.exe')
+  await writeFile(nodeBinary, 'fixture')
+  await writeFile(mysqlBinary, 'fixture')
+  let provisions = 0
+  const boundaryProvider = new NativeOaProvider({
+    mysqlManager: {
+      provision: async () => { provisions += 1; throw new Error('must not provision on rejected runtime') },
+      verify: async () => undefined,
+      destroy: async () => undefined,
+      destroyForInstance: async () => undefined,
+    },
+  })
+  const base = {
+    instanceId: 'oa-boundary-test',
+    lab: { ...lab, id: 'lab-oa-boundary', slug: 'oa-vuln-labs', runtimeKind: 'native-oa', localPath: oaBoundaryRoot },
+    publicOrigin: 'http://127.0.0.1:6710',
+    lifetimeMinutes: 5,
+    dataDir: oaBoundaryRoot,
+    runtime: {
+      bindHost: '0.0.0.0', portStart: 6800, portEnd: 6899, phpBinary: 'php', nodeBinary: 'node',
+      oaNodeBinary: nodeBinary, javaBinary: 'java', pythonBinary: 'python', mysqlManaged: true,
+      mysql: { host: '10.0.0.8', port: 3306, adminUser: 'admin', adminPassword: 'secret', appHost: '127.0.0.1', mysqlBinary },
+    },
+  }
+  await assert.rejects(boundaryProvider.start(base), error => error.code === 'NATIVE_OA_MYSQL_LOOPBACK_ONLY')
+  assert.equal(provisions, 0, 'OA must reject a non-loopback database before provisioning resources')
+  const localDatabase = { ...base.runtime.mysql, host: '127.0.0.1' }
+  await assert.rejects(boundaryProvider.start({ ...base, runtime: { ...base.runtime, mysql: localDatabase, oaNodeBinary: process.execPath } }), error => error.code === 'NATIVE_OA_NODE_NOT_PROJECT_MANAGED')
+  assert.equal(provisions, 0, 'OA must reject a system Node.js runtime before provisioning resources')
+  await assert.rejects(
+    boundaryProvider.start({ ...base, runtime: { ...base.runtime, mysql: localDatabase, oaNodeBinary: nodeBinary } }),
+    error => error.code === 'NATIVE_OA_START_FAILED' && !/AppContainer|SANDBOX/.test(error.message),
+  )
+  assert.equal(provisions, 1, 'local OA startup must not require AppContainer before project-managed database provisioning')
+} finally {
+  await rm(oaBoundaryRoot, { recursive: true, force: true })
+}
 
 const xvwaRoot = await mkdtemp(join(tmpdir(), 'vulnlab-xvwa-provider-'))
 try {

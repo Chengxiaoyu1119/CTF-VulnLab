@@ -162,6 +162,22 @@ export const seedLabs: SeedLab[] = [
     summary: '基于 Django 的 OWASP Top 10 学习与练习环境。',
     tags: ['OWASP', 'Python', 'Django'],
   },
+  {
+    slug: 'oa-vuln-labs',
+    title: 'OA-Vuln-Labs',
+    category: 'Web',
+    difficulty: '困难',
+    sourceType: 'archive',
+    sourceUrl: 'bundle://oa-vuln-labs/source.zip',
+    sourceRef: 'oa-vuln-labs@1.0.0-beta',
+    license: '上游未声明',
+    runtimeKind: 'native-oa',
+    providerId: 'oa-local',
+    version: '1.0.0-beta',
+    autoInstall: false,
+    summary: '企业 OA 业务场景靶场，涵盖 25 个漏洞点，并提供 4 条攻击链练习。',
+    tags: ['OA', 'Web', '攻击链'],
+  },
 ]
 
 export const builtinLabBySlug = new Map(seedLabs.map(lab => [lab.slug, lab]))

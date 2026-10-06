@@ -3,6 +3,8 @@ import { createReadStream } from 'node:fs'
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createGunzip } from 'node:zlib'
+import { fileURLToPath } from 'node:url'
+import { adaptOaSeed } from './oa-seed.js'
 import type { ImportManifest, Lab } from './types.js'
 import { dataPaths } from './paths.js'
 import { readZipEntries } from './zip.js'
@@ -23,6 +25,7 @@ interface BuiltinAsset {
   sha256?: string
   kind: 'zip' | 'tgz' | 'file'
   filename: string
+  localOnly?: boolean
 }
 
 const juiceShopAsset = (): BuiltinAsset => {
@@ -38,6 +41,13 @@ const juiceShopAsset = (): BuiltinAsset => {
 }
 
 const assets: Record<string, () => BuiltinAsset> = {
+  'oa-vuln-labs': () => ({
+    url: 'bundle://oa-vuln-labs/source.zip',
+    sha256: '99d7d57daad5f68474a6a2a0c04be5959bae4543a9ed31a10cfc6249ebc57e64',
+    kind: 'zip',
+    filename: 'source.zip',
+    localOnly: true,
+  }),
   'juice-shop': juiceShopAsset,
   webgoat: () => ({
     url: 'https://github.com/WebGoat/WebGoat/releases/download/v2023.8/webgoat-2023.8.jar',
@@ -97,13 +107,20 @@ const download = async (url: string, destination: string, signal: AbortSignal | 
 }
 
 const bundledArchive = async (bundleDir: string | undefined, lab: Lab, asset: BuiltinAsset, destination: string, onProgress: (progress: number, stage: string, message: string) => void) => {
-  if (!bundleDir) return null
-  const bundleRoot = resolve(bundleDir)
-  const source = resolve(bundleRoot, 'labs', lab.slug, lab.version, asset.filename)
-  const prefix = bundleRoot.endsWith(sep) ? bundleRoot : `${bundleRoot}${sep}`
-  if (source !== bundleRoot && !source.startsWith(prefix)) throw new BuiltinAssetError('离线发行包路径超出 bundle 目录。')
-  const sourceStat = await stat(source).catch(() => null)
-  if (!sourceStat?.isFile()) return null
+  const moduleDir = dirname(fileURLToPath(import.meta.url))
+  const appRoot = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
+  const bundleRoots = [...new Set([bundleDir, join(appRoot, 'assets')].filter((value): value is string => Boolean(value?.trim())).map(value => resolve(value)))]
+  let source: string | null = null
+  for (const bundleRoot of bundleRoots) {
+    const candidate = resolve(bundleRoot, 'labs', lab.slug, lab.version, asset.filename)
+    const prefix = bundleRoot.endsWith(sep) ? bundleRoot : `${bundleRoot}${sep}`
+    if (candidate !== bundleRoot && !candidate.startsWith(prefix)) throw new BuiltinAssetError('离线发行包路径超出 bundle 目录。')
+    if ((await stat(candidate).catch(() => null))?.isFile()) {
+      source = candidate
+      break
+    }
+  }
+  if (!source) return null
   const archive = await readFile(source)
   if (archive.byteLength > MAX_ASSET_BYTES) throw new BuiltinAssetError('项目离线发行包超过 512 MiB 安装上限。')
   await mkdir(dirname(destination), { recursive: true })
@@ -257,9 +274,11 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
     const expectedMd5 = bundled?.checksumPath
       ? (await readFile(bundled.checksumPath, 'utf8').catch(() => '')).match(/[a-f0-9]{32}/i)?.[0]?.toLowerCase() ?? ''
       : ''
-    const downloaded = bundled ?? (input.offline
-      ? (() => { throw new BuiltinAssetError(`${asset.filename} 离线模式未找到发行包。`) })()
-      : await download(asset.url, archivePath, input.signal, report, fetchImpl))
+    const downloaded = bundled ?? (asset.localOnly
+      ? (() => { throw new BuiltinAssetError(`${asset.filename} 内置发行包缺失。`) })()
+      : input.offline
+        ? (() => { throw new BuiltinAssetError(`${asset.filename} 离线模式未找到发行包。`) })()
+        : await download(asset.url, archivePath, input.signal, report, fetchImpl))
     if (expectedMd5 && downloaded.md5 !== expectedMd5) throw new BuiltinAssetError('官方发行包 MD5 校验不一致。')
     if (asset.sha256 && downloaded.sha256 !== asset.sha256) throw new BuiltinAssetError('官方发行包 SHA-256 校验不一致。')
     await mkdir(installRoot, { recursive: true })
@@ -280,6 +299,12 @@ export const installBuiltinAsset = async (input: InstallBuiltinAssetInput): Prom
       } catch {
         await writeFile(localPath, await readFile(archivePath))
       }
+    }
+    if (input.lab.slug === 'oa-vuln-labs') {
+      const nativeSeed = Buffer.from(adaptOaSeed(await readFile(join(installRoot, 'database', 'init.sql'), 'utf8')))
+      await writeFile(join(installRoot, 'database', 'init.native.sql'), nativeSeed)
+      fileCount += 1
+      totalBytes += nativeSeed.byteLength
     }
     const manifest: ImportManifest = {
       adapterId: 'builtin-release',
