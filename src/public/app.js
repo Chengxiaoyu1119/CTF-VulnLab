@@ -512,11 +512,13 @@ function scheduleSystemPolling() {
 function selectActivityDate(value, restoreFocus = false) {
   const item = state.adminOverview?.activity?.daily.find(item => item.date === value)
   if (!item) return
-  state.adminActivityDate = value
   const cells = [...document.querySelectorAll('[data-activity-date]')]
-  cells.forEach(cell => { cell.tabIndex = cell.dataset.activityDate === value ? 0 : -1 })
-  const output = document.querySelector('.admin-activity-selection')
-  if (output) output.textContent = `${item.date} · ${item.count} 次启动`
+  if (state.adminActivityDate !== value) {
+    state.adminActivityDate = value
+    cells.forEach(cell => { cell.tabIndex = cell.dataset.activityDate === value ? 0 : -1 })
+    const output = document.querySelector('.admin-activity-selection')
+    if (output) output.textContent = `${item.date} · ${item.count} 次启动`
+  }
   if (restoreFocus) cells.find(cell => cell.dataset.activityDate === value)?.focus({ preventScroll: true })
 }
 
@@ -2198,7 +2200,7 @@ app.addEventListener('scroll', event => {
   if (event.target?.matches?.('.lab-canvas')) updateLabCanvasScrollState()
 }, { capture: true, passive: true })
 
-for (const type of ['mouseover', 'focusin']) {
+for (const type of ['pointermove', 'focusin']) {
   app.addEventListener(type, event => {
     const cell = event.target.closest?.('[data-activity-date]')
     if (cell) selectActivityDate(cell.dataset.activityDate)
