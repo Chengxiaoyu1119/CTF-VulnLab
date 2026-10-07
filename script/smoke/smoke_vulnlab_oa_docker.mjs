@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DockerOaProvider } from '../../src/dist/runtime/providers.js'
-import { inspectOaDockerRuntime } from '../../src/dist/oa/docker-runtime.js'
+import { inspectOaDockerRuntime } from '../../src/dist/labs/oa-vuln-labs/docker-runtime.js'
 
 const dockerStatus = await inspectOaDockerRuntime()
 if (!dockerStatus.available) throw new Error(`Docker smoke prerequisite failed: ${dockerStatus.missing.join(', ')}; ${dockerStatus.engine.detail}`)

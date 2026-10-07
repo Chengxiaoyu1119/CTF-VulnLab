@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
-$appRoot = Split-Path -Parent $PSScriptRoot
+$appRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $source = Join-Path $PSScriptRoot 'appcontainer-launcher.cs'
-$outputDir = Join-Path $appRoot 'assets\native-oa'
+$outputDir = Join-Path $appRoot 'assets\labs\oa-vuln-labs\native'
 $output = Join-Path $outputDir 'appcontainer-launcher-sandbox.exe'
-$contract = Join-Path $appRoot 'oa\sandbox.ts'
+$contract = Join-Path (Split-Path -Parent $PSScriptRoot) 'sandbox.ts'
 $compilerPaths = @(
   (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
   (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')

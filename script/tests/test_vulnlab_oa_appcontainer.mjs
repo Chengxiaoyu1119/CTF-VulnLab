@@ -5,7 +5,7 @@ import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'nod
 import { join, resolve } from 'node:path'
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
-const launcherSource = await readFile(join(appDir, 'native-oa', 'appcontainer-launcher.cs'), 'utf8')
+const launcherSource = await readFile(join(appDir, 'labs', 'oa-vuln-labs', 'native', 'appcontainer-launcher.cs'), 'utf8')
 assert.match(launcherSource, /ProcessCreationChildProcessRestricted = 0x00000001/)
 assert.match(launcherSource, /UpdateProcThreadAttribute\(attributes, 0, new IntPtr\(ProcThreadAttributeChildProcessPolicy\), childPolicyPointer/)
 assert.match(launcherSource, /ActiveProcessLimit = 1/)
@@ -15,7 +15,7 @@ if (process.platform !== 'win32') {
   process.exit(0)
 }
 
-const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
+const launcher = await realpath(join(appDir, 'assets', 'labs', 'oa-vuln-labs', 'native', 'appcontainer-launcher-sandbox.exe'))
 const testRoot = join(appDir, 'data', `.oa-appcontainer-test-${randomUUID()}`)
 await mkdir(testRoot, { recursive: true })
 const tempRoot = await mkdtemp(join(testRoot, 'sandbox-'))

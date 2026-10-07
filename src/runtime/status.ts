@@ -5,8 +5,8 @@ import { stat } from 'node:fs/promises'
 import type { MySqlRuntimeConfig } from './mysql.js'
 import type { Lab } from '../types.js'
 import { dataPaths } from '../paths.js'
-import { inspectOaDockerAsset } from '../oa/docker-assets.js'
-import { inspectOaDockerRuntime } from '../oa/docker-runtime.js'
+import { inspectOaDockerAsset } from '../labs/oa-vuln-labs/docker-assets.js'
+import { inspectOaDockerRuntime } from '../labs/oa-vuln-labs/docker-runtime.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 

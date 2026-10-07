@@ -12,20 +12,21 @@
 - `imports/`：来源适配、仓库与归档检查、固定版本下载、哈希和清单生成。
 - `paths.ts`、`types.ts`、`zip.ts`：跨模块共享路径、类型契约和受限 ZIP 读取；多处复用，不归入单个功能目录。
 - `runtime/`：靶场 Provider、MySQL 与项目运行环境管理，以及运行时准备、检测和工具链安装。
-- `oa/`：OA 专属 API、IPC、Docker、网络隔离与 AppContainer 模块。
-- `native-oa/`：OA 启动器源码和 Docker 构建文件；生成的启动器二进制放在 `assets/native-oa/`。
-- `runtime/providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 支持本地 AppContainer 与 Docker Compose 两种 Provider；XVWA 与其他 PHP 靶场共用 `native-php`。
+- `labs/oa-vuln-labs/`：项目维护的 OA 适配代码、API、Docker、网络策略和启动器源码；这里不是上游靶场包。
+- `runtime/providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 本地模式使用 Node.js 权限模型并模拟 `exec`，Docker Compose 模式运行靶场包；XVWA 与其他 PHP 靶场共用 `native-php`。
 - `runtime/mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `runtime/project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `runtime/prep.ts`：PyGoat 私有 Python 环境与依赖准备。
 - `runtime/status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
 - `runtime/toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
 - `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA Beta）。
-- `assets/labs/oa-vuln-labs/1.0.0-beta/`：随仓库发布的 OA `source.zip` 与 `docker.zip` 靶场资源。
+- `assets/labs/oa-vuln-labs/`：按靶场 slug 与版本保存的 OA `source.zip`、`docker.zip` 和启动器固定资源。
 - `assets/`：固定输入资源；用途、版本、校验和生成方式见 [`assets/README.md`](assets/README.md)。
 - `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
-- `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
+- `data/`：Git 忽略的运行数据根目录；`data/labs/<slug>/<version>/` 是校验解包后的靶场副本，`data/runtime/<instance>/` 是实例运行目录。
 - `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
+
+靶场路径按同一个 `slug` 对应：`labs/<slug>/` 放项目维护的适配源码，`assets/labs/<slug>/<version>/` 放固定发行输入，`data/labs/<slug>/<version>/` 放安装器校验并解包的运行副本。`dataPaths.lab(slug, version)` 负责运行副本路径；OA 的 `source.zip` 从固定资源安装到该目录，Docker 包则解到对应实例的 `data/runtime/<instance>/`。三者按 slug/版本对应，但生命周期不同，不相互搬移或混放。
 
 ## 开发
 
@@ -57,7 +58,7 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 - Java：为 WebGoat 与 WebWolf 分配两个端口，并把数据目录限制在实例副本。
 - Python：复制源码、复用项目私有解释器、迁移 SQLite 后启动 Django。
 - XVWA：启动时创建独立 MySQL 资源，修正上游初始化脚本后通过 PHP 内置服务器提供 `/xvwa/`。
-- OA-Vuln-Labs：初始靶场账号为 `admin / ZSD@admin2025!`，无需先找漏洞获得账号；本地模式依赖 Windows AppContainer，Docker 模式依赖可用的本机 Docker Engine。
+- OA-Vuln-Labs：初始靶场账号为 `admin / ZSD@admin2025!`，无需先找漏洞获得账号；本地模式依赖项目 Node.js 与 MariaDB，使用 Node.js 权限模型且 `exec` 返回模拟结果；Docker 原版模式依赖可用的本机 Docker Engine。
 
 进程状态写入运行目录；正常停止、过期回收、服务关闭和服务重启都执行资源回收。点击“启动环境”时，实例 API 会先准备资源和项目运行时，再调用 Provider；确实无法满足的依赖以 `RUNTIME_DEPENDENCY_MISSING` 返回。
 
