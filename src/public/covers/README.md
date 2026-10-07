@@ -1,11 +1,11 @@
 # 靶场封面素材
 
-这些文件是工作台卡片使用的上游素材副本，页面可在本地完整显示。素材遵循对应上游项目的许可证、版权和品牌要求。
+这些文件用于工作台卡片和详情页。表格记录上游素材、项目绘制素材或本地运行截图的来源。
 
 | 文件 | 来源 |
 | --- | --- |
 | `oa-vuln-labs.svg` | 本项目根据内置 OA 前端的站点名称和导航绘制的示意封面，不是靶场页面截图 |
-| `xss-labs.svg` | 本项目绘制的 XSS 输入与输出示意封面，不是上游素材 |
+| `xss-labs.png` | 从项目固定版本的 XSS-Labs 本地运行首页截取，1280×720；作为真实预览封面，不是上游专用封面素材 |
 | `dvwa.png` | [digininja/DVWA](https://github.com/digininja/DVWA/blob/master/dvwa/images/logo.png) |
 | `pikachu.png` | [zhuifengshaonianhanlu/pikachu](https://github.com/zhuifengshaonianhanlu/pikachu/blob/master/assets/images/avatars/pikachu1.png) |
 | `sqli-labs.jpg` | [Audi-1/sqli-labs](https://github.com/Audi-1/sqli-labs/blob/master/images/Less-1.jpg) |

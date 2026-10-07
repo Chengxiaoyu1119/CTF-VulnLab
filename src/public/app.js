@@ -603,7 +603,7 @@ const coverAssets = Object.freeze({
   'oa-vuln-labs': '/covers/oa-vuln-labs.svg',
   dvwa: '/covers/dvwa.png',
   pikachu: '/covers/pikachu.png',
-  'xss-labs': '/covers/xss-labs.svg',
+  'xss-labs': '/covers/xss-labs.png',
   'sqli-labs': '/covers/sqli-labs.jpg',
   'upload-labs': '/covers/upload-labs.jpg',
   xvwa: '/covers/xvwa.png',

@@ -414,7 +414,7 @@ def main() -> None:
         expect(page.get_by_role("heading", name="XSS-Labs", exact=True)).to_be_visible()
         expect(page.locator('.lab-detail-cover[data-cover="xss-labs"]')).to_be_visible()
         xss_cover = page.locator(".lab-detail-cover .lab-card-cover")
-        expect(xss_cover).to_have_attribute("src", "/covers/xss-labs.svg")
+        expect(xss_cover).to_have_attribute("src", "/covers/xss-labs.png")
         assert xss_cover.evaluate("element => element.complete && element.naturalWidth > 0")
         expect(page.locator(".lab-detail-facts")).to_have_text("Web·中等")
         expect(page.locator(".lab-detail-summary").first).to_have_text("XSS 专项关卡，练习反射型输入与常见过滤绕过。")
