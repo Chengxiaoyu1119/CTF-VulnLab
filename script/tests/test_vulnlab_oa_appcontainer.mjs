@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
@@ -17,7 +16,7 @@ if (process.platform !== 'win32') {
 }
 
 const launcher = await realpath(join(appDir, 'assets', 'native-oa', 'appcontainer-launcher-sandbox.exe'))
-const testRoot = join(tmpdir(), `vulnlab-oa-appcontainer-test-${randomUUID()}`)
+const testRoot = join(appDir, 'data', `.oa-appcontainer-test-${randomUUID()}`)
 await mkdir(testRoot, { recursive: true })
 const tempRoot = await mkdtemp(join(testRoot, 'sandbox-'))
 const runtimeRoot = join(tempRoot, 'runtime')
