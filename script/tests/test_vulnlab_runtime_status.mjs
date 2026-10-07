@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { runtimeReadinessByLab } from '../../src/dist/runtime/status.js'
+import { preparationMarkerValue } from '../../src/dist/runtime/prep.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-status-'))
+const savedPythonWheelhouse = process.env.VULNLAB_PYTHON_WHEELHOUSE
 const lab = (slug, runtimeKind, version = 'fixture') => ({
   id: slug, slug, title: slug, category: 'Web', difficulty: '入门', sourceType: 'git', sourceUrl: '', sourceRef: '', license: '',
   runtimeKind, providerId: runtimeKind, builtin: true, version, status: 'ready', summary: '', tags: [], localPath: join(root, 'labs', slug, version),
@@ -21,6 +24,8 @@ const dependencies = [
   { id: 'python', label: 'Python', available: true, detail: '3.11' },
 ]
 try {
+  process.env.VULNLAB_PYTHON_WHEELHOUSE = join(root, 'wheelhouse')
+  await mkdir(process.env.VULNLAB_PYTHON_WHEELHOUSE, { recursive: true })
   const labs = [lab('upload-labs', 'native-php'), lab('dvwa', 'native-php'), lab('xvwa', 'native-php'), lab('juice-shop', 'native-node'), lab('webgoat', 'native-java'), lab('pygoat', 'native-python')]
   await Promise.all(labs.map(item => mkdir(item.localPath, { recursive: true })))
   let readiness = await runtimeReadinessByLab(labs, dependencies, root)
@@ -37,7 +42,12 @@ try {
   readiness = await runtimeReadinessByLab([labs.find(item => item.slug === 'pygoat')], dependencies, root)
   assert.ok(readiness.pygoat.missing.includes('靶场资源未安装'))
   await mkdir(join(root, 'labs', 'pygoat', 'fixture'), { recursive: true })
-  await writeFile(join(root, 'labs', 'pygoat', 'fixture', '.vulnlab-python-ready'), 'ready')
+  const pygoatMarker = join(root, 'labs', 'pygoat', 'fixture', '.vulnlab-python-ready')
+  const pygoatRequirements = fileURLToPath(new URL('../../src/assets/python/pygoat/requirements.txt', import.meta.url))
+  await writeFile(pygoatMarker, 'ready')
+  readiness = await runtimeReadinessByLab([labs.find(item => item.slug === 'pygoat')], dependencies, root)
+  assert.deepEqual(readiness.pygoat.missing, ['Python'])
+  await writeFile(pygoatMarker, await preparationMarkerValue([pygoatRequirements]))
   readiness = await runtimeReadinessByLab(labs, dependencies, root)
   assert.equal(readiness.pygoat.available, true)
   const customRoot = join(root, 'custom-python')
@@ -46,9 +56,29 @@ try {
   await writeFile(join(customRoot, 'requirements.txt'), 'fixture==1.0\n')
   readiness = await runtimeReadinessByLab([customPython], dependencies, root)
   assert.deepEqual(readiness['custom-python'].missing, ['Python'])
-  await writeFile(join(customRoot, '.vulnlab-python-ready'), 'ready')
+  const customPythonMarker = join(customRoot, '.vulnlab-python-ready')
+  await writeFile(customPythonMarker, await preparationMarkerValue([join(customRoot, 'requirements.txt')]))
   readiness = await runtimeReadinessByLab([customPython], dependencies, root)
   assert.equal(readiness['custom-python'].available, true)
+  await writeFile(join(customRoot, 'requirements.txt'), 'fixture==1.1\n')
+  readiness = await runtimeReadinessByLab([customPython], dependencies, root)
+  assert.deepEqual(readiness['custom-python'].missing, ['Python'])
+  const customNodeRoot = join(root, 'custom-node')
+  await mkdir(customNodeRoot, { recursive: true })
+  const customNode = { ...lab('custom-node', 'native-node'), builtin: false, localPath: customNodeRoot }
+  const nodePackagePath = join(customNodeRoot, 'package.json')
+  const nodeLockPath = join(customNodeRoot, 'package-lock.json')
+  await writeFile(nodePackagePath, JSON.stringify({ name: 'custom-node', version: '1.0.0' }))
+  await writeFile(nodeLockPath, JSON.stringify({ name: 'custom-node', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'custom-node', version: '1.0.0' } } }))
+  readiness = await runtimeReadinessByLab([customNode], dependencies, root)
+  assert.deepEqual(readiness['custom-node'].missing, ['Node.js'])
+  const nodeMarker = join(customNodeRoot, '.vulnlab-node-ready')
+  await writeFile(nodeMarker, await preparationMarkerValue([nodePackagePath, nodeLockPath]))
+  readiness = await runtimeReadinessByLab([customNode], dependencies, root)
+  assert.equal(readiness['custom-node'].available, true)
+  await writeFile(nodePackagePath, JSON.stringify({ name: 'custom-node', version: '1.0.1' }))
+  readiness = await runtimeReadinessByLab([customNode], dependencies, root)
+  assert.deepEqual(readiness['custom-node'].missing, ['Node.js'])
   const oa = lab('oa-vuln-labs', 'native-oa')
   await mkdir(oa.localPath, { recursive: true })
   const oaDependencies = [
@@ -63,5 +93,7 @@ try {
   assert.equal(oaDependencies.some(item => item.id === 'oa-sandbox'), false, 'local OA readiness must not depend on AppContainer')
   console.log('VulnLab runtime status test passed: per-lab dependency gates, AppContainer-independent local OA, and PyGoat readiness marker.')
 } finally {
+  if (savedPythonWheelhouse === undefined) delete process.env.VULNLAB_PYTHON_WHEELHOUSE
+  else process.env.VULNLAB_PYTHON_WHEELHOUSE = savedPythonWheelhouse
   await rm(root, { recursive: true, force: true })
 }

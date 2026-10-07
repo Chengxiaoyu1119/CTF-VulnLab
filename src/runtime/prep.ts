@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -15,6 +16,28 @@ type Progress = (progress: number, stage: string, message: string) => void
 
 const exists = (path: string) => stat(path).then(item => item.isFile()).catch(() => false)
 const existingDirectory = (path: string) => stat(path).then(item => item.isDirectory()).catch(() => false)
+
+export const preparationMarkerValue = async (files: string[]) => {
+  const hash = createHash('sha256')
+  for (const file of files) {
+    const content = await readFile(file)
+    hash.update(basename(file)).update('\0').update(String(content.byteLength)).update('\0').update(content).update('\0')
+  }
+  return `v1:sha256:${hash.digest('hex')}\n`
+}
+
+export const preparationMarkerIsCurrent = async (markerPath: string, files: string[]) => {
+  try {
+    return await readFile(markerPath, 'utf8') === await preparationMarkerValue(files)
+  } catch {
+    return false
+  }
+}
+
+const writePreparationMarker = async (markerPath: string, files: string[]) => {
+  await writeFile(markerPath, await preparationMarkerValue(files), 'utf8')
+}
+
 const bundledPyGoatDependencies = () => {
   if (process.platform !== 'win32' || process.arch !== 'x64') return null
   const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -66,7 +89,7 @@ export const pythonInstallConfig = async (lab: Lab) => {
   return { requirementsPath, wheelhousePath }
 }
 
-const nodePackageConfig = async (root: string) => {
+export const nodePackageConfig = async (root: string) => {
   const packagePath = join(root, 'package.json')
   if (!(await exists(packagePath))) return null
   let packageJson: Record<string, unknown>
@@ -130,14 +153,15 @@ const prepareNodeProject = async (lab: Lab, root: string, onProgress: Progress, 
   const config = await nodePackageConfig(root)
   if (!config) return
   const readyMarker = join(root, '.vulnlab-node-ready')
-  if (await exists(readyMarker)) return
+  const dependencies = [config.packagePath, config.lockPath]
+  if (await preparationMarkerIsCurrent(readyMarker, dependencies)) return
   const configured = nodeBinary?.trim() || process.env.VULNLAB_NODE_BIN?.trim() || process.execPath
   const npm = await nodeNpmCli(configured)
   const args = [...npm.args, 'ci', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund']
   if (process.env.VULNLAB_OFFLINE === '1') args.push('--offline')
   onProgress(94, 'runtime', '正在安装 Node.js 运行依赖。')
   await run(npm.binary, args, root)
-  await writeFile(readyMarker, `${new Date().toISOString()}\n`, 'utf8')
+  await writePreparationMarker(readyMarker, dependencies)
   onProgress(99, 'runtime', 'Node.js 运行依赖已准备。')
 }
 
@@ -151,10 +175,10 @@ export const prepareInstalledLab = async (lab: Lab, onProgress: Progress = () =>
   if ((lab.runtimeKind !== 'native-python' && lab.slug !== 'pygoat') || !lab.localPath) return
   const root = lab.localPath
   const readyMarker = join(root, '.vulnlab-python-ready')
-  if (await exists(readyMarker)) return
   const installConfig = await pythonInstallConfig(lab)
   if (!installConfig) return
   const { requirementsPath, wheelhousePath } = installConfig
+  if (await preparationMarkerIsCurrent(readyMarker, [requirementsPath])) return
   const configured = pythonBinary?.trim() || process.env.VULNLAB_PYTHON_BIN?.trim() || 'py'
   const launcherArgs = basename(configured).toLowerCase().replace(/\.exe$/, '') === 'py' ? ['-3'] : []
   onProgress(91, 'runtime', '正在创建 Python 独立环境。')
@@ -162,6 +186,6 @@ export const prepareInstalledLab = async (lab: Lab, onProgress: Progress = () =>
   const python = join(root, '.vulnlab-venv', 'Scripts', 'python.exe')
   onProgress(94, 'runtime', '正在安装 Python 运行依赖。')
   await run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '--no-index', '--require-hashes', '--find-links', wheelhousePath, '-r', requirementsPath], root)
-  await writeFile(readyMarker, `${new Date().toISOString()}\n`, 'utf8')
+  await writePreparationMarker(readyMarker, [requirementsPath])
   onProgress(99, 'runtime', 'Python 运行依赖已准备。')
 }

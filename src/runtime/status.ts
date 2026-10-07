@@ -7,6 +7,7 @@ import type { Lab } from '../types.js'
 import { dataPaths } from '../paths.js'
 import { inspectOaDockerAsset } from '../labs/oa-vuln-labs/docker-assets.js'
 import { inspectOaDockerRuntime } from '../labs/oa-vuln-labs/docker-runtime.js'
+import { nodePackageConfig, preparationMarkerIsCurrent, pythonInstallConfig } from './prep.js'
 
 export type RuntimeSource = 'project' | 'system' | 'external' | 'missing'
 
@@ -113,7 +114,17 @@ export const runtimeReadinessByLab = async (labs: Lab[], dependencies: RuntimeDe
       if (needsIsolatedEnv) {
         const root = lab.localPath ?? dataPaths(dataDir).lab(lab.slug, lab.version)
         const marker = join(root, '.vulnlab-python-ready')
-        if (!(await stat(marker).then(item => item.isFile()).catch(() => false))) missing.push(status.get('python')?.label ?? 'python')
+        const config = await pythonInstallConfig(lab).catch(() => null)
+        if (!config || !(await preparationMarkerIsCurrent(marker, [config.requirementsPath]))) missing.push(status.get('python')?.label ?? 'python')
+      }
+    }
+    if (lab.runtimeKind === 'native-node' && !lab.builtin && lab.status === 'ready' && lab.localPath) {
+      const marker = join(lab.localPath, '.vulnlab-node-ready')
+      try {
+        const config = await nodePackageConfig(lab.localPath)
+        if (config && !(await preparationMarkerIsCurrent(marker, [config.packagePath, config.lockPath]))) missing.push(status.get('node')?.label ?? 'node')
+      } catch {
+        missing.push(status.get('node')?.label ?? 'node')
       }
     }
     return [lab.slug, { available: missing.length === 0, missing: [...new Set(missing)] }]

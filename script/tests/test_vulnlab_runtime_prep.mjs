@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareInstalledLab, pythonInstallConfig } from '../../src/dist/runtime/prep.js'
+import { preparationMarkerIsCurrent, prepareInstalledLab, preparationMarkerValue, pythonInstallConfig } from '../../src/dist/runtime/prep.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-runtime-prep-'))
 const savedRequirements = process.env.VULNLAB_PYTHON_REQUIREMENTS_FILE
@@ -18,6 +18,11 @@ try {
   assert.equal(pygoatConfig.wheelhousePath, join(bundledPyGoat, 'wheelhouse'))
   assert.match(await readFile(pygoatConfig.requirementsPath, 'utf8'), /^whitenoise==6\.2\.0 \\/m)
   assert.ok((await readdir(pygoatConfig.wheelhousePath)).includes('whitenoise-6.2.0-py3-none-any.whl'))
+  const pythonMarker = join(root, '.vulnlab-python-ready')
+  await writeFile(pythonMarker, '2026-10-06T09:57:40.039Z\n')
+  assert.equal(await preparationMarkerIsCurrent(pythonMarker, [pygoatConfig.requirementsPath]), false)
+  await writeFile(pythonMarker, await preparationMarkerValue([pygoatConfig.requirementsPath]))
+  assert.equal(await preparationMarkerIsCurrent(pythonMarker, [pygoatConfig.requirementsPath]), true)
   process.env.VULNLAB_PYTHON_WHEELHOUSE = join(root, 'missing-wheelhouse')
   await assert.rejects(pythonInstallConfig({ slug: 'pygoat', builtin: true, localPath: root }), /wheelhouse 目录不存在/)
   delete process.env.VULNLAB_PYTHON_WHEELHOUSE
@@ -81,12 +86,27 @@ try {
         'node_modules/fixture-dep': { resolved: 'dep', link: true },
       },
     }), 'utf8')
+    const nodeMarker = join(nodeRoot, '.vulnlab-node-ready')
+    await writeFile(nodeMarker, '2026-10-06T09:57:40.039Z\n')
     process.env.VULNLAB_OFFLINE = '1'
     await prepareInstalledLab(nodeLab(nodeRoot), undefined, undefined, process.execPath)
-    assert.match(await readFile(join(nodeRoot, '.vulnlab-node-ready'), 'utf8'), /^\d{4}-\d{2}-\d{2}T/) // 标记文件内容是 ISO 时间戳
+    const firstNodeMarker = await readFile(nodeMarker, 'utf8')
+    assert.match(firstNodeMarker, /^v1:sha256:[a-f0-9]{64}\n$/)
+    assert.equal(await preparationMarkerIsCurrent(nodeMarker, [join(nodeRoot, 'package.json'), join(nodeRoot, 'package-lock.json')]), true)
     assert.equal(await readFile(join(nodeRoot, 'node_modules', 'fixture-dep', 'index.js'), 'utf8'), 'module.exports = 1\n')
     await prepareInstalledLab(nodeLab(nodeRoot), undefined, undefined, join(nodeRoot, 'missing-node.exe'))
-    assert.match(await readFile(join(nodeRoot, '.vulnlab-node-ready'), 'utf8'), /T/)
+    assert.equal(await readFile(nodeMarker, 'utf8'), firstNodeMarker)
+    const packageJson = JSON.parse(await readFile(join(nodeRoot, 'package.json'), 'utf8'))
+    const packageLock = JSON.parse(await readFile(join(nodeRoot, 'package-lock.json'), 'utf8'))
+    packageJson.version = '1.0.1'
+    packageLock.version = '1.0.1'
+    packageLock.packages[''].version = '1.0.1'
+    await writeFile(join(nodeRoot, 'package.json'), JSON.stringify(packageJson), 'utf8')
+    await writeFile(join(nodeRoot, 'package-lock.json'), JSON.stringify(packageLock), 'utf8')
+    await prepareInstalledLab(nodeLab(nodeRoot), undefined, undefined, process.execPath)
+    const updatedNodeMarker = await readFile(nodeMarker, 'utf8')
+    assert.notEqual(updatedNodeMarker, firstNodeMarker)
+    assert.equal(await preparationMarkerIsCurrent(nodeMarker, [join(nodeRoot, 'package.json'), join(nodeRoot, 'package-lock.json')]), true)
   } finally {
     await rm(nodeRoot, { recursive: true, force: true })
   }
