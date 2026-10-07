@@ -8,13 +8,17 @@ import { dirname, parse as parseUrlPath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createPool, type Pool } from 'mysql2/promise'
 import { CliMySqlManager, mysqlRuntimeConfigFromEnv, type MySqlManager, type MySqlResource, type MySqlRuntimeConfig } from './mysql.js'
-import { RpcPeer } from './oa/ipc.js'
-import { adaptOaSeed } from './oa/seed.js'
-import { OA_LAUNCHER_SHA256, probeOaAppContainer } from './oa/sandbox.js'
-import { inspectOaDockerAsset, oaDockerAssetPath, unpackOaDockerAsset } from './oa/docker-assets.js'
-import { inspectOaDockerRuntime, runDockerCommand, type DockerCommandResult } from './oa/docker-runtime.js'
-import { dataPaths } from './paths.js'
-import type { Lab, LabInstance, RuntimeKind } from './types.js'
+import { RpcPeer } from '../oa/ipc.js'
+import { adaptOaSeed } from '../oa/seed.js'
+import { OA_LAUNCHER_SHA256, probeOaAppContainer } from '../oa/sandbox.js'
+import { inspectOaDockerAsset, oaDockerAssetPath, unpackOaDockerAsset } from '../oa/docker-assets.js'
+import { inspectOaDockerRuntime, runDockerCommand, type DockerCommandResult } from '../oa/docker-runtime.js'
+import { dataPaths } from '../paths.js'
+import type { Lab, LabInstance, RuntimeKind } from '../types.js'
+
+const moduleDir = dirname(fileURLToPath(import.meta.url))
+const rootCandidate = resolve(moduleDir, '..')
+const appDir = basename(rootCandidate) === 'dist' ? resolve(rootCandidate, '..') : rootCandidate
 
 export interface NativeRuntimeConfig {
   bindHost: string
@@ -1121,8 +1125,6 @@ export class NativeOaProvider implements LabProvider {
 
   private async projectLauncherPath() {
     if (process.platform !== 'win32') throw new ProviderError('NATIVE_OA_SANDBOX_UNAVAILABLE', 'OA 靶场需要 Windows AppContainer 操作系统隔离。', 409)
-    const moduleDir = dirname(fileURLToPath(import.meta.url))
-    const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
     const launcherRoot = resolve(appDir, 'assets', 'native-oa')
     const launcherPath = await realpath(join(launcherRoot, 'appcontainer-launcher-sandbox.exe')).catch(() => '')
     const relativeLauncher = launcherPath ? relative(launcherRoot.toLowerCase(), launcherPath.toLowerCase()) : ''
@@ -1136,8 +1138,7 @@ export class NativeOaProvider implements LabProvider {
 
   private async verifyOaInstallPaths(dataDir: string, instancePaths: string[], appPaths: string[], nodePath: string) {
     const dataRoot = await realpath(dataDir)
-    const moduleDir = dirname(fileURLToPath(import.meta.url))
-    const appRoot = await realpath(basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir)
+    const appRoot = await realpath(appDir)
     const nodeRoot = await realpath(resolve(dataDir, 'runtime', 'toolchains', 'node'))
     const groups: Array<{ paths: string[]; root: string }> = [
       { paths: instancePaths, root: dataRoot },
@@ -1164,8 +1165,6 @@ export class NativeOaProvider implements LabProvider {
 
   private async sandboxForInstance(input: ProviderStartInput, root: string, nodePath: string): Promise<OaSandboxState> {
     const uploadRoot = join(root, 'uploads')
-    const moduleDir = dirname(fileURLToPath(import.meta.url))
-    const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
     const sandbox: OaSandboxState = {
       profile: this.sandboxProfile(input.instanceId),
       launcherPath: '',
@@ -1429,7 +1428,6 @@ export class NativeOaProvider implements LabProvider {
     }
     const sandbox = await this.sandboxForInstance(input, root, projectNodePath)
     const { entryPath, moduleRoot } = sandbox
-    const appDir = dirname(dirname(entryPath))
     await writeFile(join(root, 'vulnlab-runtime.json'), JSON.stringify({ port, provider: this.id, instanceId: input.instanceId, sandbox }), 'utf8')
     const nodeArguments = [
       '--permission', '--max-old-space-size=256', `--import=${pathToFileURL(join(appDir, 'dist', 'oa', 'network-guard.js')).href}`,

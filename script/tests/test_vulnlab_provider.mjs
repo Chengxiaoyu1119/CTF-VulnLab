@@ -6,7 +6,7 @@ import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { DockerOaProvider, NativeOaProvider, NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../../src/dist/providers.js'
+import { DockerOaProvider, NativeOaProvider, NativePhpProvider, NativeProcessProvider, ProviderError, ProviderRegistry } from '../../src/dist/runtime/providers.js'
 
 const lab = {
   id: 'lab-dvwa',

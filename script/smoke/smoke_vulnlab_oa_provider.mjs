@@ -6,9 +6,9 @@ import { mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { unzipSync } from '../../src/node_modules/fflate/esm/index.mjs'
-import { NativeOaProvider } from '../../src/dist/providers.js'
-import { mysqlResourceNames } from '../../src/dist/mysql.js'
-import { ProjectEnvironmentManager } from '../../src/dist/project-environment.js'
+import { NativeOaProvider } from '../../src/dist/runtime/providers.js'
+import { mysqlResourceNames } from '../../src/dist/runtime/mysql.js'
+import { ProjectEnvironmentManager } from '../../src/dist/runtime/project-environment.js'
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')
 const appDataDir = join(appDir, 'data')

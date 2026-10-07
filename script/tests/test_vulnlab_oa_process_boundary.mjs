@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { NativeOaProvider } from '../../src/dist/providers.js'
+import { NativeOaProvider } from '../../src/dist/runtime/providers.js'
 
 const root = await mkdtemp(join(tmpdir(), 'vulnlab-oa-permission-'))
 const instanceRoot = join(root, 'instance')

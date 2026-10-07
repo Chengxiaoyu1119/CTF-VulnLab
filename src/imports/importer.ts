@@ -3,9 +3,9 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
-import type { ImportManifest } from './types.js'
-import { dataPaths } from './paths.js'
-import { readZipEntries } from './zip.js'
+import type { ImportManifest } from '../types.js'
+import { dataPaths } from '../paths.js'
+import { readZipEntries } from '../zip.js'
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_FILE_COUNT = 20_000

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { DockerOaProvider } from '../../src/dist/providers.js'
+import { DockerOaProvider } from '../../src/dist/runtime/providers.js'
 import { inspectOaDockerRuntime } from '../../src/dist/oa/docker-runtime.js'
 
 const dockerStatus = await inspectOaDockerRuntime()

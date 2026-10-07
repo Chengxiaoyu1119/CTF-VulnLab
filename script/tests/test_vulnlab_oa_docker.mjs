@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createOaDockerComposeConfig, DockerOaProvider, oaDockerProjectName } from '../../src/dist/providers.js'
+import { createOaDockerComposeConfig, DockerOaProvider, oaDockerProjectName } from '../../src/dist/runtime/providers.js'
 import { inspectOaDockerAsset, oaDockerAssetPath } from '../../src/dist/oa/docker-assets.js'
 import { inspectOaDockerRuntime } from '../../src/dist/oa/docker-runtime.js'
 import { dataPaths } from '../../src/dist/paths.js'
@@ -51,8 +51,8 @@ assert.equal(compose.services.web.read_only, true)
 assert.deepEqual(compose.services.web.tmpfs, ['/tmp:rw,noexec,nosuid,size=16m'])
 assert.deepEqual(compose.services.ingress.tmpfs, ['/tmp:rw,noexec,nosuid,size=8m'])
 assert.match(await readFile(join(import.meta.dirname, '..', '..', 'src', 'native-oa', 'Dockerfile'), 'utf8'), /USER 65532:65532/)
-assert.match(await readFile(join(import.meta.dirname, '..', '..', 'src', 'providers.ts'), 'utf8'), /TCP-LISTEN:9090,fork,reuseaddr.*TCP:web:9090/)
-assert.match(await readFile(join(import.meta.dirname, '..', '..', 'src', 'providers.ts'), 'utf8'), /COPY init\.sql \/docker-entrypoint-initdb\.d\/01-init\.sql/)
+assert.match(await readFile(join(import.meta.dirname, '..', '..', 'src', 'runtime', 'providers.ts'), 'utf8'), /TCP-LISTEN:9090,fork,reuseaddr.*TCP:web:9090/)
+assert.match(await readFile(join(import.meta.dirname, '..', '..', 'src', 'runtime', 'providers.ts'), 'utf8'), /COPY init\.sql \/docker-entrypoint-initdb\.d\/01-init\.sql/)
 
 const missingDocker = await inspectOaDockerRuntime(async args => ({
   ok: false, stdout: '', stderr: '', code: null, errorCode: args[0] === '--version' ? 'ENOENT' : undefined,

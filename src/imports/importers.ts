@@ -1,4 +1,4 @@
-import type { SourceType } from './types.js'
+import type { SourceType } from '../types.js'
 
 export interface LabSourceAdapter {
   id: string

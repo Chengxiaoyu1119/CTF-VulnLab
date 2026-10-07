@@ -6,8 +6,8 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { strFromU8, unzipSync } from '../../src/node_modules/fflate/esm/index.mjs'
-import { CliMySqlManager } from '../../src/dist/mysql.js'
-import { ProjectEnvironmentManager } from '../../src/dist/project-environment.js'
+import { CliMySqlManager } from '../../src/dist/runtime/mysql.js'
+import { ProjectEnvironmentManager } from '../../src/dist/runtime/project-environment.js'
 import { adaptOaSeed } from '../../src/dist/oa/seed.js'
 
 const appDir = resolve(import.meta.dirname, '..', '..', 'src')

@@ -12,5 +12,5 @@
     "sourceMap": true,
     "declaration": true
   },
-  "include": ["*.ts", "oa/*.ts", "runtime/*.ts"]
+  "include": ["*.ts", "imports/*.ts", "oa/*.ts", "runtime/*.ts"]
 }

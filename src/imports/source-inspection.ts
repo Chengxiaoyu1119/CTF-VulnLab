@@ -1,4 +1,4 @@
-import { readZipEntries } from './zip.js'
+import { readZipEntries } from '../zip.js'
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_FILES = 20_000

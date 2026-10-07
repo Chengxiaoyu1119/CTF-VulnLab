@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..', '..')
 const require = createRequire(resolve(root, 'src/package.json'))
 const { zipSync } = require('fflate')
-const { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../../src/dist/importer.js', import.meta.url))
+const { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, importerInternals, ImporterError } = await import(new URL('../../src/dist/imports/importer.js', import.meta.url))
 const { readZipEntries } = await import(new URL('../../src/dist/zip.js', import.meta.url))
 
 const archive = zipSync({

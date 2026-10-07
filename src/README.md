@@ -9,20 +9,21 @@
 - `server.ts`：Fastify 服务、认证、API、运行入口与静态资源。
 - `db.ts`：SQLite schema、内置靶场、安装任务、实例、设置与审计。
 - `builtin-assets.ts`：Juice Shop、WebGoat 官方发行包下载、校验和安全解包。
-- `importer.ts`：GitHub / GitLab 固定版本下载、归档哈希、路径检查和清单生成。
-- `providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 支持本地 AppContainer 与 Docker Compose 两种 Provider；XVWA 与其他 PHP 靶场共用 `native-php`。
+- `imports/`：来源适配、仓库与归档检查、固定版本下载、哈希和清单生成。
+- `paths.ts`、`types.ts`、`zip.ts`：跨模块共享路径、类型契约和受限 ZIP 读取；多处复用，不归入单个功能目录。
+- `runtime/`：靶场 Provider、MySQL 与项目运行环境管理，以及运行时准备、检测和工具链安装。
 - `oa/`：OA 专属 API、IPC、Docker、网络隔离与 AppContainer 模块。
 - `native-oa/`：OA 启动器源码和 Docker 构建文件；生成的启动器二进制放在 `assets/native-oa/`。
+- `runtime/providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 支持本地 AppContainer 与 Docker Compose 两种 Provider；XVWA 与其他 PHP 靶场共用 `native-php`。
+- `runtime/mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
+- `runtime/project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `runtime/prep.ts`：PyGoat 私有 Python 环境与依赖准备。
 - `runtime/status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
 - `runtime/toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
-- `project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
-- `mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA Beta）。
 - `assets/labs/oa-vuln-labs/1.0.0-beta/`：随仓库发布的 OA `source.zip` 与 `docker.zip` 靶场资源。
 - `assets/`：固定输入资源；用途、版本、校验和生成方式见 [`assets/README.md`](assets/README.md)。
 - `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
-- `paths.ts`：统一生成 SQLite、靶场资源、下载缓存、运行实例和导入任务路径。
 - `data/`：SQLite、下载资源、靶场源码、Python 环境与运行副本；整个目录被 Git 忽略。
 - `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
 
