@@ -18,7 +18,7 @@
 | `npm run smoke:native-php` | PHP 内置靶场检查 |
 | `npm run smoke:native-php:mysql` | PHP 与 MySQL 集成检查 |
 | `npm run smoke:toolchains` | 项目运行时工具链端到端检查 |
-| `npm run smoke:runtimes` | 九个常规靶场检查 |
+| `npm run smoke:runtimes` | 十个常规内置靶场运行检查 |
 | `npm run smoke:operational` | 服务运行与数据隔离检查 |
 | `npm run smoke:oa` | OA 本地 Provider 检查 |
 | `npm run smoke:oa:docker` | OA Docker Provider 检查 |
