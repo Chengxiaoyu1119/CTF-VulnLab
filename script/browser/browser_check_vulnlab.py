@@ -391,7 +391,7 @@ def main() -> None:
             const items = [...element.querySelectorAll('.lab-card, .lab-add-card')]
             const rows = new Map()
             for (const item of items) {
-                const top = Math.round(item.getBoundingClientRect().top)
+                const top = item.offsetTop
                 rows.set(top, (rows.get(top) ?? 0) + 1)
             }
             return { display: getComputedStyle(element).display, itemCount: items.length, rowCounts: [...rows.values()], wrapperDisplays: [...element.querySelectorAll(':scope > .lab-card-grid')].map(grid => getComputedStyle(grid).display) }
