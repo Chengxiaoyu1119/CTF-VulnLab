@@ -222,6 +222,12 @@ try {
   await writeFile(join(sourceRoot, 'level1.php'), '<?php echo $_GET["name"]; ?>\n')
   await writeFile(join(sourceRoot, 'level14.php'), originalLevel)
   await writeFile(join(sourceRoot, 'level15.php'), '<?php echo "level15"; ?>\n')
+  const originalFlashLevels = new Map()
+  for (const [level, swf] of [[17, 'xsf01.swf'], [18, 'xsf02.swf'], [19, 'xsf03.swf'], [20, 'xsf04.swf']]) {
+    const html = `<html><head></head><body><embed src="${swf}"></body></html>\n`
+    originalFlashLevels.set(level, html)
+    await writeFile(join(sourceRoot, `level${level}.php`), html)
+  }
   const phpSpawn = (_binary, args, options) => {
     const port = Number(args[args.indexOf('-S') + 1].split(':').at(-1))
     const script = "const server=require('node:http').createServer((req,res)=>{res.writeHead(200,{'content-type':'text/html'});res.end(req.url.includes('level14')?'<a href=level15.php>level15</a>':req.url.includes('level1')?'VulnLabSmoke':'XSS挑战');});server.listen(Number(process.argv.at(-1)),'127.0.0.1');"
@@ -237,6 +243,15 @@ try {
   const runtimeLevel = await readFile(join(xssLabsRoot, 'runtime', 'xss-labs-fixture', 'level14.php'), 'utf8')
   assert.match(runtimeLevel, /src="about:blank"/)
   assert.match(runtimeLevel, /href=level15\.php\?src=1\.gif/)
+  for (const [level, swf] of [[17, 'xsf01.swf'], [18, 'xsf02.swf'], [19, 'xsf03.swf'], [20, 'xsf04.swf']]) {
+    const runtimePage = await readFile(join(xssLabsRoot, 'runtime', 'xss-labs-fixture', `level${level}.php`), 'utf8')
+    assert.match(runtimePage, /<script src="ruffle\/ruffle\.js"><\/script>/)
+    assert.match(runtimePage, new RegExp(swf))
+    assert.doesNotMatch(runtimePage, /<script[^>]+src=["']https?:\/\//i)
+    assert.equal(await readFile(join(sourceRoot, `level${level}.php`), 'utf8'), originalFlashLevels.get(level), `XSS-Labs level ${level} source must remain unchanged`)
+  }
+  assert.ok((await stat(join(xssLabsRoot, 'runtime', 'xss-labs-fixture', 'ruffle', 'ruffle.js'))).size > 100_000)
+  assert.ok((await stat(join(xssLabsRoot, 'runtime', 'xss-labs-fixture', 'ruffle', '6bd0bf4499a1d6ead2fc.wasm'))).size > 1_000_000)
   assert.equal(await readFile(join(sourceRoot, 'level14.php'), 'utf8'), originalLevel, 'XSS-Labs installation source must remain unchanged')
   const smoke = await fetch(`${started.endpoint}level1.php?name=VulnLabSmoke`)
   assert.equal(smoke.status, 200)

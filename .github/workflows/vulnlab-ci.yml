@@ -7,12 +7,18 @@ on:
       - "src/**"
       - "script/**"
       - "README.md"
+      - "DESIGN.md"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
   pull_request:
     paths:
       - ".github/workflows/vulnlab-ci.yml"
       - "src/**"
       - "script/**"
       - "README.md"
+      - "DESIGN.md"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
   workflow_dispatch:
 
 permissions:
@@ -79,6 +85,7 @@ jobs:
           python -m py_compile script/browser/browser_check_vulnlab.py
           if ($LASTEXITCODE -ne 0) { throw 'Browser check syntax failed.' }
           node script/tools/check_vulnlab_node.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Project, docs, or resource manifest check failed.' }
 
       - name: Run API smoke test
         env:

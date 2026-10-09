@@ -6,13 +6,13 @@ const MAX_EXTRACTED_BYTES = 512 * 1024 * 1024
 const INSPECTION_TIMEOUT_MS = 45_000
 
 export type RuntimeSuggestion = {
-  mode: 'php-static' | 'php-mysql' | 'node' | 'java-jar' | 'python' | 'django' | 'webgoat' | null
+  mode: 'php-static' | 'php-mysql' | 'node' | 'java-jar' | 'python' | 'django' | 'webgoat' | 'compose' | null
   confidence: 'high' | 'medium' | 'none'
   signals: string[]
   warnings: string[]
 }
 
-export const supportedInspectionModes = ['php-static', 'php-mysql', 'node', 'java-jar', 'webgoat', 'python', 'django'] as const
+export const supportedInspectionModes = ['php-static', 'php-mysql', 'node', 'java-jar', 'webgoat', 'python', 'django', 'compose'] as const
 export type InspectedRuntimeMode = typeof supportedInspectionModes[number]
 
 const selectedModeWarnings = (mode: string | undefined, names: string[]) => {
@@ -34,6 +34,9 @@ const selectedModeWarnings = (mode: string | undefined, names: string[]) => {
   } else if (mode === 'django') {
     if (!has(/(^|\/)manage\.py$/)) warnings.push('Django 需要 manage.py；当前未发现。')
     if (!has(/(^|\/)settings\.py$/)) warnings.push('Django 需要 settings.py；当前未发现。')
+  } else if (mode === 'compose') {
+    if (!has(/(^|\/)(?:compose|docker-compose)\.ya?ml$/)) warnings.push('Compose 运行需要 compose.yaml 或 docker-compose.yml。')
+    warnings.push('请在运行参数中指定 Web 服务名和容器入口端口。')
   }
   return warnings
 }
@@ -89,7 +92,7 @@ const suggestionForFiles = (files: Array<{ name: string; bytes?: Uint8Array }>):
   let confidence: RuntimeSuggestion['confidence'] = 'none'
 
   if (composeFiles.length) {
-    warnings.push('检测到 Docker Compose 配置；当前添加流程不支持 Compose，不会执行该配置。')
+    mode = 'compose'; confidence = 'high'; signals.push(composeFiles[0] as string)
   } else if (managePath && settingsPath) {
     mode = 'django'; confidence = 'high'; signals.push('manage.py', 'Django settings.py')
   } else if (jarPath && /webgoat/i.test(jarPath)) {
@@ -116,7 +119,7 @@ const suggestionForFiles = (files: Array<{ name: string; bytes?: Uint8Array }>):
   }
   if (mode === 'php-mysql' && sqlPath && sqlPath.toLowerCase() !== 'init.sql') warnings.push(`已发现 ${sqlPath}；请在高级运行参数中确认初始化 SQL 路径。`)
   if (mode && confidence === 'none') confidence = 'medium'
-  if (!mode && !composeFiles.length) warnings.push('未识别到明显入口文件；请选择与项目结构匹配的固定运行方式。')
+  if (!mode) warnings.push('未识别到明显入口文件；请选择与项目结构匹配的固定运行方式。')
   return { mode, confidence, signals, warnings }
 }
 

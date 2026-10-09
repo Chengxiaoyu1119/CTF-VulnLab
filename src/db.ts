@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { existsSync, mkdirSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { seedLabs, type SeedLab } from './seed.js'
 import { dataPaths } from './paths.js'
@@ -16,6 +16,13 @@ export interface PersistInstanceInput {
   createdAt: string
   expiresAt: string
   logs: string[]
+}
+
+export interface PendingCleanupJob {
+  id: string
+  batchId: string
+  relativePath: string
+  attempts: number
 }
 
 export interface RegisteredUser {
@@ -89,6 +96,7 @@ const providerForRuntime = (runtimeKind: Lab['runtimeKind']) => {
   if (runtimeKind === 'native-java') return 'native-java'
   if (runtimeKind === 'native-python') return 'native-python'
   if (runtimeKind === 'native-oa') return 'oa-local'
+  if (runtimeKind === 'native-compose') return 'native-compose'
   return runtimeKind
 }
 
@@ -97,6 +105,7 @@ const profileForRuntime = (runtimeKind: Lab['runtimeKind']): LabRuntimeConfig['p
   if (runtimeKind === 'native-java') return 'webgoat'
   if (runtimeKind === 'native-python') return 'pygoat'
   if (runtimeKind === 'native-oa') return 'oa-project'
+  if (runtimeKind === 'native-compose') return 'compose-project'
   return 'static-php'
 }
 
@@ -104,11 +113,14 @@ const parseRuntimeConfig = (raw: string, runtimeKind: Lab['runtimeKind']): LabRu
   const fallback = { profile: profileForRuntime(runtimeKind) }
   try {
     const value = JSON.parse(raw) as Partial<LabRuntimeConfig>
-    if (typeof value.profile !== 'string' || !['static-php', 'mysql-php', 'prebuilt-node', 'webgoat', 'pygoat', 'java-jar', 'python-script', 'oa-appcontainer', 'oa-project'].includes(value.profile)) return fallback
+    if (typeof value.profile !== 'string' || !['static-php', 'mysql-php', 'prebuilt-node', 'webgoat', 'pygoat', 'java-jar', 'python-script', 'oa-appcontainer', 'oa-project', 'compose-project'].includes(value.profile)) return fallback
     const config: LabRuntimeConfig = { profile: value.profile as LabRuntimeConfig['profile'] }
     for (const key of ['documentRoot', 'entryPath', 'initSqlPath', 'settingsPath'] as const) {
       if (typeof value[key] === 'string' && value[key].length <= 160) config[key] = value[key]
     }
+    if (typeof value.composeFile === 'string' && value.composeFile.length <= 160) config.composeFile = value.composeFile
+    if (typeof value.webService === 'string' && value.webService.length <= 63) config.webService = value.webService
+    if (typeof value.webPort === 'number' && Number.isInteger(value.webPort) && value.webPort >= 1 && value.webPort <= 65535) config.webPort = value.webPort
     if (Array.isArray(value.nodeArgs) && value.nodeArgs.length <= 12 && value.nodeArgs.every(item => typeof item === 'string' && item.length <= 120)) config.nodeArgs = value.nodeArgs
     for (const key of ['javaArgs', 'pythonArgs'] as const) {
       if (Array.isArray(value[key]) && value[key].length <= 16 && value[key].every(item => typeof item === 'string' && item.length <= 120)) config[key] = value[key]
@@ -336,6 +348,16 @@ export class VulnLabDatabase {
         revoked_at TEXT,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS cleanup_jobs (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (batch_id, relative_path)
+      );
       CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
       CREATE INDEX IF NOT EXISTS idx_login_attempts_reset_at ON login_attempts(reset_at);
       CREATE INDEX IF NOT EXISTS idx_invitations_expires_at ON invitations(expires_at);
@@ -350,6 +372,7 @@ export class VulnLabDatabase {
       CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit(created_at);
       CREATE INDEX IF NOT EXISTS idx_audit_created_id ON audit(created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_audit_action_created_at ON audit(action, created_at);
+      CREATE INDEX IF NOT EXISTS idx_cleanup_jobs_next_attempt ON cleanup_jobs(next_attempt_at, created_at);
     `)
     this.ensureColumn('import_jobs', 'requested_by', "TEXT NOT NULL DEFAULT 'system'")
     this.ensureColumn('import_jobs', 'manifest_json', 'TEXT')
@@ -577,13 +600,55 @@ export class VulnLabDatabase {
     this.db.prepare('UPDATE labs SET status = ?, local_path = COALESCE(?, local_path), imported_at = COALESCE(?, imported_at), updated_at = ? WHERE id = ?').run(status, localPath, importedAt, now(), id)
   }
 
-  deleteCustomLab(id: string): Lab | null {
+  deleteCustomLab(id: string, cleanupPaths: readonly string[] = []): { lab: Lab; batchId: string } | null {
     return this.db.transaction(() => {
       const row = this.db.prepare('SELECT * FROM labs WHERE id = ? AND builtin = 0').get(id) as Row | undefined
       if (!row) return null
+      const root = resolve(this.runtimeDefaults.dataDir)
+      const prefix = root.endsWith(sep) ? root : `${root}${sep}`
+      const paths = [...new Set(cleanupPaths)].map(path => {
+        const target = resolve(path)
+        const pathFromRoot = relative(root, target)
+        if (!pathFromRoot || pathFromRoot === '.' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot) || (target !== root && !target.startsWith(prefix))) {
+          throw new Error('待清理路径必须位于 VulnLab 数据目录内。')
+        }
+        return pathFromRoot.replaceAll('\\', '/')
+      })
+      const batchId = randomUUID()
+      const timestamp = now()
+      const insertCleanup = this.db.prepare(`
+        INSERT INTO cleanup_jobs (id, batch_id, relative_path, attempts, next_attempt_at, created_at)
+        VALUES (?, ?, ?, 0, ?, ?)
+      `)
+      for (const path of paths) insertCleanup.run(randomUUID(), batchId, path, timestamp, timestamp)
       const result = this.db.prepare('DELETE FROM labs WHERE id = ? AND builtin = 0').run(id)
-      return result.changes === 1 ? parseLab(row) : null
+      return result.changes === 1 ? { lab: parseLab(row), batchId } : null
     })()
+  }
+
+  pendingCleanupJobs(limit = 100): PendingCleanupJob[] {
+    const timestamp = now()
+    return this.db.prepare(`
+      SELECT id, batch_id AS batchId, relative_path AS relativePath, attempts
+      FROM cleanup_jobs WHERE next_attempt_at <= ? ORDER BY created_at, id LIMIT ?
+    `).all(timestamp, limit) as PendingCleanupJob[]
+  }
+
+  completeCleanupJob(id: string) {
+    this.db.prepare('DELETE FROM cleanup_jobs WHERE id = ?').run(id)
+  }
+
+  retryCleanupJob(id: string, error: string) {
+    const row = this.db.prepare('SELECT attempts FROM cleanup_jobs WHERE id = ?').get(id) as { attempts: number } | undefined
+    if (!row) return
+    const attempts = row.attempts + 1
+    const delay = Math.min(60 * 60_000, 1_000 * 2 ** Math.min(attempts - 1, 12))
+    this.db.prepare('UPDATE cleanup_jobs SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?')
+      .run(attempts, new Date(Date.now() + delay).toISOString(), error.slice(0, 500), id)
+  }
+
+  hasPendingCleanup(batchId: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM cleanup_jobs WHERE batch_id = ? LIMIT 1').get(batchId))
   }
 
   restoreLabStatus(id: string) {

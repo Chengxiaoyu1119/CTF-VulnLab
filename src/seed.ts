@@ -138,7 +138,7 @@ export const seedLabs: SeedLab[] = [
     sourceType: 'git',
     sourceUrl: 'https://github.com/WebGoat/WebGoat',
     sourceRef: 'WebGoat/WebGoat@5357a65e054976cd7d79b81ef3906ded050ed921',
-    license: 'GPL-2.0-or-later',
+    license: 'GPL-2.0',
     runtimeKind: 'native-java',
     providerId: 'native-java',
     version: '2023.8',
@@ -186,7 +186,7 @@ export const seedLabs: SeedLab[] = [
     sourceType: 'archive',
     sourceUrl: 'bundle://oa-vuln-labs/source.zip',
     sourceRef: 'oa-vuln-labs@1.0.0-beta',
-    license: '上游未声明',
+    license: 'Apache-2.0',
     runtimeKind: 'native-oa',
     providerId: 'oa-local',
     version: '1.0.0-beta',
@@ -195,6 +195,8 @@ export const seedLabs: SeedLab[] = [
     tags: ['OA', 'Web', '攻击链'],
   },
 ]
+
+export const regularBuiltinLabCount = seedLabs.filter(lab => lab.slug !== 'oa-vuln-labs').length
 
 export const builtinLabBySlug = new Map(seedLabs.map(lab => [lab.slug, lab]))
 export const autoInstallLabs = process.env.VULNLAB_AUTO_INSTALL_BUILTINS === '1'

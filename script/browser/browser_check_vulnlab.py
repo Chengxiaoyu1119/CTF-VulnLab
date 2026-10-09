@@ -337,15 +337,20 @@ def main() -> None:
         page.locator("#login-success-notice").evaluate(
             "element => Promise.all(element.getAnimations().map(animation => animation.finished))"
         )
-        success_box = page.locator("#login-success-notice").bounding_box()
-        first_card_box = page.locator(".lab-card").first.bounding_box()
-        assert success_box and success_box["x"] >= 390 - success_box["width"] - 17 and success_box["y"] >= 15, success_box
-        assert success_box and first_card_box and (
-            success_box["x"] + success_box["width"] <= first_card_box["x"]
-            or first_card_box["x"] + first_card_box["width"] <= success_box["x"]
-            or success_box["y"] + success_box["height"] <= first_card_box["y"]
-            or first_card_box["y"] + first_card_box["height"] <= success_box["y"]
-        ), {"notice": success_box, "first_card": first_card_box}
+        for width in (390, 357, 320):
+            page.set_viewport_size({"width": width, "height": 844})
+            responsive_notice_layout = page.evaluate("""() => {
+                const notice = document.querySelector('#login-success-notice').getBoundingClientRect()
+                const brand = document.querySelector('.workspace-brand-trigger').getBoundingClientRect()
+                const canvasElement = document.querySelector('.lab-canvas')
+                const canvas = canvasElement.getBoundingClientRect()
+                const card = document.querySelector('.lab-card').getBoundingClientRect()
+                const separated = (left, right) => left.right <= right.left || right.right <= left.left || left.bottom <= right.top || right.bottom <= left.top
+                return { notice: { x: notice.x, y: notice.y, right: notice.right, bottom: notice.bottom }, brand: { x: brand.x, y: brand.y, right: brand.right, bottom: brand.bottom }, canvas: { y: canvas.y, height: canvas.height, paddingTop: getComputedStyle(canvasElement).paddingTop }, card: { y: card.y, bottom: card.bottom }, brandSeparated: separated(notice, brand), cardSeparated: separated(notice, card) }
+            }""")
+            assert responsive_notice_layout["brandSeparated"] and responsive_notice_layout["cardSeparated"], (width, responsive_notice_layout)
+            assert responsive_notice_layout["notice"]["x"] >= 0 and responsive_notice_layout["notice"]["right"] <= width, (width, responsive_notice_layout)
+            assert responsive_notice_layout["canvas"]["paddingTop"] == "12px" and responsive_notice_layout["card"]["y"] < 80, (width, responsive_notice_layout)
         expect(page.locator(".lab-workspace-head")).to_have_count(0)
         page.set_viewport_size({"width": 1440, "height": 900})
         expect(page.locator(".workspace-brand-trigger")).to_be_visible()
@@ -382,6 +387,16 @@ def main() -> None:
         mobile_add_position = page.locator(".lab-add-card").evaluate("element => { const add = element.getBoundingClientRect(); const ninth = document.querySelectorAll('.lab-card')[8].getBoundingClientRect(); return { addTop: add.top, ninthBottom: ninth.bottom, viewportHeight: innerHeight, documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth } }")
         assert mobile_add_position["addTop"] >= mobile_add_position["ninthBottom"] and mobile_add_position["addTop"] > mobile_add_position["viewportHeight"], mobile_add_position
         assert mobile_add_position["documentWidth"] <= mobile_add_position["viewportWidth"], mobile_add_position
+        mobile_grid_layout = page.locator(".lab-grid").evaluate("""element => {
+            const items = [...element.querySelectorAll('.lab-card, .lab-add-card')]
+            const rows = new Map()
+            for (const item of items) {
+                const top = Math.round(item.getBoundingClientRect().top)
+                rows.set(top, (rows.get(top) ?? 0) + 1)
+            }
+            return { display: getComputedStyle(element).display, itemCount: items.length, rowCounts: [...rows.values()], wrapperDisplays: [...element.querySelectorAll(':scope > .lab-card-grid')].map(grid => getComputedStyle(grid).display) }
+        }""")
+        assert mobile_grid_layout["display"] == "grid" and mobile_grid_layout["itemCount"] == default_lab_count + 1 and all(count == 2 for count in mobile_grid_layout["rowCounts"]) and mobile_grid_layout["wrapperDisplays"] == ["contents", "contents"], mobile_grid_layout
         page.set_viewport_size({"width": 1440, "height": 900})
         page.get_by_role("button", name="查看 OA-Vuln-Labs 信息").click()
         expect(page.get_by_role("heading", name="OA-Vuln-Labs", exact=True)).to_be_visible()
@@ -591,9 +606,20 @@ def main() -> None:
         if catalog_row.count():
             expect(catalog_row).to_contain_text("虚拟机目录（当前未接入）")
             expect(catalog_row).to_contain_text("官方目录")
-        for width, height in [(320, 568), (390, 844), (640, 420), (768, 1024), (1280, 720), (1440, 900)]:
+        for width, height in [(320, 568), (390, 844), (600, 844), (601, 844), (640, 420), (768, 1024), (1280, 720), (1440, 900)]:
             page.set_viewport_size({"width": width, "height": height})
+            nav_layout = page.locator(".admin-nav").evaluate("""element => {
+                const nav = element.getBoundingClientRect()
+                const buttons = [...element.querySelectorAll('.admin-nav-button')].map(button => button.getBoundingClientRect())
+                const content = document.querySelector('.admin-dialog-content').getBoundingClientRect()
+                return { count: buttons.length, fits: buttons.every(button => button.left >= nav.left - 1 && button.right <= nav.right + 1 && button.top >= nav.top - 1 && button.bottom <= nav.bottom + 1), rowCount: new Set(buttons.map(button => Math.round(button.top))).size, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, sidebarLeftOfContent: nav.right <= content.left }
+            }""")
+            assert nav_layout["count"] == 6 and nav_layout["fits"] and nav_layout["scrollWidth"] <= nav_layout["clientWidth"] and nav_layout["rowCount"] == 6 and nav_layout["sidebarLeftOfContent"], (width, nav_layout)
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
+            if width <= 600:
+                assert dialog_box and dialog_box["height"] <= min(420, height - 40), (width, dialog_box)
+            else:
+                assert dialog_box and round(dialog_box["height"]) == min(420, height - 32), (width, height, dialog_box)
             list_layout = page.locator(".admin-lab-view").evaluate(
                 "element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })"
             )
@@ -619,11 +645,39 @@ def main() -> None:
             )
             assert action_layout == {"fit": True, "oneRow": True}, (width, action_layout)
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        for width, height in [(320, 568), (390, 844), (480, 844), (488, 941)]:
+            page.set_viewport_size({"width": width, "height": height})
+            for section, view_selector in [("profile", ".profile-view"), ("system", ".admin-system-view"), ("labs", ".admin-lab-view"), ("users", '[data-admin-view="users"]'), ("audit", '[data-admin-view="audit"]'), ("invitations", '[data-admin-view="invitations"]')]:
+                page.locator(f'[data-action="open-admin-section"][data-section="{section}"]').click()
+                expect(page.locator(view_selector)).to_be_visible()
+                expect(page.locator(".admin-dialog")).to_be_visible()
+                page.wait_for_function("""() => {
+                    const box = document.querySelector('.admin-dialog')?.getBoundingClientRect()
+                    return Boolean(box?.width && box?.height)
+                }""")
+                dialog_layout = page.evaluate("""() => {
+                    const element = [...document.querySelectorAll('.admin-dialog')].find(item => item.getBoundingClientRect().width > 0)
+                    if (!element) return { width: 0, height: 0, top: 0, bottom: 0, viewportHeight: innerHeight, contentTop: 0, contentBottom: 0, toolsBottom: 0, footerTop: null, footerBottom: null }
+                    const box = element.getBoundingClientRect()
+                    const content = element.querySelector('.admin-dialog-content').getBoundingClientRect()
+                    const tools = element.querySelector('.admin-dialog-tools').getBoundingClientRect()
+                    const footer = element.querySelector('.dialog-actions')?.getBoundingClientRect()
+                    return { width: box.width, height: box.height, top: box.top, bottom: box.bottom, viewportHeight: innerHeight, contentTop: content.top, contentBottom: content.bottom, toolsBottom: tools.bottom, footerTop: footer?.top ?? null, footerBottom: footer?.bottom ?? null }
+                }""")
+                expected_dialog_size = (min(640, width - 24), min(420, height - 40))
+                assert (round(dialog_layout["width"]), round(dialog_layout["height"])) == expected_dialog_size, (width, section, dialog_layout)
+                assert dialog_layout["top"] >= 0 and dialog_layout["bottom"] <= dialog_layout["viewportHeight"], (width, section, dialog_layout)
+                assert dialog_layout["contentTop"] >= dialog_layout["toolsBottom"] and (dialog_layout["footerTop"] is None or dialog_layout["contentBottom"] <= dialog_layout["footerTop"] + 1) and (dialog_layout["footerBottom"] is None or dialog_layout["footerBottom"] <= dialog_layout["bottom"]), (width, section, dialog_layout)
+                view_layout = page.locator(".admin-dialog-content").evaluate("element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight })")
+                assert view_layout["scrollWidth"] <= view_layout["clientWidth"], (width, section, view_layout)
+                assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         page.set_viewport_size({"width": 1440, "height": 900})
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 320, "height": 568})
         page.screenshot(path=str(OUTPUT_DIR / "admin-lab-list-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
+        labs_button.click()
+        expect(page.locator('[data-admin-view="labs"]')).to_be_visible()
         add_lab_button.click()
         expect(page.locator("#admin-lab-form")).to_be_visible()
         expect(page.locator(".dialog-actions [data-action='start-custom-lab-create']")).to_have_count(0)
@@ -658,6 +712,12 @@ def main() -> None:
             "element => { const style = getComputedStyle(element, '::picker(select)'); return { background: style.backgroundColor, borderRadius: style.borderRadius, maxHeight: style.maxHeight, overflowY: style.overflowY }; }"
         )
         assert picker_style == {"background": "rgb(29, 29, 29)", "borderRadius": "7px", "maxHeight": "264px", "overflowY": "auto"}, picker_style
+        runtime_select.select_option("compose")
+        expect(page.locator('#admin-lab-form [name="composeFile"]')).to_be_visible()
+        expect(page.locator('#admin-lab-form [name="webService"]')).to_be_visible()
+        expect(page.locator('#admin-lab-form [name="webPort"]')).to_have_attribute("max", "65535")
+        expect(page.locator(".admin-lab-template-hint")).to_contain_text("本机回环地址")
+        runtime_select.select_option("php-static")
         expect(page.locator(".admin-lab-precheck")).to_be_visible()
         expect(page.locator(".admin-lab-precheck").get_by_role("button", name="检查结构", exact=True)).to_be_visible()
         expect(page.locator(".admin-lab-runtime-settings")).to_be_visible()
@@ -944,12 +1004,17 @@ def main() -> None:
             )
             assert abs(date_filter_without_records["fieldLeft"] - date_filter_without_records["filtersLeft"]) <= 1, date_filter_without_records
             assert date_filter_without_records["left"] >= date_filter_without_records["fieldLeft"] and date_filter_without_records["right"] <= date_filter_without_records["fieldRight"], date_filter_without_records
-            for width, height in [(1440, 900), (390, 844), (320, 568)]:
+            for width, height in [(1440, 900), (490, 844), (390, 844), (320, 568)]:
                 page.set_viewport_size({"width": width, "height": height})
                 empty_filter_geometry = page.locator(".admin-record-filters").evaluate(
-                    "element => { const field = element.querySelector('[data-audit-filter=\"date\"]').closest('.admin-record-filter').getBoundingClientRect(); const filters = element.getBoundingClientRect(); return { fieldLeft: field.left, filtersLeft: filters.left, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }; }"
+                    "element => { const fields = [...element.querySelectorAll('.admin-record-filter')].map(field => field.getBoundingClientRect()); const filters = element.getBoundingClientRect(); return { fieldLeft: fields[0].left, actionLeft: fields[1].left, fieldTop: fields[0].top, actionTop: fields[1].top, fieldRight: fields[0].right, actionRight: fields[1].right, filtersLeft: filters.left, filtersRight: filters.right, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }; }"
                 )
-                assert abs(empty_filter_geometry["fieldLeft"] - empty_filter_geometry["filtersLeft"]) <= 1, (width, empty_filter_geometry)
+                if width <= 360:
+                    assert abs(empty_filter_geometry["fieldLeft"] - empty_filter_geometry["actionLeft"]) <= 1 and empty_filter_geometry["fieldLeft"] >= empty_filter_geometry["filtersLeft"] and empty_filter_geometry["actionRight"] <= empty_filter_geometry["filtersRight"], (width, empty_filter_geometry)
+                elif width <= 600:
+                    assert abs(empty_filter_geometry["fieldTop"] - empty_filter_geometry["actionTop"]) <= 1 and empty_filter_geometry["fieldLeft"] >= empty_filter_geometry["filtersLeft"] and empty_filter_geometry["actionRight"] <= empty_filter_geometry["filtersRight"], (width, empty_filter_geometry)
+                else:
+                    assert abs(empty_filter_geometry["fieldLeft"] - empty_filter_geometry["filtersLeft"]) <= 1, (width, empty_filter_geometry)
                 assert empty_filter_geometry["scrollWidth"] <= empty_filter_geometry["clientWidth"], (width, empty_filter_geometry)
             page.set_viewport_size({"width": 1440, "height": 900})
             page.locator('[data-action="clear-audit-filters"]').click()
@@ -967,6 +1032,7 @@ def main() -> None:
                 page.set_viewport_size({"width": width, "height": height})
                 expect(page.locator("[data-activity-date]")).to_have_count(365)
                 assert page.locator(".admin-dialog-content").evaluate("e => e.scrollWidth <= e.clientWidth"), width
+                page.wait_for_function("() => { const box = document.querySelector('.admin-dialog')?.getBoundingClientRect(); return Boolean(box?.width && box?.height); }")
                 dialog_box = page.locator(".admin-dialog:visible").bounding_box()
                 assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= height, (width, height, dialog_box)
                 page.screenshot(path=str(OUTPUT_DIR / f"system-populated-{width}.png"), full_page=True)
@@ -1119,10 +1185,13 @@ def main() -> None:
         if page.locator(".admin-record-pagination").count():
             expect(page.locator(".admin-record-pagination")).not_to_contain_text("共")
         assert page.locator(".invitation-history-head").evaluate("element => getComputedStyle(element).position") == "sticky"
-        for width, height in [(1440, 900), (768, 1024), (720, 520), (641, 480), (601, 844), (600, 844), (390, 844), (320, 568), (800, 320)]:
+        for width, height in [(1440, 900), (768, 1024), (720, 520), (641, 480), (601, 844), (600, 844), (490, 844), (390, 844), (320, 568), (800, 320)]:
             page.set_viewport_size({"width": width, "height": height})
             assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), width
             assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth"), width
+            if width <= 600:
+                invitation_title = page.locator(".invitation-history-head").evaluate("element => getComputedStyle(element, '::after').content")
+                assert invitation_title == '"邀请码记录"', (width, invitation_title)
             assert page.locator(".invitation-history-card").evaluate_all("elements => elements.every(element => element.scrollWidth <= element.clientWidth)"), width
             invitation_select_alignment = page.locator('[data-admin-select-all="invitations"]').evaluate(
                 "element => ({ toolbar: element.getBoundingClientRect().left, row: document.querySelector('[data-admin-record-select=\"invitations\"]').getBoundingClientRect().left })"
@@ -1140,10 +1209,18 @@ def main() -> None:
                     const valid = expiryBox.left >= rowBox.left - 1 && expiryBox.right <= rowBox.right + 1 &&
                         operationBox.left >= rowBox.left - 1 && operationBox.right <= rowBox.right + 1 &&
                         (mobile || expiryBox.right <= operationBox.left + 1) && expiryTime.scrollWidth <= expiryTime.clientWidth
-                    return !valid
+                    return valid ? null : { expiry: [expiryBox.left, expiryBox.right], operation: [operationBox.left, operationBox.right], row: [rowBox.left, rowBox.right], time: [expiryTime.scrollWidth, expiryTime.clientWidth] }
                 }).filter(Boolean)"""
             )
             assert not invitation_column_overflows, (width, invitation_column_overflows[:2])
+            if width <= 600:
+                invitation_label_value_layout = page.locator(".invitation-history-card").first.evaluate(
+                    "element => [...element.querySelectorAll('.invitation-field')].map(field => { const label = field.querySelector('.invitation-field-label').getBoundingClientRect(); const value = (field.querySelector('.invitation-field-status strong, .invitation-status-copy') || field.querySelector('.invitation-field-value')).getBoundingClientRect(); return { labelLeft: label.left, labelRight: label.right, labelTop: label.top, labelBottom: label.bottom, valueLeft: value.left, valueTop: value.top, valueBottom: value.bottom }; })"
+                )
+                if width <= 360:
+                    assert all(field["valueTop"] >= field["labelBottom"] - 1 for field in invitation_label_value_layout), (width, invitation_label_value_layout)
+                else:
+                    assert all(field["labelRight"] <= field["valueLeft"] + 1 and field["labelTop"] < field["valueBottom"] and field["valueTop"] < field["labelBottom"] for field in invitation_label_value_layout), (width, invitation_label_value_layout)
             expect(page.locator(".invitation-history-card")).to_have_count(52)
             expect(page.get_by_role("button", name="生成邀请码", exact=True)).to_be_visible()
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -1296,6 +1373,10 @@ def main() -> None:
         page.set_viewport_size({"width": 320, "height": 568})
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert page.locator(".admin-dialog-content").evaluate("element => element.scrollWidth <= element.clientWidth")
+        mobile_invitation_layout = page.locator(".invitation-history-card").first.evaluate(
+            "element => { const fields = [...element.querySelectorAll('.invitation-field')]; const labels = fields.map(field => field.querySelector('.invitation-field-label').getBoundingClientRect()); const values = fields.map(field => (field.querySelector('.invitation-field-status strong, .invitation-status-copy') || field.querySelector('.invitation-field-value')).getBoundingClientRect()); return { cardFits: element.scrollWidth <= element.clientWidth, fieldsFit: fields.every(field => field.scrollWidth <= field.clientWidth), fieldSizes: fields.map(field => ({ field: field.className, client: field.clientWidth, scroll: field.scrollWidth, label: field.querySelector('.invitation-field-label').scrollWidth, value: field.querySelector('.invitation-field-status strong, .invitation-status-copy')?.scrollWidth ?? field.querySelector('.invitation-field-value').scrollWidth })), labelLefts: labels.map(box => box.left), valueLefts: values.map(box => box.left) }; }"
+        )
+        assert mobile_invitation_layout["cardFits"] and mobile_invitation_layout["fieldsFit"] and max(mobile_invitation_layout["labelLefts"]) - min(mobile_invitation_layout["labelLefts"]) <= 1 and max(mobile_invitation_layout["valueLefts"]) - min(mobile_invitation_layout["valueLefts"]) <= 1, mobile_invitation_layout
         page.screenshot(path=str(OUTPUT_DIR / "admin-invitations-used-mobile.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 900})
         account_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
@@ -1387,10 +1468,15 @@ def main() -> None:
             dialog_box = page.locator(".admin-dialog:visible").bounding_box()
             assert dialog_box and dialog_box["x"] >= 0 and dialog_box["y"] >= 0 and dialog_box["x"] + dialog_box["width"] <= width and dialog_box["y"] + dialog_box["height"] <= 568, (width, dialog_box)
             assert page.locator(".admin-user-table-head").evaluate("element => getComputedStyle(element).display") == "flex"
+            assert page.locator(".admin-user-table-head > span").evaluate_all("elements => elements.every(element => getComputedStyle(element).display !== 'none' && element.getBoundingClientRect().height > 0)"), width
             mobile_account_checkbox_alignment = page.locator(".admin-user-table-head").evaluate(
                 "element => ({ selectAll: element.querySelector('[data-admin-select-all=\"users\"]').getBoundingClientRect().left, firstRow: document.querySelector('.admin-user-entry:not([data-kind=system]) [data-admin-record-select=\"users\"]').getBoundingClientRect().left })"
             )
             assert abs(mobile_account_checkbox_alignment["selectAll"] - mobile_account_checkbox_alignment["firstRow"]) <= 1, (width, mobile_account_checkbox_alignment)
+            mobile_account_heading_alignment = page.locator(".admin-user-table-head").evaluate(
+                "element => { const labels = [...element.querySelectorAll(':scope > span')]; const centers = labels.map(label => { const rect = label.getBoundingClientRect(); return (rect.top + rect.bottom) / 2; }); return { labels: labels.map(label => label.textContent.trim()), sameRow: Math.max(...centers) - Math.min(...centers) <= 1, fits: element.scrollWidth <= element.clientWidth && labels.every(label => label.scrollWidth <= label.clientWidth), actionsRight: Math.abs(labels[2].getBoundingClientRect().right - (element.getBoundingClientRect().right - 10)) <= 1 }; }"
+            )
+            assert mobile_account_heading_alignment["labels"] == ["账号", "注册时间", "操作"] and mobile_account_heading_alignment["sameRow"] and mobile_account_heading_alignment["fits"] and mobile_account_heading_alignment["actionsRight"], (width, mobile_account_heading_alignment)
             expect(page.locator('.admin-user-entry[data-kind="system"]')).to_have_count(1)
             if width == 320:
                 page.screenshot(path=str(OUTPUT_DIR / "admin-accounts-mobile.png"), full_page=True)
@@ -1739,7 +1825,7 @@ def main() -> None:
         assert len(audit_selection_centers) == 2 and max(audit_selection_centers) - min(audit_selection_centers) <= 1, audit_selection_centers
         audit_toolbar_overflow = page.locator(".admin-record-filters").evaluate("element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })")
         assert audit_toolbar_overflow["scrollWidth"] <= audit_toolbar_overflow["clientWidth"], audit_toolbar_overflow
-        for width, height in [(1440, 900), (390, 844), (320, 568)]:
+        for width, height in [(1440, 900), (490, 844), (390, 844), (320, 568)]:
             page.set_viewport_size({"width": width, "height": height})
             assert_admin_selection_buttons_consistent(page)
             responsive_checkbox_alignment = page.locator(".admin-record-filters").evaluate(
@@ -1747,6 +1833,12 @@ def main() -> None:
             )
             assert abs(responsive_checkbox_alignment["selectAll"] - responsive_checkbox_alignment["firstRow"]) <= 1, (width, responsive_checkbox_alignment)
             assert responsive_checkbox_alignment["scrollWidth"] <= responsive_checkbox_alignment["clientWidth"], (width, responsive_checkbox_alignment)
+            if width <= 600:
+                audit_filter_layout = page.locator(".admin-record-filters").evaluate(
+                "element => { const box = element.getBoundingClientRect(); const fields = [...element.querySelectorAll('.admin-record-filter')].map(field => field.getBoundingClientRect()); const lefts = fields.map(field => field.left); const tops = fields.map(field => field.top); return { aligned: Math.max(...lefts) - Math.min(...lefts) <= 1, sameRow: Math.max(...tops) - Math.min(...tops) <= 1, contained: fields.every(field => field.left >= box.left - 1 && field.right <= box.right + 1), scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }; }"
+                )
+                expected_layout = audit_filter_layout["sameRow"] if width > 360 else audit_filter_layout["aligned"]
+                assert expected_layout and audit_filter_layout["contained"] and audit_filter_layout["scrollWidth"] <= audit_filter_layout["clientWidth"], (width, audit_filter_layout)
             audit_footer_layout = page.locator(".dialog-actions").evaluate(
                 "element => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })"
             )
@@ -2505,7 +2597,7 @@ def main() -> None:
         expect(page.locator(".workspace-account")).to_have_count(0)
         page.screenshot(path=str(OUTPUT_DIR / "labs-mobile.png"), full_page=True)
 
-        mobile_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        mobile_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(mobile_columns.split()) == 2, mobile_columns
         mobile_frame = page.locator(".lab-canvas").evaluate(
             "element => ({ borderWidth: getComputedStyle(element).borderTopWidth, borderRadius: getComputedStyle(element).borderRadius, backgroundColor: getComputedStyle(element).backgroundColor, boxShadow: getComputedStyle(element).boxShadow, width: element.getBoundingClientRect().width, viewportWidth: window.innerWidth })"
@@ -2566,7 +2658,7 @@ def main() -> None:
         page.locator(".lab-canvas").focus()
         page.mouse.move(0, 0)
         expect(page.locator(".lab-grid .lab-card")).to_have_count(default_lab_count)
-        compact_columns = page.locator(".lab-card-grid:not(.lab-card-overflow)").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+        compact_columns = page.locator(".lab-grid").evaluate("element => getComputedStyle(element).gridTemplateColumns")
         assert len(compact_columns.split()) == 2, compact_columns
         compact_card_box = page.locator(".lab-card").first.bounding_box()
         assert compact_card_box and compact_card_box["height"] <= 125, compact_card_box

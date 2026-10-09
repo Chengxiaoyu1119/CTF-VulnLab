@@ -73,7 +73,7 @@ const state = {
   adminLabInspectionError: '',
   adminLabDraft: {
     title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '', runtimeMode: 'php-static', runtimeKind: 'native-php', runtimeProfile: 'static-php',
-    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
+    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '', composeFile: '', webService: '', webPort: '',
     category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
   },
   adminLabArchiveFile: null,
@@ -282,7 +282,7 @@ function resetAdminRecords() {
 function resetAdminLabDraft() {
   state.adminLabDraft = {
     title: '', sourceType: 'git', sourceUrl: '', sourceUploadUrl: '', sourceRef: '', archiveFileName: '', runtimeMode: 'php-static', runtimeKind: 'native-php', runtimeProfile: 'static-php',
-    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '',
+    documentRoot: '', entryPath: '', initSqlPath: '', nodeArgs: '', javaArgs: '', pythonArgs: '', portArg: '', settingsPath: '', composeFile: '', webService: '', webPort: '',
     category: 'Web', difficulty: '入门', license: '', summary: '', tags: '',
   }
   state.adminLabEditorOpen = false
@@ -961,7 +961,7 @@ function positionAuditActionMenu(details) {
   const opensUp = above > below
   const available = opensUp ? above : below
   const menuWidth = 190
-  const left = Math.max(edge, Math.min(summaryBox.left, window.innerWidth - menuWidth - edge))
+  const left = Math.max(dialogBox.left + edge, Math.min(summaryBox.left, dialogBox.right - menuWidth - edge))
   const height = Math.max(44, Math.min(naturalHeight, available || naturalHeight))
   details.classList.toggle('opens-up', opensUp)
   options.style.left = `${left}px`
@@ -1175,6 +1175,7 @@ const customRuntimeModes = {
   webgoat: { kind: 'native-java', profile: 'webgoat', label: 'WebGoat' },
   python: { kind: 'native-python', profile: 'python-script', label: 'Python 脚本' },
   django: { kind: 'native-python', profile: 'pygoat', label: 'Django 项目' },
+  compose: { kind: 'native-compose', profile: 'compose-project', label: 'Docker Compose' },
 }
 
 function customRuntimeModeFor(lab) {
@@ -1205,9 +1206,15 @@ function adminLabsPanel() {
     runtimeFields = `${runtimeField('entryPath', 'Python 入口文件', draft.entryPath || 'app.py', 'app.py')}${runtimeField('portArg', '端口参数（可选）', draft.portArg, '--port={port}')}<label>启动参数（可选）<textarea name="pythonArgs" rows="2" placeholder="每行一个参数">${esc(draft.pythonArgs)}</textarea></label>`
   } else if (runtimeProfile === 'pygoat') {
     runtimeFields = `${runtimeField('entryPath', 'Django 入口文件', draft.entryPath || 'manage.py', 'manage.py')}${runtimeField('settingsPath', 'Django 设置文件', draft.settingsPath || 'pygoat/settings.py', 'pygoat/settings.py')}`
+  } else if (runtimeProfile === 'compose-project') {
+    runtimeFields = `<label>Compose 文件<input name="composeFile" required value="${esc(draft.composeFile || 'compose.yaml')}" placeholder="compose.yaml"></label><label>Web 服务名<input name="webService" required value="${esc(draft.webService)}" placeholder="web"></label><label>容器入口端口<input name="webPort" type="number" min="1" max="65535" step="1" required value="${esc(draft.webPort)}" placeholder="8080"></label>`
   }
   const runtimeHelp = !runtimeProfile
-    ? '该记录来自旧 Compose 配置；当前未接入 Compose 运行，请明确选择一个现有固定运行方式后再保存。'
+    ? editingLab?.runtimeKind === 'container'
+      ? '该记录来自旧 Compose 配置；当前未接入 Compose 运行，请明确选择一个现有固定运行方式后再保存。'
+      : '请选择受支持的运行方式并补齐对应参数。'
+    : runtimeProfile === 'compose-project'
+      ? '多服务通过 Compose 网络互联；仅指定的 Web 服务入口映射到本机回环地址。'
     : runtimeProfile === 'prebuilt-node'
     ? '声明运行依赖时需提供 package-lock.json 或 npm-shrinkwrap.json；安装使用锁文件，且不执行项目安装脚本。'
     : runtimeProfile === 'python-script' || runtimeProfile === 'pygoat'
@@ -1451,7 +1458,6 @@ function render() {
   scheduleSystemPolling()
   if (!state.session || !state.labDetailId) clearDetailPolling()
   document.body.classList.toggle('has-workspace', Boolean(state.session))
-  document.body.classList.toggle('has-login-success-notice', Boolean(state.successNotice && state.session))
   document.body.classList.toggle('has-dialog', Boolean(state.confirm || state.labDetailId || state.adminPanelOpen || state.adminRecordsPanel))
   if (state.loading) {
     app.innerHTML = '<div class="loading-screen" role="status" aria-live="polite"><div class="loading-mark" aria-hidden="true"><span></span><span></span><span></span></div><span>正在打开 VulnLab…</span></div>'
@@ -1671,7 +1677,7 @@ async function runAction(action, element) {
     state.adminLabDraft.runtimeProfile = mode.profile
     state.adminLabInspection = null
     state.adminLabInspectionError = ''
-    for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath']) state.adminLabDraft[field] = ''
+    for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath', 'composeFile', 'webService', 'webPort']) state.adminLabDraft[field] = ''
     render()
     return
   }
@@ -1699,6 +1705,9 @@ async function runAction(action, element) {
       pythonArgs: (lab.runtimeConfig?.pythonArgs ?? []).join('\n'),
       portArg: lab.runtimeConfig?.portArg ?? '',
       settingsPath: lab.runtimeConfig?.settingsPath ?? '',
+      composeFile: lab.runtimeConfig?.composeFile ?? '',
+      webService: lab.runtimeConfig?.webService ?? '',
+      webPort: lab.runtimeConfig?.webPort == null ? '' : String(lab.runtimeConfig.webPort),
       category: lab.category,
       difficulty: lab.difficulty,
       license: lab.license,
@@ -2253,7 +2262,7 @@ app.addEventListener('change', event => {
       const mode = Object.hasOwn(customRuntimeModes, input.value) ? customRuntimeModes[input.value] : customRuntimeModes['php-static']
       state.adminLabDraft.runtimeKind = mode.kind
       state.adminLabDraft.runtimeProfile = mode.profile
-      for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath']) state.adminLabDraft[field] = ''
+      for (const field of ['documentRoot', 'entryPath', 'initSqlPath', 'nodeArgs', 'javaArgs', 'pythonArgs', 'portArg', 'settingsPath', 'composeFile', 'webService', 'webPort']) state.adminLabDraft[field] = ''
       state.adminLabInspection = null
       state.adminLabInspectionError = ''
       render()
@@ -2329,13 +2338,19 @@ app.addEventListener('submit', async event => {
       addConfigText('portArg')
       const javaArgs = String(values.javaArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
       if (javaArgs.length) runtimeConfig.javaArgs = javaArgs
-    } else {
+    } else if (profile === 'python-script') {
       addConfigText('entryPath')
-      if (profile === 'python-script') {
-        addConfigText('portArg')
-        const pythonArgs = String(values.pythonArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
-        if (pythonArgs.length) runtimeConfig.pythonArgs = pythonArgs
-      } else addConfigText('settingsPath')
+      addConfigText('portArg')
+      const pythonArgs = String(values.pythonArgs ?? '').split(/[\r\n，,]/).map(item => item.trim()).filter(Boolean)
+      if (pythonArgs.length) runtimeConfig.pythonArgs = pythonArgs
+    } else if (profile === 'pygoat') {
+      addConfigText('entryPath')
+      addConfigText('settingsPath')
+    } else if (profile === 'compose-project') {
+      addConfigText('composeFile')
+      addConfigText('webService')
+      const webPort = Number(values.webPort)
+      if (Number.isInteger(webPort)) runtimeConfig.webPort = webPort
     }
     const payload = {
       title: String(values.title ?? '').trim(),

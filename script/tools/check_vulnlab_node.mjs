@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
@@ -7,6 +8,7 @@ const read = path => readFile(resolve(root, path), 'utf8')
 const exists = async path => (await stat(resolve(root, path)).catch(() => null))?.isFile() === true
 
 const packageJson = JSON.parse(await read('src/package.json'))
+const packageLock = JSON.parse(await read('src/package-lock.json'))
 const server = await read('src/server.ts')
 const database = await read('src/db.ts')
 const providers = await read('src/runtime/providers.ts')
@@ -20,13 +22,25 @@ const web = await read('src/public/app.js')
 const css = await read('src/public/styles.css')
 const covers = await read('src/public/covers/README.md')
 const readme = await read('README.md')
+const assetReadme = await read('src/assets/README.md')
+const thirdPartyNotices = await read('THIRD_PARTY_NOTICES.md')
 
 assert.equal(packageJson.name, 'vulnlab')
 assert.equal(packageJson.type, 'module')
 assert.ok(packageJson.dependencies.fastify)
 assert.ok(packageJson.dependencies['better-sqlite3'])
 assert.match(packageJson.scripts.test, /test_vulnlab_provider\.mjs/)
+assert.match(packageJson.scripts.test, /test_vulnlab_cleanup\.mjs/)
+assert.match(packageJson.scripts.test, /test_vulnlab_native_compose\.mjs/)
 assert.doesNotMatch(packageJson.scripts.test, /vm_download|vulnhub/i)
+const lockedPackages = Object.entries(packageLock.packages).filter(([path]) => path.startsWith('node_modules/'))
+assert.ok(lockedPackages.length > 0)
+for (const [path, metadata] of lockedPackages) {
+  assert.ok(metadata.version, `npm package version is missing: ${path}`)
+  assert.ok(metadata.resolved || metadata.link, `npm package source is missing: ${path}`)
+  assert.ok(metadata.integrity || metadata.link, `npm package integrity is missing: ${path}`)
+  assert.ok(metadata.license, `npm package license is missing: ${path}`)
+}
 
 assert.match(server, /\/api\/labs\/:id\/install/)
 assert.match(server, /\/api\/labs\/:id\/instances/)
@@ -67,6 +81,17 @@ assert.match(runtimeStatus, /xvwa/)
 assert.doesNotMatch(runtimeStatus, /qemu/i)
 assert.match(seed, /slug: 'xvwa'/)
 assert.match(seed, /title: 'XVWA'/)
+assert.equal((seed.match(/slug: '/g) ?? []).length, 11)
+assert.match(seed, /regularBuiltinLabCount = seedLabs\.filter\(lab => lab\.slug !== 'oa-vuln-labs'\)\.length/)
+assert.match(seed, /slug: 'oa-vuln-labs',[\s\S]*?license: 'Apache-2\.0'/)
+assert.match(seed, /slug: 'oa-vuln-labs',[\s\S]*?version: '1\.0\.0-beta'/)
+assert.match(seed, /slug: 'webgoat',[\s\S]*?license: 'GPL-2\.0'/)
+assert.match(providers, /readonly id = 'native-compose'/)
+assert.match(providers, /'config', '--format', 'json'/)
+assert.match(providers, /包含宿主目录挂载/)
+assert.match(providers, /127\.0\.0\.1/)
+assert.match(providers, /configureXssLabs/)
+assert.match(providers, /ruffle\/ruffle\.js/)
 assert.match(seed, /sourceRef: 's4n7h0\/xvwa@fb30fa517d288e618b521d252f61107ef6a24797'/)
 assert.doesNotMatch(seed, /VulnHub Machines|vulnhub/i)
 
@@ -117,6 +142,53 @@ assert.doesNotMatch(web, /主页:/)
 assert.doesNotMatch(web, /靶场: 9 个内置安全训练环境/)
 assert.doesNotMatch(web, /运行时: PHP \/ Node\.js \/ Java \/ Python/)
 assert.match(readme, /src="src\/public\/favicon\.png"/)
+assert.match(readme, /10 个常规靶场 \+ OA/)
+assert.match(readme, /\| OA-Vuln-Labs \|/)
+assert.doesNotMatch(readme, /Beta|beta/)
+assert.match(readme, /THIRD_PARTY_NOTICES\.md/)
+const labTable = readme.split('## 支持的靶场')[1]?.split('## 启动流程')[0] ?? ''
+assert.equal((labTable.match(/^\| \[/gm) ?? []).length, 10)
+assert.equal((labTable.match(/^\| OA-Vuln-Labs \|/gm) ?? []).length, 1)
+assert.match(assetReadme, /nightly-2026-10-06/)
+assert.match(thirdPartyNotices, /source\.zip` SHA-256 `99d7d57daad5f68474a6a2a0c04be5959bae4543a9ed31a10cfc6249ebc57e64`/)
+assert.match(thirdPartyNotices, /导入归档 SHA-256 写入本地清单/)
+assert.match(covers, /THIRD_PARTY_NOTICES\.md#靶场卡片封面/)
+assert.doesNotMatch(covers, /blob\/(?:master|main)\//)
+const coverHashes = {
+  'dvwa.png': 'a440db6f754d51e5e5a57aad08d4b1be90a47f3f6eb63be907519e71b62a8fb8',
+  'pikachu.png': '390c98333dc945eaae0383017142142dc880ebe603ddc695aaecf59d6dc008f3',
+  'xss-labs.png': '00f0f2188ec6255b1a734b57f33dd52cab555d01e607ffe590f2812f3247a3fd',
+  'sqli-labs.jpg': '997f27b253c2b62be209ea6e446436ca6b8c97d27b9c5dfce5b9d29abcea1559',
+  'upload-labs.jpg': 'cfebcea3f40d7dcf1b54092b4ab971520c7e159248ad986bd290b2139b49f97c',
+  'xvwa.png': '50b29ba51dfd410c044438c60c496701e1d21fb9165b9021efafbbbbe2aaa391',
+  'juice-shop.png': '28392cb221e29d5fdd31853151b02c50eabf27348564381143445f0ace67fe18',
+  'webgoat.png': '5d3ca2eda0c49cbda4de57fbd03ed832cc73865756982dcbf074bb702d5f8505',
+  'pygoat.svg': 'b094b484fc7a06989976afc1c94703b956ca49716852d086be3575bd8940c8b4',
+}
+for (const [file, expectedHash] of Object.entries(coverHashes)) {
+  const bytes = await readFile(resolve(root, 'src/public/covers', file))
+  const hash = createHash('sha256').update(bytes).digest('hex')
+  assert.equal(hash, expectedHash, `cover source hash changed: ${file}`)
+  assert.ok(thirdPartyNotices.includes(`\`${hash}\``), `cover hash is missing from the resource manifest: ${file}`)
+}
+const ruffleHashes = {
+  'ruffle.js': 'ef588353471686368e505f1fbf8b29fbba2f762be5dc527d7cfcd84973ab8911',
+  'core.ruffle.3063d6eba6e1517a4f98.js': '6edbdcc314eb9a4328b96a8885d7ebfde766dad233d8aa08e32eded0bf6605e7',
+  'core.ruffle.40449116850a3e651e6c.js': '651cbe7f490f0e1a8e5997ab68a15afc1dd2c8ece5ff7c6ff05921c9658d334e',
+  '6bd0bf4499a1d6ead2fc.wasm': '3461c15a73e7ce00f2c836bf9474e5150b73039d1b058e803ac31af2ec887b7d',
+  '9b62d11991d757a71e0f.wasm': '4230b8c58c9265430b396c55afb2c55ba8e53130cf6585924a2b8b5e265f22a6',
+  LICENSE_MIT: '4de9338a7879c68e911742a7d691f0797ff1ef8d8a6fb978b0c711e258fe959c',
+  LICENSE_APACHE: '62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a',
+  'LICENSE.md': 'e39a2fa3dfd7238f0924f568fabb659ee1a9d95ea6460dbae4bc9b67017a1c71',
+}
+for (const [file, expectedHash] of Object.entries(ruffleHashes)) {
+  assert.ok(await exists(`src/public/ruffle/${file}`), `missing Ruffle file: ${file}`)
+  assert.ok(thirdPartyNotices.includes(`\`${file}\``), `Ruffle file is missing from the resource manifest: ${file}`)
+  const bytes = await readFile(resolve(root, 'src/public/ruffle', file))
+  const hash = createHash('sha256').update(bytes).digest('hex')
+  assert.equal(hash, expectedHash, `Ruffle file hash changed: ${file}`)
+  assert.ok(thirdPartyNotices.includes(`\`${hash}\``), `Ruffle file hash is missing from the resource manifest: ${file}`)
+}
 assert.doesNotMatch(`${index}\n${web}\n${readme}`, /favicon\.svg/)
 assert.doesNotMatch(web, /runtimePanel\(|runtime-panel/)
 assert.match(web, /data-action="start-instance"/)

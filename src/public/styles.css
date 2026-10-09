@@ -163,7 +163,7 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .lab-detail-open { color: #fff; text-decoration: none; }
 .lab-detail-stop { color: #ef9b95; border-color: #623c39; background-color: #261c1b; }
 .lab-detail-stop:hover { color: #ffd2ce; border-color: #9b4c46; background-color: #35201e; }
-.admin-dialog { width: min(640px, calc(100vw - 32px)); height: min(420px, calc(100dvh - 32px)); max-height: min(420px, calc(100dvh - 32px)); contain: none; overflow: hidden; border-color: #333; border-radius: 16px; padding: 0; background-color: #1d1d1d; box-shadow: 0 24px 70px rgba(0, 0, 0, .42); scrollbar-width: thin; scrollbar-color: #565656 transparent; }
+.admin-dialog { display: flex; width: min(640px, calc(100vw - 32px)); height: min(420px, calc(100dvh - 32px)); min-height: min(280px, calc(100dvh - 32px)); max-height: min(420px, calc(100dvh - 32px)); contain: none; overflow: hidden; border-color: #333; border-radius: 16px; padding: 0; background-color: #1d1d1d; box-shadow: 0 24px 70px rgba(0, 0, 0, .42); scrollbar-width: thin; scrollbar-color: #565656 transparent; }
 .admin-dialog::-webkit-scrollbar { width: 8px; }
 .admin-dialog::-webkit-scrollbar-track { background: transparent; }
 .admin-dialog::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: #565656; background-clip: padding-box; }
@@ -326,7 +326,7 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 .admin-dialog-primary { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; }
 .admin-dialog .admin-selection-actions { flex: 0 0 auto; gap: 6px; }
 
-.admin-layout { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-columns: 100px minmax(0, 1fr); }
+.admin-layout { display: grid; width: 100%; height: auto; min-height: 0; flex: 1 1 auto; grid-template-columns: 100px minmax(0, 1fr); }
 .admin-sidebar { min-width: 0; padding: 14px 7px; border-right: 1px solid var(--workspace-line); background-color: #181818; }
 .admin-nav { display: grid; gap: 5px; margin-top: 0; }
 .admin-nav-button { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 7px; padding: 0 10px; color: #9c9c9c; background: transparent; font: inherit; font-size: 11px; text-align: left; transition: border-color 160ms ease, color 160ms ease, background-color 160ms ease; }
@@ -709,6 +709,9 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
   .workspace-brand-subtitle { font-size: 10px; }
   .lab-canvas { display: block; width: calc(100% - 20px); height: auto; max-height: none; margin: 10px auto 20px; overflow: visible; padding: 12px 10px 20px; border: 1px solid rgba(255, 255, 255, .065); border-radius: 10px; background-color: #151515; box-shadow: inset 0 1px rgba(255, 255, 255, .025); }
   .lab-grid { height: auto; min-height: 0; gap: 10px; }
+  .lab-grid.has-overflow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; padding-bottom: 12px; }
+  .lab-grid.has-overflow::after { display: none; }
+  .lab-grid.has-overflow > .lab-card-grid { display: contents; }
   .lab-card-grid { height: auto; min-height: 0; flex-basis: auto; align-content: start; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; gap: 10px; }
   .lab-card { --caption-height: 38px; height: auto; min-height: 0; aspect-ratio: 1.32; border-radius: 8px; }
   .lab-add-card { aspect-ratio: 1.32; margin-bottom: 0; }
@@ -716,19 +719,17 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
   .lab-card-title { font-size: 11px; }
   .login-page { padding: 16px; }
   .login-notice { top: 16px; right: 16px; width: min(304px, calc(100vw - 32px)); }
-  .labs-screen .login-notice-success { top: max(16px, env(safe-area-inset-top)); right: 16px; width: min(226px, calc(100vw - 32px)); }
-  body.has-workspace.has-login-success-notice .lab-canvas { padding-top: 80px; }
+  .labs-screen .login-notice-success { top: max(4px, env(safe-area-inset-top)); right: 12px; width: min(214px, calc(100vw - 24px)); min-height: 48px; padding-block: 6px; }
   .toast { right: 16px; bottom: 16px; width: min(304px, calc(100vw - 32px)); }
 }
 
 @media (max-width: 600px) {
-  .admin-dialog { width: min(640px, calc(100vw - 24px)); height: min(480px, calc(100dvh - 24px)); max-height: min(480px, calc(100dvh - 24px)); }
-  .admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .admin-sidebar { padding: 10px 12px 8px; border-right: 0; border-bottom: 1px solid var(--workspace-line); }
-  .admin-nav { display: flex; overflow-x: auto; gap: 6px; margin-top: 10px; scrollbar-width: none; }
-  .admin-nav::-webkit-scrollbar { display: none; }
-  .admin-nav-button { min-height: 34px; flex: 0 0 auto; padding: 0 10px; }
-  .admin-dialog-main { padding: 8px 14px 12px; }
+  .admin-dialog { width: min(640px, calc(100vw - 24px)); height: min(420px, calc(100dvh - 40px)); min-height: min(280px, calc(100dvh - 40px)); max-height: min(420px, calc(100dvh - 40px)); }
+  .admin-layout { grid-template-columns: 88px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .admin-sidebar { padding: 10px 6px; border-right: 1px solid var(--workspace-line); border-bottom: 0; }
+  .admin-nav { gap: 4px; }
+  .admin-nav-button { min-height: 32px; justify-content: center; gap: 0; padding: 0 4px; font-size: 10px; text-align: center; }
+  .admin-dialog-main { padding: 8px 10px 12px; }
   .admin-system-view { gap: 8px; }
   .admin-system-stat { gap: 3px; padding: 8px 9px 7px; }
   .admin-system-stat strong { font-size: 16px; }
@@ -749,7 +750,10 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
   .admin-lab-row[data-builtin="false"] .admin-lab-row-created { flex-basis: 100%; margin-left: 0; text-align: left; }
   .admin-lab-row-actions { justify-content: flex-start; gap: 4px; }
   .admin-lab-row-actions .button { min-height: 28px; padding: 0 7px; font-size: 10px; }
-  .admin-record-filters { flex-wrap: wrap; align-items: flex-end; }
+  .admin-record-filters { display: grid; grid-template-columns: 31px minmax(0, 1fr); align-items: end; }
+  .admin-record-filters .admin-select-all { grid-column: 1; grid-row: 1; margin: 0 0 0 10px; }
+  .admin-record-filters > .admin-record-filter { grid-column: 2; }
+  .admin-record-filters > .admin-clear-filters { grid-column: 2; justify-self: start; }
   .admin-record-filter { flex: 1 1 150px; }
   .admin-record-filter input { width: 100%; }
   .admin-action-select { width: 100%; }
@@ -766,22 +770,27 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
   .invitation-card code { overflow-wrap: anywhere; white-space: normal; }
   .invitation-history-head { display: flex; min-height: 34px; justify-content: flex-start; }
   .invitation-history-head > span { display: none; }
+  .invitation-history-head::after { margin-left: 6px; color: #909090; content: "邀请码记录"; font-size: 11px; font-weight: 600; }
   .invitation-history-card { grid-template-columns: 16px minmax(0, 1fr) 28px; grid-template-areas: "select status action" "select created created" "select used used" "select expiry expiry"; align-items: start; gap: 8px 10px; min-height: 0; padding: 10px; }
   .invitation-history-card > .admin-record-select, .invitation-row-spacer { grid-area: select; margin-top: 2px; }
-  .invitation-field-status { grid-area: status; display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; gap: 8px; }
+  .invitation-field-status { grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 4px; }
+  .admin-dialog[data-admin-dialog-view="invitations"] .invitation-field-status strong,
+  .admin-dialog[data-admin-dialog-view="invitations"] .invitation-status-copy { justify-self: start; padding-right: 5px; padding-left: 5px; }
   .invitation-field-created { grid-area: created; }
   .invitation-field-used { grid-area: used; }
   .invitation-field-expiry { grid-area: expiry; }
-  .invitation-field:not(.invitation-field-status) { display: grid; grid-template-columns: 94px minmax(0, 1fr); align-items: baseline; gap: 8px; }
-  .invitation-field-expiry { grid-template-columns: 62px minmax(0, 1fr) !important; }
+  .invitation-field:not(.invitation-field-status) { display: grid; grid-template-columns: minmax(0, 1fr); align-items: baseline; gap: 3px; }
   .invitation-field-label { display: block; overflow: visible !important; color: #858585 !important; font-variant-numeric: normal !important; text-overflow: clip !important; }
   .invitation-field-value { grid-template-columns: minmax(0, 1fr); gap: 3px; }
   .invitation-field .invitation-used-by { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
   .invitation-operation { grid-area: action; }
   .invitation-retained { text-align: center; }
   .audit-entry-content { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
-  .admin-user-table-head { display: flex; min-height: 34px; align-items: center; justify-content: flex-start; padding: 0 10px; }
-  .admin-user-table-head > span { display: none; }
+  .admin-user-table-head { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 10px; }
+  .admin-user-table-head > span { display: block; flex: 0 0 auto; text-align: left; white-space: nowrap; }
+  .admin-user-table-head > span:nth-of-type(2) { text-align: left; }
+  .admin-user-table-head > span:last-child { width: 64px; flex: 0 0 64px; margin-left: auto; text-align: right; }
+  .admin-user-table-head .admin-select-all { width: 14px; flex: 0 0 14px; margin: 0; }
   .admin-user-entry:not(.admin-user-system) { grid-template-columns: 16px minmax(0, 1fr) 64px; gap: 8px 10px; min-height: 56px; padding: 8px 10px; }
   .admin-dialog[data-admin-dialog-view="users"] .user-history .admin-user-entry:not(.admin-user-system) { min-height: 56px; }
   .admin-user-entry.admin-user-system { min-height: 52px; margin: 0; padding: 8px 10px; }
@@ -792,6 +801,20 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
   .admin-user-time-label { display: inline; }
 }
 
+@media (min-width: 361px) and (max-width: 600px) {
+  .admin-record-filters { grid-template-columns: 31px repeat(2, minmax(0, 1fr)); }
+  .admin-record-filters:not(:has(.admin-select-all)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-record-filters > label.admin-record-filter { grid-column: 2; }
+  .admin-record-filters > .admin-record-filter + .admin-record-filter { grid-column: 3; }
+  .admin-record-filters:not(:has(.admin-select-all)) > label.admin-record-filter { grid-column: 1; }
+  .admin-record-filters:not(:has(.admin-select-all)) > .admin-record-filter + .admin-record-filter { grid-column: 2; }
+  .admin-record-filters > .admin-clear-filters { grid-column: 2 / -1; }
+  .admin-record-filters:not(:has(.admin-select-all)) > .admin-clear-filters { grid-column: 1 / -1; }
+  .invitation-field-status { grid-template-columns: minmax(70px, .45fr) minmax(0, 1fr); align-items: center; gap: 8px; }
+  .invitation-field:not(.invitation-field-status) { grid-template-columns: minmax(80px, .45fr) minmax(0, 1fr); align-items: baseline; gap: 8px; }
+  .invitation-field-expiry .invitation-field-value > time { display: flex; overflow: visible; white-space: normal; }
+}
+
 @media (min-width: 481px) and (max-width: 600px) {
   .admin-lab-source-row { grid-template-columns: minmax(126px, .78fr) minmax(0, 1.22fr); gap: 8px; }
   .admin-lab-display-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -800,6 +823,10 @@ input[type="checkbox"]:checked:focus, input[type="checkbox"]:checked:focus-visib
 }
 
 @media (max-width: 360px) {
+  .admin-layout { grid-template-columns: 64px minmax(0, 1fr); }
+  .admin-dialog-main { padding-right: 6px; padding-left: 6px; }
+  .admin-nav-button { padding: 0 2px; font-size: 9px; }
+  .invitation-field-expiry .invitation-field-value > time { display: flex; overflow: visible; overflow-wrap: anywhere; white-space: normal; }
   .admin-dialog .dialog-actions { align-items: flex-end; }
   .admin-dialog .admin-selection-actions { position: relative; padding-top: 14px; }
   .admin-dialog .admin-selection-count { position: absolute; top: 0; right: 0; min-height: 14px; }

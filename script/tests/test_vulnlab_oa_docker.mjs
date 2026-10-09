@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { createOaDockerComposeConfig, DockerOaProvider, oaDockerProjectName } from '../../src/dist/runtime/providers.js'
 import { inspectOaDockerAsset, oaDockerAssetPath } from '../../src/dist/labs/oa-vuln-labs/docker-assets.js'
-import { inspectOaDockerRuntime } from '../../src/dist/labs/oa-vuln-labs/docker-runtime.js'
+import { inspectOaDockerRuntime, localDockerEnvironment } from '../../src/dist/labs/oa-vuln-labs/docker-runtime.js'
 import { dataPaths } from '../../src/dist/paths.js'
 
 const projectName = oaDockerProjectName('oa-test-instance-123')
@@ -60,6 +60,20 @@ const missingDocker = await inspectOaDockerRuntime(async args => ({
 assert.equal(missingDocker.available, false)
 assert.deepEqual(missingDocker.missing, ['Docker CLI'])
 assert.match(missingDocker.cli.detail, /未找到 Docker CLI/)
+
+const dockerEnvironment = localDockerEnvironment({
+  Path: 'C:\\Docker\\bin',
+  ProgramData: 'C:\\ProgramData',
+  ProgramFiles: 'C:\\Program Files',
+  'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+  ProgramW6432: 'C:\\Program Files',
+  PRIVATE_TOKEN: 'not-forwarded',
+})
+assert.equal(dockerEnvironment.ProgramFiles, 'C:\\Program Files')
+assert.equal(dockerEnvironment.ProgramData, 'C:\\ProgramData')
+assert.equal(dockerEnvironment['ProgramFiles(x86)'], 'C:\\Program Files (x86)')
+assert.equal(dockerEnvironment.ProgramW6432, 'C:\\Program Files')
+assert.equal(dockerEnvironment.PRIVATE_TOKEN, undefined)
 
 const noCompose = await inspectOaDockerRuntime(async args => {
   if (args[0] === '--version') return { ok: true, stdout: 'Docker version fixture', stderr: '', code: 0 }

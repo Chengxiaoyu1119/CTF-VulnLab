@@ -118,6 +118,13 @@ try {
   assert.equal(seedLabs.status, 200)
   const builtinLab = seedLabs.body.find(item => item.builtin)
   assert.ok(builtinLab)
+  const oaLab = seedLabs.body.find(item => item.slug === 'oa-vuln-labs')
+  assert.ok(oaLab)
+  assert.equal(oaLab.version, '1.0.0')
+  assert.equal(oaLab.sourceRef, 'oa-vuln-labs@1.0.0')
+  const oaDetail = await request(`/api/labs/${oaLab.id}`)
+  assert.equal(oaDetail.body.version, '1.0.0')
+  assert.equal(oaDetail.body.sourceRef, 'oa-vuln-labs@1.0.0')
   assert.equal((await request(`/api/labs/${builtinLab.id}`, { method: 'DELETE' })).status, 404)
   const disableBuiltin = await request(`/api/labs/${builtinLab.id}/status`, { method: 'PATCH', body: { disabled: true } })
   assert.equal(disableBuiltin.status, 200, JSON.stringify(disableBuiltin.body))
@@ -137,12 +144,12 @@ try {
   const composeArchive = await upload({ 'compose/docker-compose.yml': 'services: {}', 'compose/README.md': 'fixture' })
   const composeInspection = await request('/api/lab-source-inspections', { method: 'POST', body: { sourceType: 'archive', sourceUrl: composeArchive.sourceUrl, runtimeMode: 'node' } })
   assert.equal(composeInspection.status, 200, JSON.stringify(composeInspection.body))
-  assert.equal(composeInspection.body.suggestion.mode, null)
-  assert.ok(composeInspection.body.suggestion.warnings.some(item => item.includes('Compose') && item.includes('不会执行')))
+  assert.equal(composeInspection.body.suggestion.mode, 'compose')
+  assert.ok(composeInspection.body.suggestion.signals.some(item => item.includes('docker-compose.yml')))
   assert.ok(composeInspection.body.suggestion.warnings.some(item => item.includes('package.json')))
   const unsupportedInspection = await request('/api/lab-source-inspections', { method: 'POST', body: { sourceType: 'git', sourceUrl: 'https://example.com/team/project' } })
   assert.equal(unsupportedInspection.status, 422)
-  const invalidInspectionMode = await request('/api/lab-source-inspections', { method: 'POST', body: { sourceType: 'archive', sourceUrl: inspectionArchive.sourceUrl, runtimeMode: 'compose' } })
+  const invalidInspectionMode = await request('/api/lab-source-inspections', { method: 'POST', body: { sourceType: 'archive', sourceUrl: inspectionArchive.sourceUrl, runtimeMode: 'vm' } })
   assert.equal(invalidInspectionMode.status, 400, JSON.stringify(invalidInspectionMode.body))
 
   const invalidConfigs = [
@@ -153,6 +160,9 @@ try {
     ['native-java', { profile: 'java-jar', entryPath: '../outside.jar' }],
     ['native-python', { profile: 'pygoat', settingsPath: '../outside.py' }],
     ['native-python', { profile: 'python-script', entryPath: '../outside.py' }],
+    ['native-compose', { profile: 'compose-project', composeFile: '../outside.yml', webService: 'web', webPort: 8080 }],
+    ['native-compose', { profile: 'compose-project', composeFile: 'compose.yaml', webService: 'bad/service', webPort: 8080 }],
+    ['native-compose', { profile: 'compose-project', composeFile: 'compose.yaml', webService: 'web', webPort: 65536 }],
   ]
   for (const [runtimeKind, runtimeConfig] of invalidConfigs) {
     const result = await createLab('upload://00000000-0000-0000-0000-000000000000', `非法配置 ${runtimeKind}`, runtimeKind, runtimeConfig)
@@ -202,6 +212,22 @@ try {
   assert.equal(pythonModeLab.body.lab.runtimeKind, 'native-python')
   assert.equal(pythonModeLab.body.lab.runtimeConfig.profile, 'python-script')
   assert.equal((await finishJob(pythonModeLab.body.job.id)).status, 'completed')
+
+  const composeSource = await upload({
+    'project/compose.yaml': 'services:\n  web:\n    build: .\n    ports:\n      - "8080:8080"\n',
+    'project/Dockerfile': 'FROM nginx:alpine\n',
+    'project/index.html': '<h1>compose fixture</h1>',
+  })
+  const composeLab = await createLab(composeSource.sourceUrl, 'Compose 靶场', 'native-compose', {
+    profile: 'compose-project', composeFile: 'compose.yaml', webService: 'web', webPort: 8080,
+  })
+  assert.equal(composeLab.status, 202, JSON.stringify(composeLab.body))
+  assert.equal(composeLab.body.lab.providerId, 'native-compose')
+  assert.equal(composeLab.body.lab.runtimeConfig.composeFile, 'compose.yaml')
+  assert.equal(composeLab.body.lab.runtimeConfig.webService, 'web')
+  assert.equal(composeLab.body.lab.runtimeConfig.webPort, 8080)
+  const composeJob = await finishJob(composeLab.body.job.id)
+  assert.equal(composeJob.status, 'completed', JSON.stringify(composeJob))
 
   const appSource = `import { createServer } from 'node:http';\ncreateServer((_req, res) => { res.writeHead(200); res.end('custom-lab-ok'); }).listen(Number(process.env.PORT), process.env.HOST);\n`
   const validArchive = await upload({ 'site/app.js': appSource, 'site/server.js': appSource })

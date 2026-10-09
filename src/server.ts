@@ -12,6 +12,7 @@ import { hasBuiltinAsset, installBuiltinAsset } from './builtin-assets.js'
 import { cleanupImportStaging, cleanupStaleVulnLabStaging, importGitHubRepository, importGitLabRepository, importLocalArchive, ImporterError } from './imports/importer.js'
 import { adapterFor } from './imports/importers.js'
 import { inspectPublicGitRepository, inspectUploadedArchive, supportedInspectionModes } from './imports/source-inspection.js'
+import { processPendingCleanup } from './cleanup.js'
 import { mysqlRuntimeConfigFromEnv } from './runtime/mysql.js'
 import { ProviderError, providerRegistry, type NativeRuntimeConfig } from './runtime/providers.js'
 import { projectEnvironmentOptionsFromEnv } from './runtime/project-environment.js'
@@ -27,6 +28,9 @@ if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Vul
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const appDir = basename(moduleDir) === 'dist' ? resolve(moduleDir, '..') : moduleDir
 const publicDir = join(appDir, 'public')
+const presentLab = (lab: Lab) => lab.slug === 'oa-vuln-labs'
+  ? { ...lab, version: '1.0.0', sourceRef: 'oa-vuln-labs@1.0.0' }
+  : lab
 const storage = dataPaths(process.env.VULNLAB_DATA_DIR ? process.env.VULNLAB_DATA_DIR : join(appDir, 'data'))
 const dataDir = storage.root
 const bundleDir = process.env.VULNLAB_BUNDLE_DIR?.trim() ? resolve(process.env.VULNLAB_BUNDLE_DIR) : undefined
@@ -297,13 +301,20 @@ const reapExpiredInstances = async () => {
 const expiredInstanceTimer = setInterval(() => {
   void reapExpiredInstances().catch(error => app.log.error(error, '过期实例回收任务失败。'))
 }, 5_000)
+const pendingCleanupTimer = setInterval(() => {
+  void processPendingCleanup(database, dataDir).then(result => {
+    if (result.failed) app.log.warn(result, '靶场资源清理暂未完成，将继续重试。')
+  }).catch(error => app.log.error(error, '靶场资源清理队列执行失败。'))
+}, 10_000)
 const pendingOaCleanupTimer = setInterval(() => {
   void recoverPendingProviderInstances().catch(error => app.log.error(error, 'OA Docker 待回收资源重试失败。'))
 }, 30_000)
 expiredInstanceTimer.unref()
+pendingCleanupTimer.unref()
 pendingOaCleanupTimer.unref()
 app.addHook('onClose', async () => {
   clearInterval(expiredInstanceTimer)
+  clearInterval(pendingCleanupTimer)
   clearInterval(pendingOaCleanupTimer)
 })
 
@@ -393,6 +404,7 @@ const runtimeProfiles: Record<RuntimeKind, readonly LabRuntimeConfig['profile'][
   'native-java': ['webgoat', 'java-jar'],
   'native-python': ['pygoat', 'python-script'],
   'native-oa': ['oa-project'],
+  'native-compose': ['compose-project'],
 }
 
 const defaultRuntimeProfile = (runtimeKind: RuntimeKind): LabRuntimeConfig['profile'] => runtimeProfiles[runtimeKind][0]
@@ -557,6 +569,11 @@ const validateImportedLab = async (lab: Lab, localPath: string) => {
   if (config.profile === 'python-script') {
     const script = runtimePath(localPath, config.entryPath || 'app.py', 'Python 运行文件')
     if (!(await stat(script).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Python 项目缺少可运行文件。')
+    return
+  }
+  if (config.profile === 'compose-project') {
+    const composeFile = runtimePath(localPath, config.composeFile || 'compose.yaml', 'Compose 配置文件')
+    if (!(await stat(composeFile).then(item => item.isFile()).catch(() => false))) throw new ImporterError('Compose 项目缺少指定配置文件。')
     return
   }
   const manage = runtimePath(localPath, config.entryPath || 'manage.py', 'Python 入口文件')
@@ -1098,6 +1115,7 @@ const parseCustomLabInput = async (body: Record<string, unknown>, current?: Lab)
     webgoat: { kind: 'native-java', profile: 'webgoat' },
     python: { kind: 'native-python', profile: 'python-script' },
     django: { kind: 'native-python', profile: 'pygoat' },
+    compose: { kind: 'native-compose', profile: 'compose-project' },
   }
   const requestedRuntimeMode = body.runtimeMode
   const modeConfig = typeof requestedRuntimeMode === 'string' ? runtimeModeMap[requestedRuntimeMode] : undefined
@@ -1183,6 +1201,21 @@ const parseCustomLabInput = async (body: Record<string, unknown>, current?: Lab)
     if (entryPath === null || settingsPath === null || !entryPath || !settingsPath) return invalid('LAB_RUNTIME_CONFIG_INVALID', 'Python 入口或设置路径无效。')
     runtimeConfig.entryPath = entryPath
     runtimeConfig.settingsPath = settingsPath
+  } else if (profile === 'compose-project') {
+    const composeFile = relativeConfigPath('composeFile', 'compose.yaml')
+    const webService = configText('webService', '', 63)
+    const rawWebPort = configValue('webPort')
+    const webPort = typeof rawWebPort === 'number' && Number.isInteger(rawWebPort)
+      ? rawWebPort
+      : typeof rawWebPort === 'string' && /^\d{1,5}$/.test(rawWebPort.trim())
+        ? Number(rawWebPort.trim())
+        : NaN
+    if (composeFile === null || !composeFile || webService === null || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(webService) || !Number.isInteger(webPort) || webPort < 1 || webPort > 65535) {
+      return invalid('LAB_RUNTIME_CONFIG_INVALID', 'Compose 文件、Web 服务名或入口端口无效。')
+    }
+    runtimeConfig.composeFile = composeFile
+    runtimeConfig.webService = webService
+    runtimeConfig.webPort = webPort
   } else {
     const entryPath = relativeConfigPath('entryPath', 'app.py')
     if (entryPath === null || !entryPath) return invalid('LAB_RUNTIME_CONFIG_INVALID', 'Python 运行文件路径无效。')
@@ -1275,23 +1308,14 @@ app.delete('/api/labs/:id', async (request, reply) => {
   if (['queued', 'importing'].includes(lab.status) || jobs.some(job => ['queued', 'importing'].includes(job.status)) || jobs.some(job => activeImports.has(job.id))) {
     return reply.code(409).send({ code: 'LAB_PREPARING', message: '靶场正在准备，请等待任务结束后再删除。' })
   }
-  const deleted = database.deleteCustomLab(id)
+  const cleanupPaths = [storage.lab(lab.slug, lab.version), ...jobs.map(job => storage.importJob(job.id))]
+  const uploaded = /^upload:\/\/([0-9a-f-]{36})$/i.exec(lab.sourceUrl)
+  if (uploaded && !database.listLabs(true).some(item => item.id !== id && item.sourceUrl === lab.sourceUrl)) cleanupPaths.push(storage.labUpload(uploaded[1].toLowerCase()))
+  const deleted = database.deleteCustomLab(id, cleanupPaths)
   if (!deleted) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '自定义靶场不存在。' })
-
-  let cleanupPending = false
-  const cleanupPaths: string[] = []
-  try { cleanupPaths.push(storage.lab(deleted.slug, deleted.version)) } catch { cleanupPending = true }
-  for (const job of jobs) {
-    try { cleanupPaths.push(storage.importJob(job.id)) } catch { cleanupPending = true }
-  }
-  for (const path of cleanupPaths) {
-    try { await rm(path, { recursive: true, force: true }) } catch { cleanupPending = true }
-  }
-  const uploaded = /^upload:\/\/([0-9a-f-]{36})$/i.exec(deleted.sourceUrl)
-  if (uploaded && !database.listLabs(true).some(item => item.sourceUrl === deleted.sourceUrl)) {
-    try { await rm(storage.labUpload(uploaded[1].toLowerCase()), { force: true }) } catch { cleanupPending = true }
-  }
-  database.addAudit(session.userName, 'lab.delete', deleted.title, cleanupPending
+  await processPendingCleanup(database, dataDir)
+  const cleanupPending = database.hasPendingCleanup(deleted.batchId)
+  database.addAudit(session.userName, 'lab.delete', deleted.lab.title, cleanupPending
     ? '已删除自定义靶场记录；部分独占资源需后续清理。'
     : '已删除自定义靶场记录及其独占导入资源。')
   return reply.send({ ok: true, cleanupPending })
@@ -1354,14 +1378,14 @@ app.patch('/api/labs/:id/status', async (request, reply) => {
   const preparation = !disabled && restoredLab?.status === 'cataloged' ? startLabInstall(restoredLab, session.userName) : null
   const updated = database.getLab(id)
   database.addAudit(session.userName, disabled ? 'lab.disable' : 'lab.enable', lab.title, disabled ? '已停用靶场。' : '已恢复靶场。')
-  return reply.code(preparation?.started ? 202 : 200).send({ ok: true, lab: updated, job: preparation?.job ?? null, started: preparation?.started ?? false })
+  return reply.code(preparation?.started ? 202 : 200).send({ ok: true, lab: updated ? presentLab(updated) : updated, job: preparation?.job ?? null, started: preparation?.started ?? false })
 })
 
 app.get('/api/labs', async (request, reply) => {
   const session = requireUser(request, reply)
   if (!session) return
   const labs = database.listLabs(session.role === 'admin')
-  return labs
+  return labs.map(presentLab)
 })
 
 app.get('/api/labs/:id', async (request, reply) => {
@@ -1370,7 +1394,7 @@ app.get('/api/labs/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
   const lab = database.getLab(id)
   if (!lab || (lab.status === 'disabled' && session.role !== 'admin')) return reply.code(404).send({ code: 'LAB_NOT_FOUND', message: '靶场不存在。' })
-  return lab
+  return presentLab(lab)
 })
 
 app.get('/api/import-jobs', async (request, reply) => {
@@ -1392,7 +1416,7 @@ app.post('/api/labs/:id/install', async (request, reply) => {
   if (!hasBuiltinAsset(lab.slug) && !adapter?.implemented && !archiveAvailable) return reply.code(409).send({ code: 'LAB_INSTALLER_NOT_READY', message: '该靶场的安装器尚未接通。' })
   const result = startLabInstall(lab, session.userName)
   database.addAudit(session.userName, 'lab.install', lab.title, lab.version)
-  return reply.code(result.started ? 202 : 200).send(result)
+  return reply.code(result.started ? 202 : 200).send({ ...result, lab: presentLab(result.lab) })
 })
 
 app.get('/api/instances', async (request, reply) => {
@@ -1423,7 +1447,8 @@ app.post('/api/labs/:id/instances', async (request, reply) => {
     if (!preparation.job?.id) return reply.code(409).send({ code: 'LAB_PREPARE_FAILED', message: '靶场准备任务未创建。' })
     queueStartAfterImport(lab.id, preparation.job.id, session.userName, publicOrigin(request), mode)
     database.addAudit(session.userName, 'instance.prepare', lab.title, preparation.job.id)
-    return reply.code(202).send({ status: 'preparing', lab: database.getLab(lab.id), job: preparation.job })
+    const preparingLab = database.getLab(lab.id)
+    return reply.code(202).send({ status: 'preparing', lab: preparingLab ? presentLab(preparingLab) : preparingLab, job: preparation.job })
   }
   const instance = await startLabInstance(lab, session.userName, publicOrigin(request), mode)
   return reply.code(201).send(instance)
@@ -1598,6 +1623,8 @@ const start = async () => {
     .filter(Boolean)
   const removedStagingDirs = await cleanupStaleVulnLabStaging(dataDir, Date.now(), preservedUploadIds)
   if (removedStagingDirs) app.log.info({ removedStagingDirs }, '已清理项目数据目录中的异常退出暂存目录。')
+  const pendingCleanup = await processPendingCleanup(database, dataDir)
+  if (pendingCleanup.completed || pendingCleanup.failed) app.log.info(pendingCleanup, '已处理靶场资源清理队列。')
   const reconciliation = database.reconcileBuiltinPaths(dataDir)
   if (reconciliation.repaired.length || reconciliation.reset.length) {
     app.log.info(reconciliation, '内置靶场路径已完成启动前对账。')
@@ -1615,6 +1642,7 @@ const shutdown = async (signal: string) => {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(expiredInstanceTimer)
+  clearInterval(pendingCleanupTimer)
   clearInterval(pendingOaCleanupTimer)
   app.log.info(`收到 ${signal}，正在关闭 VulnLab。`)
   try {

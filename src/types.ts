@@ -4,9 +4,9 @@ export type LabStatus = 'cataloged' | 'queued' | 'importing' | 'ready' | 'error'
 
 export type SourceType = 'git' | 'archive'
 
-export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python' | 'native-oa'
+export type RuntimeKind = 'native-php' | 'native-node' | 'native-java' | 'native-python' | 'native-oa' | 'native-compose'
 
-export type LabRuntimeProfile = 'static-php' | 'mysql-php' | 'prebuilt-node' | 'webgoat' | 'pygoat' | 'java-jar' | 'python-script' | 'oa-project'
+export type LabRuntimeProfile = 'static-php' | 'mysql-php' | 'prebuilt-node' | 'webgoat' | 'pygoat' | 'java-jar' | 'python-script' | 'oa-project' | 'compose-project'
 
 export interface LabRuntimeConfig {
   profile: LabRuntimeProfile
@@ -20,6 +20,9 @@ export interface LabRuntimeConfig {
   /** 通用进程命令末尾追加的可选参数，支持 {port}/{host} 占位符。 */
   portArg?: string
   settingsPath?: string
+  composeFile?: string
+  webService?: string
+  webPort?: number
 }
 
 export type Difficulty = '入门' | '简单' | '中等' | '困难'

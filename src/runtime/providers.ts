@@ -12,7 +12,7 @@ import { RpcPeer } from '../labs/oa-vuln-labs/ipc.js'
 import { adaptOaSeed } from '../labs/oa-vuln-labs/seed.js'
 import { OA_LAUNCHER_SHA256, probeOaAppContainer } from '../labs/oa-vuln-labs/sandbox.js'
 import { inspectOaDockerAsset, oaDockerAssetPath, unpackOaDockerAsset } from '../labs/oa-vuln-labs/docker-assets.js'
-import { inspectOaDockerRuntime, runDockerCommand, type DockerCommandResult } from '../labs/oa-vuln-labs/docker-runtime.js'
+import { inspectOaDockerRuntime, localDockerEnvironment, runDockerCommand, type DockerCommandResult } from '../labs/oa-vuln-labs/docker-runtime.js'
 import { dataPaths } from '../paths.js'
 import type { Lab, LabInstance, RuntimeKind } from '../types.js'
 
@@ -675,6 +675,22 @@ const configureXssLabs = async (root: string) => {
   }
   contents = contents.replace('http://www.exifviewer.org/', 'about:blank').replace('/xss/level15.php', 'level15.php')
   await writeFile(levelPath, contents, 'utf8')
+
+  for (const [level, swf] of [[17, 'xsf01.swf'], [18, 'xsf02.swf'], [19, 'xsf03.swf'], [20, 'xsf04.swf']] as const) {
+    const path = join(root, `level${level}.php`)
+    let html = await readFile(path, 'utf8').catch(() => {
+      throw new ProviderError('NATIVE_PHP_CONFIG_NOT_FOUND', `XSS-Labs 缺少 level${level}.php 关卡文件。`, 409)
+    })
+    if (!html.includes(swf) || !/<embed\b/i.test(html)) {
+      throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', `XSS-Labs 第 ${level} 关与固定版本不匹配。`, 409)
+    }
+    if (!html.includes('ruffle/ruffle.js')) {
+      if (!/<\/head>/i.test(html)) throw new ProviderError('NATIVE_PHP_CONFIG_INVALID', `XSS-Labs 第 ${level} 关缺少 head 节点。`, 409)
+      html = html.replace(/<\/head>/i, '  <script src="ruffle/ruffle.js"></script>\n</head>')
+      await writeFile(path, html, 'utf8')
+    }
+  }
+  await cp(join(appDir, 'public', 'ruffle'), join(root, 'ruffle'), { recursive: true, force: true })
 }
 
 const configureDvwaExistingDatabase = async (root: string) => {
@@ -1952,6 +1968,347 @@ export class DockerOaProvider implements LabProvider {
   }
 }
 
+interface NativeComposeRuntimeState {
+  provider: 'native-compose'
+  instanceId: string
+  projectName: string
+  port: number
+  cleanupPending: boolean
+  updatedAt: string
+}
+
+interface NativeComposeRuntime {
+  root: string
+  projectName: string
+  port: number
+  instanceId: string
+}
+
+type ComposeModel = {
+  name?: string
+  services?: Record<string, Record<string, unknown>>
+  networks?: Record<string, Record<string, unknown>>
+  volumes?: Record<string, Record<string, unknown>>
+  configs?: Record<string, Record<string, unknown>>
+  secrets?: Record<string, Record<string, unknown>>
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
+const composeStatePath = (root: string) => join(root, 'native-compose.json')
+const composeFilePath = (root: string) => join(root, 'compose.json')
+export const nativeComposeProjectName = (instanceId: string) => `vulnlab-${createHash('sha256').update(instanceId).digest('hex').slice(0, 24)}`
+
+const containedPath = (root: string, target: string) => {
+  const relativePath = relative(resolve(root), resolve(target))
+  return relativePath === '' || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+}
+
+export interface NativeComposeProviderOptions {
+  runDocker?: (args: string[], timeoutMs?: number) => Promise<DockerCommandResult>
+  allocatePort?: PortAllocator
+  waitUntilReady?: (port: number) => Promise<void>
+}
+
+export class NativeComposeProvider implements LabProvider {
+  readonly id = 'native-compose'
+  readonly supportedRuntimeKinds: readonly RuntimeKind[] = ['native-compose']
+  private readonly runDocker: (args: string[], timeoutMs?: number) => Promise<DockerCommandResult>
+  private readonly allocatePortImpl: PortAllocator
+  private readonly waitUntilReadyImpl: (port: number) => Promise<void>
+  private readonly runtimes = new Map<string, NativeComposeRuntime>()
+  private readonly starting = new Set<string>()
+  private readonly cleanups = new Map<string, Promise<void>>()
+  private readonly reservedPorts = new Set<number>()
+  private portAllocation = Promise.resolve()
+
+  constructor(options: NativeComposeProviderOptions = {}) {
+    this.runDocker = options.runDocker ?? ((args, timeoutMs) => runDockerCommand(args, timeoutMs, localDockerEnvironment()))
+    this.allocatePortImpl = options.allocatePort ?? allocatePort
+    this.waitUntilReadyImpl = options.waitUntilReady ?? (port => this.waitUntilReady(port))
+  }
+
+  private composeArgs(root: string, projectName: string, args: string[]) {
+    return ['compose', '--project-name', projectName, '--file', composeFilePath(root), '--project-directory', root, ...args]
+  }
+
+  private async claimPort(config: NativeRuntimeConfig) {
+    let release!: () => void
+    const turn = new Promise<void>(resolveTurn => { release = resolveTurn })
+    const previous = this.portAllocation
+    this.portAllocation = previous.then(() => turn)
+    await previous
+    try {
+      for (let attempt = 0; attempt <= config.portEnd - config.portStart; attempt += 1) {
+        const port = await this.allocatePortImpl('127.0.0.1', config.portStart, config.portEnd)
+        if (!this.reservedPorts.has(port)) {
+          this.reservedPorts.add(port)
+          return port
+        }
+      }
+      throw new ProviderError('NATIVE_COMPOSE_PORT_EXHAUSTED', 'Compose 运行端口已用尽。', 409)
+    } finally {
+      release()
+    }
+  }
+
+  private async assertReady() {
+    const status = await inspectOaDockerRuntime(this.runDocker)
+    if (!status.available) throw new ProviderError('NATIVE_COMPOSE_DOCKER_UNAVAILABLE', `Docker Compose 不可用：${[status.cli.detail, status.compose.detail, status.engine.detail].join('；')}`, 409)
+  }
+
+  private async projectPath(projectRoot: string, value: unknown, label: string, required = true) {
+    if (typeof value !== 'string' || !value) throw new ProviderError('NATIVE_COMPOSE_PATH_INVALID', `${label} 路径无效。`, 409)
+    const resolved = resolve(projectRoot, value)
+    try {
+      const actual = await realpath(resolved)
+      if (!containedPath(projectRoot, actual)) throw new ProviderError('NATIVE_COMPOSE_PATH_OUTSIDE_PROJECT', `${label} 必须位于已导入项目目录内。`, 409)
+      return actual
+    } catch (error) {
+      if (!required && (error as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      if (error instanceof ProviderError) throw error
+      throw new ProviderError('NATIVE_COMPOSE_PATH_INVALID', `${label} 文件不存在或不可读取。`, 409)
+    }
+  }
+
+  private async validateComposeModel(model: ComposeModel, projectRoot: string, webService: string, webPort: number) {
+    if (!isRecord(model.services) || Object.keys(model.services).length === 0) throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', 'Compose 配置没有服务。', 409)
+    if (!isRecord(model.services[webService])) throw new ProviderError('NATIVE_COMPOSE_WEB_SERVICE_MISSING', `Compose 配置中找不到 Web 服务“${webService}”。`, 409)
+
+    for (const [name, rawService] of Object.entries(model.services)) {
+      if (!isRecord(rawService)) throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', `Compose 服务“${name}”配置无效。`, 409)
+      const service = rawService
+      if (service.privileged === true || service.network_mode || service.pid === 'host' || service.ipc === 'host' || service.uts === 'host' || service.userns_mode === 'host') {
+        throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 服务“${name}”请求了受限的容器权限或宿主网络命名空间。`, 409)
+      }
+      if ((Array.isArray(service.devices) && service.devices.length) || (Array.isArray(service.cap_add) && service.cap_add.length) || service.use_api_socket === true || service.credential_spec) {
+        throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 服务“${name}”请求了宿主设备、额外权限或宿主凭据接口。`, 409)
+      }
+      if (Array.isArray(service.volumes) && service.volumes.some(mount => isRecord(mount) && mount.type === 'bind')) {
+        throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 服务“${name}”包含宿主目录挂载。`, 409)
+      }
+      if (service.volumes_from) throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 服务“${name}”不能复用外部容器挂载。`, 409)
+
+      if (service.ports !== undefined) {
+        if (!Array.isArray(service.ports)) throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', `Compose 服务“${name}”的端口配置无效。`, 409)
+        if (name !== webService && service.ports.length) throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `只有指定的 Web 服务可以映射本机端口。`, 409)
+        if (name === webService && service.ports.some(port => !isRecord(port) || Number(port.target) !== webPort)) {
+          throw new ProviderError('NATIVE_COMPOSE_WEB_PORT_MISMATCH', `Web 服务“${webService}”只能使用配置的容器入口端口 ${webPort}。`, 409)
+        }
+      }
+
+      const envFiles = Array.isArray(service.env_file) ? service.env_file : service.env_file === undefined ? [] : [service.env_file]
+      for (const item of envFiles) {
+        const value = isRecord(item) ? item.path : item
+        const required = !isRecord(item) || item.required !== false
+        const file = await this.projectPath(projectRoot, value, 'env_file', required)
+        if (file && !(await stat(file)).isFile()) throw new ProviderError('NATIVE_COMPOSE_PATH_INVALID', 'env_file 必须指向项目内的普通文件。', 409)
+      }
+
+      if (service.build !== undefined) {
+        if (!isRecord(service.build)) throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', `Compose 服务“${name}”的 build 配置无效。`, 409)
+        if (service.build.network === 'host' || service.build.ssh || service.build.additional_contexts) throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 服务“${name}”的构建配置包含宿主网络或额外宿主资源。`, 409)
+        const context = await this.projectPath(projectRoot, service.build.context, 'build.context')
+        if (!(await stat(context as string)).isDirectory()) throw new ProviderError('NATIVE_COMPOSE_PATH_INVALID', 'build.context 必须指向项目内的目录。', 409)
+        if (typeof service.build.dockerfile === 'string' && !service.build.dockerfile.startsWith('inline:')) {
+          const dockerfile = resolve(context as string, service.build.dockerfile)
+          const actualDockerfile = await this.projectPath(context as string, dockerfile, 'build.dockerfile')
+          if (!(await stat(actualDockerfile as string)).isFile()) throw new ProviderError('NATIVE_COMPOSE_PATH_INVALID', 'build.dockerfile 必须指向项目内的普通文件。', 409)
+        }
+      }
+    }
+
+    for (const [name, network] of Object.entries(model.networks ?? {})) {
+      if (network.external === true || network.driver === 'host' || (network.driver && network.driver !== 'bridge') || network.driver_opts) {
+        throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 网络“${name}”需要外部或宿主网络配置。`, 409)
+      }
+    }
+    for (const [name, volume] of Object.entries(model.volumes ?? {})) {
+      if (volume.external === true || volume.driver_opts) throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose 数据卷“${name}”需要外部或宿主目录配置。`, 409)
+    }
+    for (const [kind, resources] of [['configs', model.configs], ['secrets', model.secrets]] as const) {
+      for (const [name, resource] of Object.entries(resources ?? {})) {
+        if (resource.external === true) throw new ProviderError('NATIVE_COMPOSE_POLICY_REJECTED', `Compose ${kind}“${name}”不能引用外部资源。`, 409)
+        if (resource.file !== undefined) await this.projectPath(projectRoot, resource.file, `Compose ${kind} 文件`)
+      }
+    }
+  }
+
+  private async waitUntilReady(port: number) {
+    const deadline = Date.now() + 180_000
+    let lastError = 'Compose Web 入口尚未响应。'
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual', signal: AbortSignal.timeout(2_000) })
+        if (response.status >= 200 && response.status < 500) {
+          await response.body?.cancel().catch(() => undefined)
+          return
+        }
+        lastError = `Compose Web 入口返回 HTTP ${response.status}。`
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError
+      }
+      await sleep(1_000)
+    }
+    throw new ProviderError('NATIVE_COMPOSE_WEB_NOT_READY', `Compose Web 入口启动超时：${lastError}`, 503)
+  }
+
+  private async writeState(root: string, state: NativeComposeRuntimeState) {
+    await writeFile(composeStatePath(root), JSON.stringify({ ...state, updatedAt: new Date().toISOString() }), 'utf8')
+  }
+
+  private async cleanup(root: string, instanceId: string, projectName: string, port: number) {
+    const existing = this.cleanups.get(instanceId)
+    if (existing) return existing
+    const cleanup = (async () => {
+      await this.writeState(root, { provider: 'native-compose', instanceId, projectName, port, cleanupPending: true, updatedAt: new Date().toISOString() })
+      const result = await this.runDocker(this.composeArgs(root, projectName, ['down', '--volumes', '--remove-orphans']), 120_000)
+      if (!result.ok) {
+        const detail = `${result.stdout} ${result.stderr}`.replace(/\s+/g, ' ').trim().slice(-500) || result.errorCode || 'Docker Compose 清理失败。'
+        throw new ProviderError('NATIVE_COMPOSE_CLEANUP_PENDING', `Compose 容器、网络或数据卷尚未回收：${detail}`, 503)
+      }
+      await rm(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 150 })
+      this.reservedPorts.delete(port)
+      this.runtimes.delete(instanceId)
+    })()
+    this.cleanups.set(instanceId, cleanup)
+    try { await cleanup } finally { if (this.cleanups.get(instanceId) === cleanup) this.cleanups.delete(instanceId) }
+  }
+
+  async start(input: ProviderStartInput): Promise<ProviderStartResult> {
+    const sourceRoot = input.lab.localPath
+    const config = input.lab.runtimeConfig
+    if (!sourceRoot || !config?.composeFile || !config.webService || !Number.isInteger(config.webPort)) {
+      throw new ProviderError('NATIVE_COMPOSE_CONFIG_REQUIRED', 'Compose 项目缺少运行目录、Web 服务名或入口端口。', 409)
+    }
+    const webPort = config.webPort as number
+    if (!/^[A-Za-z0-9-]+$/.test(input.instanceId)) throw new ProviderError('NATIVE_COMPOSE_INSTANCE_ID_INVALID', '运行实例 ID 格式无效。', 400)
+    await this.assertReady()
+
+    const paths = dataPaths(input.dataDir)
+    const realDataRoot = await realpath(paths.root)
+    const projectRoot = await realpath(resolve(sourceRoot))
+    if (!containedPath(realDataRoot, projectRoot) || !(await stat(projectRoot)).isDirectory()) {
+      throw new ProviderError('NATIVE_COMPOSE_SOURCE_OUTSIDE_DATA', 'Compose 项目必须位于 VulnLab 数据目录内。', 409)
+    }
+    const composeFile = config.composeFile.replaceAll('\\', '/')
+    if (!composeFile || composeFile.startsWith('/') || /^[A-Za-z]:/.test(composeFile) || composeFile.split('/').some(part => !part || part === '.' || part === '..')) {
+      throw new ProviderError('NATIVE_COMPOSE_FILE_INVALID', 'Compose 文件必须是项目内的相对路径。', 409)
+    }
+    const composePath = await this.projectPath(projectRoot, resolve(projectRoot, composeFile), 'Compose 文件')
+    if (!(await stat(composePath as string)).isFile()) throw new ProviderError('NATIVE_COMPOSE_FILE_INVALID', 'Compose 文件必须指向项目内的普通文件。', 409)
+
+    const projectName = nativeComposeProjectName(input.instanceId)
+    const normalized = await this.runDocker([
+      'compose', '--project-name', projectName, '--file', composePath as string, '--project-directory', projectRoot,
+      'config', '--format', 'json',
+    ], 120_000)
+    if (!normalized.ok) throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', 'Docker Compose 无法解析所选项目配置。', 409)
+    let model: ComposeModel
+    try { model = JSON.parse(normalized.stdout) as ComposeModel } catch {
+      throw new ProviderError('NATIVE_COMPOSE_CONFIG_INVALID', 'Docker Compose 未返回有效的规范化 JSON 配置。', 409)
+    }
+    await this.validateComposeModel(model, projectRoot, config.webService, webPort)
+
+    const runtimeRoot = paths.runtimeInstance(input.instanceId)
+    if (await stat(runtimeRoot).catch(() => null)) throw new ProviderError('NATIVE_COMPOSE_INSTANCE_EXISTS', '该运行实例目录已存在，未覆盖现有状态。', 409)
+    const port = await this.claimPort(input.runtime)
+    this.starting.add(input.instanceId)
+    let stateCreated = false
+    try {
+      await mkdir(runtimeRoot, { recursive: true })
+      model.name = projectName
+      const services = model.services as Record<string, Record<string, unknown>>
+      for (const [name, service] of Object.entries(services)) {
+        delete service.ports
+        if (name === config.webService) service.ports = [{ target: webPort, published: String(port), host_ip: '127.0.0.1', protocol: 'tcp' }]
+      }
+      await writeFile(composeFilePath(runtimeRoot), JSON.stringify(model), 'utf8')
+      const state: NativeComposeRuntimeState = { provider: 'native-compose', instanceId: input.instanceId, projectName, port, cleanupPending: false, updatedAt: new Date().toISOString() }
+      await this.writeState(runtimeRoot, state)
+      stateCreated = true
+      const up = await this.runDocker(this.composeArgs(runtimeRoot, projectName, ['up', '--detach', '--build']), 30 * 60_000)
+      if (!up.ok) throw new ProviderError('NATIVE_COMPOSE_START_FAILED', 'Docker Compose 启动失败。', 503)
+      await this.waitUntilReadyImpl(port)
+      this.runtimes.set(input.instanceId, { root: runtimeRoot, projectName, port, instanceId: input.instanceId })
+      const timestamps = lease(input.lifetimeMinutes)
+      return {
+        ...timestamps,
+        endpoint: `${runtimeOrigin(input.publicOrigin, port, input.runtime.publicOriginTemplate)}/`,
+        logs: [
+          `${timestamps.createdAt} 启动多服务 Docker Compose 项目（${projectName}）`,
+          `${timestamps.createdAt} Web 服务 ${config.webService}:${webPort} 仅映射到 127.0.0.1:${port}`,
+          `${timestamps.createdAt} Compose 服务使用实例专属网络与数据卷`,
+        ],
+      }
+    } catch (error) {
+      this.reservedPorts.delete(port)
+      if (stateCreated) {
+        try { await this.cleanup(runtimeRoot, input.instanceId, projectName, port) } catch (cleanupError) {
+          if (error instanceof ProviderError) throw new ProviderError(error.code, `${error.message} 资源回收将重试。`, error.statusCode)
+          throw cleanupError
+        }
+      } else {
+        await rm(runtimeRoot, { recursive: true, force: true }).catch(() => undefined)
+      }
+      if (error instanceof ProviderError) throw error
+      throw new ProviderError('NATIVE_COMPOSE_START_FAILED', 'Docker Compose 项目启动失败。', 503)
+    } finally {
+      this.starting.delete(input.instanceId)
+    }
+  }
+
+  async renew(input: ProviderRenewInput) {
+    if (!this.runtimes.has(input.instance.id)) throw new ProviderError('NATIVE_COMPOSE_INSTANCE_MISSING', 'Compose 实例没有可续期的运行状态。', 409)
+    const { expiresAt } = renewalLease(input.instance, input.lifetimeMinutes)
+    return { expiresAt, log: `${new Date().toISOString()} Docker Compose 实例续期` }
+  }
+
+  async stop(input: ProviderStopInput) {
+    const active = this.runtimes.get(input.instance.id)
+    if (active) await this.cleanup(active.root, active.instanceId, active.projectName, active.port)
+    else if (input.dataDir) await this.recover({ lab: input.lab, instance: input.instance, runtime: input.runtime, dataDir: input.dataDir })
+    return { log: `${new Date().toISOString()} Docker Compose 实例、网络与数据卷已回收` }
+  }
+
+  async recover(input: ProviderRecoverInput) {
+    if (!input.dataDir) return
+    const root = dataPaths(input.dataDir).runtimeInstance(input.instance.id)
+    const marker = await readFile(composeStatePath(root), 'utf8').then(value => JSON.parse(value) as Partial<NativeComposeRuntimeState>).catch(() => null)
+    if (!marker) {
+      await rm(root, { recursive: true, force: true }).catch(() => undefined)
+      return
+    }
+    const projectName = nativeComposeProjectName(input.instance.id)
+    if (marker.provider !== 'native-compose' || marker.instanceId !== input.instance.id || marker.projectName !== projectName) {
+      throw new ProviderError('NATIVE_COMPOSE_STATE_INVALID', 'Compose 实例清单与运行记录不匹配，未执行清理。', 409)
+    }
+    const port = Number.isInteger(marker.port) && Number(marker.port) >= 1024 && Number(marker.port) <= 65535 ? Number(marker.port) : 6800
+    await this.cleanup(root, input.instance.id, projectName, port)
+  }
+
+  async recoverPending(dataDir: string, activeInstanceIds: ReadonlySet<string>) {
+    const runtimeRoot = dataPaths(dataDir).runtime
+    const entries = await readdir(runtimeRoot, { withFileTypes: true }).catch(() => [])
+    const recovered: string[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[A-Za-z0-9-]+$/.test(entry.name) || this.starting.has(entry.name)) continue
+      const root = join(runtimeRoot, entry.name)
+      const marker = await readFile(composeStatePath(root), 'utf8').then(value => JSON.parse(value) as Partial<NativeComposeRuntimeState>).catch(() => null)
+      const projectName = nativeComposeProjectName(entry.name)
+      if (marker?.provider !== 'native-compose' || marker.instanceId !== entry.name || marker.projectName !== projectName) continue
+      if (activeInstanceIds.has(entry.name) && marker.cleanupPending !== true) continue
+      const port = Number.isInteger(marker.port) && Number(marker.port) >= 1024 && Number(marker.port) <= 65535 ? Number(marker.port) : 6800
+      await this.cleanup(root, entry.name, projectName, port)
+      if (activeInstanceIds.has(entry.name)) recovered.push(entry.name)
+    }
+    return recovered
+  }
+
+  async shutdown() {
+    await Promise.allSettled([...this.runtimes.values()].map(runtime => this.cleanup(runtime.root, runtime.instanceId, runtime.projectName, runtime.port)))
+  }
+}
+
 interface NativeProcessRuntime {
   child: ChildProcess
   root: string
@@ -2361,6 +2718,7 @@ export const providerRegistry = new ProviderRegistry([
   new NativePhpProvider(),
   new NativeOaProvider(),
   new DockerOaProvider(),
+  new NativeComposeProvider(),
   new NativeProcessProvider('native-node'),
   new NativeProcessProvider('native-java'),
   new NativeProcessProvider('native-python'),

@@ -13,16 +13,16 @@
 - `paths.ts`、`types.ts`、`zip.ts`：跨模块共享路径、类型契约和受限 ZIP 读取；多处复用，不归入单个功能目录。
 - `runtime/`：靶场 Provider、MySQL 与项目运行环境管理，以及运行时准备、检测和工具链安装。
 - `labs/oa-vuln-labs/`：项目维护的 OA 适配代码、API、Docker、网络策略和启动器源码；这里不是上游靶场包。
-- `runtime/providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa` 生命周期；OA 本地模式使用 Node.js 权限模型并模拟 `exec`，Docker Compose 模式运行靶场包；XVWA 与其他 PHP 靶场共用 `native-php`。
+- `runtime/providers.ts`：`native-php`、`native-node`、`native-java`、`native-python`、`native-oa`、`native-compose` 生命周期；OA 本地模式使用 Node.js 权限模型并模拟 `exec`，Docker Compose 模式运行多服务靶场；XVWA 与其他 PHP 靶场共用 `native-php`。
 - `runtime/mysql.ts`：每实例数据库与应用账号的创建、验证和清理。
 - `runtime/project-environment.ts`：项目内 PHP 配置、私有 MariaDB/MySQL 初始化、启动与回收；外部配置可覆盖。
 - `runtime/prep.ts`：PyGoat 私有 Python 环境与依赖准备。
 - `runtime/status.ts`：PHP、mysqli、PDO MySQL、MySQL、Node.js、Java、Python 检测和按靶场启动前校验。
 - `runtime/toolchains.ts`：选择 Windows x64 官方 Node.js、PHP、MariaDB、Java、Python 包，执行限量下载、SHA-256、安全解压、原子安装和清单复用。
-- `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA Beta）。
+- `seed.ts`：十一个内置靶场的版本、Provider 与自动安装策略（十个常规靶场及 OA-Vuln-Labs）。
 - `assets/labs/oa-vuln-labs/`：按靶场 slug 与版本保存的 OA `source.zip`、`docker.zip` 和启动器固定资源。
 - `assets/`：固定输入资源；用途、版本、校验和生成方式见 [`assets/README.md`](assets/README.md)。
-- `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号、审计和邀请管理，详情弹窗承载实例操作。
+- `public/`：原生 JavaScript / CSS 工作台；主界面呈现内置与自定义靶场卡片，管理中心弹窗承载个人中心、系统数据、靶场管理、账号与审计，详情弹窗承载实例操作；XSS-Labs 的 Ruffle 浏览器资源随项目固定。
 - `data/`：Git 忽略的运行数据根目录；`data/labs/<slug>/<version>/` 是校验解包后的靶场副本，`data/runtime/<instance>/` 是实例运行目录。
 - `bundle/`：可选的本地发行包目录，不提交到 Git；用于半联网或完全离线准备。
 
@@ -41,11 +41,11 @@ npm run dev
 
 ## 内置资源与启动模型
 
-`seed.ts` 保存十一个内置靶场，其中十个常规靶场使用固定版本，OA Beta 使用仓库内的 `source.zip` / `docker.zip`。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备常规靶场资源，完成体积、路径和固定 SHA-256 校验后再安装。设置 `VULNLAB_OFFLINE=1` 后只使用 bundle 和已有缓存；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
+`seed.ts` 保存十一个内置靶场，其中十个常规靶场使用固定版本，OA-Vuln-Labs 使用仓库内维护的 `source.zip` / `docker.zip`。用户不需要执行安装动作；点击“启动环境”后，服务按“本地 bundle → 已有 data 缓存 → 官方网络来源”的顺序准备常规靶场资源，完成体积、路径和固定 SHA-256 校验后再安装。设置 `VULNLAB_OFFLINE=1` 后只使用 bundle 和已有缓存；设置 `VULNLAB_AUTO_INSTALL_BUILTINS=1` 可以在服务启动时批量准备全部资源。
 
-离线发行包使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。XSS-Labs 使用固定上游提交及 SHA-256；上游未声明许可证，第 17–20 关依赖现代浏览器已移除的 Flash。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
+离线资源使用固定目录约定：`<bundle>/runtime/<运行时文件名>` 放 PHP、MariaDB、Node.js、Java、Python 压缩包；Git 仓库靶场放在 `<bundle>/labs/<slug>/<version>/source.zip`；Juice Shop 和 WebGoat 使用各自固定发行包文件名。XSS-Labs 固定到指定上游提交；第 17–20 关在实例副本中接入本地 Ruffle，不访问第三方 CDN。`VULNLAB_BUNDLE_DIR` 未设置时不启用本地发行包目录。
 
-管理员可以通过管理中心添加自定义靶场。来源支持公开 GitHub/GitLab 仓库和本地 ZIP；运行配置使用静态 PHP、PHP + MySQL、Node.js、Java JAR、Python 文件或 PyGoat Django 这几类固定模板。上传包先写入 `data/lab-uploads`，导入成功后再复制到 `data/labs`，SQLite 保存运行模板和永久路径，服务重启时会做路径对账。Node 项目必须带锁文件；带 `requirements.txt` 的自定义 Python 项目必须配置离线 wheelhouse；不符合模板的入口、路径或 ZIP 安全检查会直接拒绝。
+管理员可以通过管理中心添加自定义靶场。来源支持公开 GitHub/GitLab 仓库和本地 ZIP；运行配置使用静态 PHP、PHP + MySQL、Node.js、Java JAR、Python 文件、PyGoat Django 或 Docker Compose。Compose 配置指定 `composeFile`、`webService` 与 `webPort`，通过 Docker Compose 规范化 JSON 校验；拒绝特权、宿主网络、宿主目录挂载、Docker Socket 和设备访问，Web 入口只映射到 `127.0.0.1`。各实例使用独立 Compose 项目，停止或过期时回收容器、网络和卷；容器资源上限由项目 Compose 配置决定。上传包先写入 `data/lab-uploads`，导入成功后再复制到 `data/labs`，SQLite 保存运行模板和永久路径，服务重启时会做路径对账。Node 项目必须带锁文件；带 `requirements.txt` 的自定义 Python 项目必须配置离线 wheelhouse；不符合模板的入口、路径或 ZIP 安全检查会直接拒绝。
 
 Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 2023.8 JAR；PyGoat 安装后创建 `.vulnlab-venv`，运行副本复用该环境并在启动前执行 Django migration。PyGoat 默认使用 `assets/python/pygoat` 内的哈希锁定依赖和离线 wheelhouse，适配 Windows x64 上的 Python 3.10/3.11；安装过程不访问包索引。`VULNLAB_PYTHON_REQUIREMENTS_FILE` 与 `VULNLAB_PYTHON_WHEELHOUSE` 可覆盖默认资源路径。
 
@@ -57,14 +57,16 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 - Node.js：复制可变文件并链接只读依赖目录，减少 Juice Shop 启动复制量。
 - Java：为 WebGoat 与 WebWolf 分配两个端口，并把数据目录限制在实例副本。
 - Python：复制源码、复用项目私有解释器、迁移 SQLite 后启动 Django。
+- Compose：使用实例独立项目名和网络，只将配置的 Web 服务端口映射到本机回环地址；清理失败会保留待清理记录并在后续重试。
 - XVWA：启动时创建独立 MySQL 资源，修正上游初始化脚本后通过 PHP 内置服务器提供 `/xvwa/`。
-- OA-Vuln-Labs：初始靶场账号为 `admin / ZSD@admin2025!`，无需先找漏洞获得账号；本地模式依赖项目 Node.js 与 MariaDB，使用 Node.js 权限模型且 `exec` 返回模拟结果；Docker 原版模式依赖可用的本机 Docker Engine。
+- XSS-Labs：第 17–20 关在运行副本使用随项目固定的 Ruffle Web 资源。
+- OA-Vuln-Labs：初始靶场账号为 `admin / ZSD@admin2025!`；本地模式依赖项目 Node.js 与 MariaDB，使用 Node.js 权限模型且 `exec` 返回模拟结果；Docker 原版模式依赖可用的本机 Docker Engine。
 
 进程状态写入运行目录；正常停止、过期回收、服务关闭和服务重启都执行资源回收。点击“启动环境”时，实例 API 会先准备资源和项目运行时，再调用 Provider；确实无法满足的依赖以 `RUNTIME_DEPENDENCY_MISSING` 返回。
 
 ## 管理中心与账号行为
 
-管理员从工作台左上角的 `VulnLab` 入口打开管理中心。栏目包括个人中心、系统数据、账号管理、审计记录和邀请管理；弹窗内栏目切换保留筛选，关闭或退出登录会清空临时选择状态。
+管理员从工作台左上角的 `VulnLab` 入口打开管理中心。栏目包括个人中心、系统数据、靶场管理、账号管理和审计记录；弹窗内栏目切换保留筛选，关闭或退出登录会清空临时选择状态。
 
 管理员还可以在“靶场管理”栏目创建自定义靶场。添加任务使用管理员 CSRF 会话，任务完成后靶场会进入主目录并出现在工作台；导入期间的状态和错误保存在导入任务中，不会显示为可启动的假就绪状态。
 
@@ -73,9 +75,6 @@ Juice Shop 使用官方预构建发行包；WebGoat 使用适配 Java 17/21 的 
 | `GET /api/overview` | 管理员可读；返回靶场就绪/运行概况、最近 365 天成功启动活动和靶场排行。活动数据来自保留的启动审计记录，清理审计会同步改变统计。 |
 | `GET /api/auth/users` | 管理员分页读取账号；首屏附带 `kind: "system"` 的默认管理员展示行，它不是注册用户数据库记录，不可选择或删除。注册账号仍按游标分页。 |
 | `GET /api/audit` | 管理员分页读取审计记录；可选 `date=YYYY-MM-DD` 与 `action` 在数据库分页前筛选。日期按服务器本地自然日解释。 |
-| `GET /api/auth/invitations` | 管理员分页读取邀请码状态、创建信息、使用账号快照与时间；已使用记录只读保留。 |
-
-邀请码通过 `POST /api/auth/invitations` 创建，有效期 24 小时、单次使用；明文只在创建响应中返回，数据库只保存 SHA-256 哈希。注册与邀请码消费在同一 SQLite 事务中完成，注册成功后保存使用者账号快照，因此之后删除注册账号仍能追溯邀请码。旧记录没有使用者快照时，界面会明确标记为“历史记录未记录使用者”，不会猜测回填。注册账号当前统一为管理员；默认管理员 `vulnlab` 是独立配置账号，不伪装成注册账号。
 
 服务运行后，`npm run smoke:runtimes` 会依次验证十个常规内置靶场；OA 有独立的 `npm run smoke:oa`、`npm run smoke:oa:docker` 与 `npm run smoke:oa:mysql` 回归入口。MariaDB smoke 需要预先准备项目私有 MariaDB 运行时，不会自动下载运行时。
 
@@ -117,7 +116,7 @@ npm run smoke:toolchains
 
 ## 生产配置
 
-生产环境必须显式设置至少 12 字符的 `VULNLAB_ADMIN_PASSWORD` 和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。本地开发保留默认管理员账号 `vulnlab`；注册账号必须使用管理员在管理中心生成的 24 小时一次性邀请码，且当前统一为管理员。注册账号和邀请码状态保存在 SQLite，密码只保存 scrypt 哈希，邀请码只保存 SHA-256 哈希；Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录和注册失败有持久化速率限制。对外监听 `0.0.0.0` 或 `::` 时，还必须设置可信的 `VULNLAB_PUBLIC_URL`。
+生产环境必须显式设置至少 12 字符的 `VULNLAB_ADMIN_PASSWORD` 和至少 32 字符的 `VULNLAB_COOKIE_SECRET`。Cookie 使用签名 HttpOnly，写操作要求 CSRF token，登录失败有持久化速率限制。对外监听 `0.0.0.0` 或 `::` 时，还必须设置可信的 `VULNLAB_PUBLIC_URL`。
 
 当前仅维护 Windows x64 本地启动流程，不提供独立服务器部署入口。
 

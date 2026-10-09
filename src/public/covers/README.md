@@ -1,17 +1,19 @@
 # 靶场封面素材
 
-这些文件用于工作台卡片和详情页。表格记录上游素材、项目绘制素材或本地运行截图的来源。
+这些文件用于工作台卡片和详情页。
 
 | 文件 | 来源 |
 | --- | --- |
-| `oa-vuln-labs.svg` | 本项目根据内置 OA 前端的站点名称和导航绘制的示意封面，不是靶场页面截图 |
-| `xss-labs.png` | 从项目固定版本的 XSS-Labs 本地运行首页截取，1280×720；作为真实预览封面，不是上游专用封面素材 |
-| `dvwa.png` | [digininja/DVWA](https://github.com/digininja/DVWA/blob/master/dvwa/images/logo.png) |
-| `pikachu.png` | [zhuifengshaonianhanlu/pikachu](https://github.com/zhuifengshaonianhanlu/pikachu/blob/master/assets/images/avatars/pikachu1.png) |
-| `sqli-labs.jpg` | [Audi-1/sqli-labs](https://github.com/Audi-1/sqli-labs/blob/master/images/Less-1.jpg) |
-| `upload-labs.jpg` | [c0ny1/upload-labs](https://github.com/c0ny1/upload-labs/blob/master/doc/index.jpg) |
-| `xvwa.png` | [s4n7h0/xvwa](https://github.com/s4n7h0/xvwa/blob/fb30fa517d288e618b521d252f61107ef6a24797/img/xvwa-logo-1.png) |
-| `juice-shop.png` | [juice-shop/juice-shop](https://github.com/juice-shop/juice-shop/blob/master/frontend/src/assets/public/images/JuiceShop_Logo_400px.png) |
-| `webgoat.png` | [WebGoat/WebGoat](https://github.com/WebGoat/WebGoat/blob/main/docs/images/webgoat.png) |
-| `mutillidae.svg` | [webpwnized/mutillidae](https://github.com/webpwnized/mutillidae) 的项目标识与名称排版 |
-| `pygoat.svg` | [adeyosemanputra/pygoat](https://github.com/adeyosemanputra/pygoat/blob/master/introduction/static/Lab/icons/pygoat.svg) |
+| `oa-vuln-labs.svg` | 本项目原创示意封面，不是靶场页面截图 |
+| `xss-labs.png` | XSS-Labs 固定版本的本地运行页面截图，1280×720 |
+| `dvwa.png` | [DVWA 固定版本封面素材](https://github.com/digininja/DVWA/blob/5d5c76cced604e54462b13723f5c69af58e78748/dvwa/images/logo.png) |
+| `pikachu.png` | [Pikachu 固定版本封面素材](https://github.com/zhuifengshaonianhanlu/pikachu/blob/5e1e8d9d14a3ba61d62f28cf35531c4df4dd24fc/assets/images/avatars/pikachu1.png) |
+| `sqli-labs.jpg` | [SQLi-Labs 固定版本封面素材](https://github.com/Audi-1/sqli-labs/blob/e96f21776372c8613a7e565106e62bc01a59355e/images/Less-1.jpg) |
+| `upload-labs.jpg` | [Upload-Labs 固定版本封面素材](https://github.com/c0ny1/upload-labs/blob/3a0ff865d41d93ea7d57a91e837f084d9d2318e5/doc/index.jpg) |
+| `xvwa.png` | [XVWA 固定版本封面素材](https://github.com/s4n7h0/xvwa/blob/fb30fa517d288e618b521d252f61107ef6a24797/img/xvwa-logo-1.png) |
+| `juice-shop.png` | [Juice Shop 固定发行版封面素材](https://github.com/juice-shop/juice-shop/blob/5658473cf8814459bf89000ce373b20ed0b4eb37/frontend/src/assets/public/images/JuiceShop_Logo_400px.png) |
+| `webgoat.png` | [WebGoat 固定版本封面素材](https://github.com/WebGoat/WebGoat/blob/5357a65e054976cd7d79b81ef3906ded050ed921/docs/images/webgoat.png) |
+| `mutillidae.svg` | 本项目原创绘制，不复制上游图片素材 |
+| `pygoat.svg` | [PyGoat 固定版本封面素材](https://github.com/adeyosemanputra/pygoat/blob/19d17cc8874861142b330636d068bbde54e86b85/introduction/static/Lab/icons/pygoat.svg) |
+
+`mutillidae.svg` 与 `oa-vuln-labs.svg` 适用根目录 LICENSE。各素材哈希及上游许可状态见[第三方资源清单](../../../THIRD_PARTY_NOTICES.md#靶场卡片封面)。

@@ -8,6 +8,14 @@ export interface DockerCommandResult {
   errorCode?: string
 }
 
+export const localDockerEnvironment = (source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+  const environment: NodeJS.ProcessEnv = {}
+  for (const key of ['Path', 'PATH', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'ComSpec', 'COMSPEC', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'DOCKER_CONFIG', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432']) {
+    if (source[key]) environment[key] = source[key]
+  }
+  return environment
+}
+
 export const runDockerCommand = (args: string[], timeoutMs = 15_000, env: NodeJS.ProcessEnv = process.env) => new Promise<DockerCommandResult>(resolveCommand => {
   const commandEnv = { ...env }
   delete commandEnv.COMPOSE_FILE
