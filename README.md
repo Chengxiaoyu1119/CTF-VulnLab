@@ -69,7 +69,6 @@ sequenceDiagram
 | [开发与运行手册](src/README.md) | 配置、运行时与验证 |
 | [设计说明](DESIGN.md) | 界面与响应式规则 |
 | [靶场封面来源](src/public/covers/README.md) | 图片来源与维护 |
-| [第三方资源与许可](THIRD_PARTY_NOTICES.md) | 固定资源、依赖、哈希与许可状态 |
 | [脚本索引](script/README.md) | 测试、smoke 与工具入口 |
 
 <p align="center"><strong>如果这个项目对你有帮助，欢迎在 GitHub 上点亮一个 Star⭐。</strong></p>

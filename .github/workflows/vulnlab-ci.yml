@@ -9,7 +9,6 @@ on:
       - "README.md"
       - "DESIGN.md"
       - "LICENSE"
-      - "THIRD_PARTY_NOTICES.md"
   pull_request:
     paths:
       - ".github/workflows/vulnlab-ci.yml"
@@ -18,7 +17,6 @@ on:
       - "README.md"
       - "DESIGN.md"
       - "LICENSE"
-      - "THIRD_PARTY_NOTICES.md"
   workflow_dispatch:
 
 permissions:

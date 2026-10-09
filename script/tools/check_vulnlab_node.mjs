@@ -23,7 +23,6 @@ const css = await read('src/public/styles.css')
 const covers = await read('src/public/covers/README.md')
 const readme = await read('README.md')
 const assetReadme = await read('src/assets/README.md')
-const thirdPartyNotices = await read('THIRD_PARTY_NOTICES.md')
 
 assert.equal(packageJson.name, 'vulnlab')
 assert.equal(packageJson.type, 'module')
@@ -145,14 +144,10 @@ assert.match(readme, /src="src\/public\/favicon\.png"/)
 assert.match(readme, /10 个常规靶场 \+ OA/)
 assert.match(readme, /\| OA-Vuln-Labs \|/)
 assert.doesNotMatch(readme, /Beta|beta/)
-assert.match(readme, /THIRD_PARTY_NOTICES\.md/)
 const labTable = readme.split('## 支持的靶场')[1]?.split('## 启动流程')[0] ?? ''
 assert.equal((labTable.match(/^\| \[/gm) ?? []).length, 10)
 assert.equal((labTable.match(/^\| OA-Vuln-Labs \|/gm) ?? []).length, 1)
 assert.match(assetReadme, /nightly-2026-10-06/)
-assert.match(thirdPartyNotices, /source\.zip` SHA-256 `99d7d57daad5f68474a6a2a0c04be5959bae4543a9ed31a10cfc6249ebc57e64`/)
-assert.match(thirdPartyNotices, /导入归档 SHA-256 写入本地清单/)
-assert.match(covers, /THIRD_PARTY_NOTICES\.md#靶场卡片封面/)
 assert.doesNotMatch(covers, /blob\/(?:master|main)\//)
 const coverHashes = {
   'dvwa.png': 'a440db6f754d51e5e5a57aad08d4b1be90a47f3f6eb63be907519e71b62a8fb8',
@@ -169,7 +164,6 @@ for (const [file, expectedHash] of Object.entries(coverHashes)) {
   const bytes = await readFile(resolve(root, 'src/public/covers', file))
   const hash = createHash('sha256').update(bytes).digest('hex')
   assert.equal(hash, expectedHash, `cover source hash changed: ${file}`)
-  assert.ok(thirdPartyNotices.includes(`\`${hash}\``), `cover hash is missing from the resource manifest: ${file}`)
 }
 const ruffleHashes = {
   'ruffle.js': 'ef588353471686368e505f1fbf8b29fbba2f762be5dc527d7cfcd84973ab8911',
@@ -183,11 +177,9 @@ const ruffleHashes = {
 }
 for (const [file, expectedHash] of Object.entries(ruffleHashes)) {
   assert.ok(await exists(`src/public/ruffle/${file}`), `missing Ruffle file: ${file}`)
-  assert.ok(thirdPartyNotices.includes(`\`${file}\``), `Ruffle file is missing from the resource manifest: ${file}`)
   const bytes = await readFile(resolve(root, 'src/public/ruffle', file))
   const hash = createHash('sha256').update(bytes).digest('hex')
   assert.equal(hash, expectedHash, `Ruffle file hash changed: ${file}`)
-  assert.ok(thirdPartyNotices.includes(`\`${hash}\``), `Ruffle file hash is missing from the resource manifest: ${file}`)
 }
 assert.doesNotMatch(`${index}\n${web}\n${readme}`, /favicon\.svg/)
 assert.doesNotMatch(web, /runtimePanel\(|runtime-panel/)

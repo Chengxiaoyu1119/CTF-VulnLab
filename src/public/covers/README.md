@@ -16,4 +16,4 @@
 | `mutillidae.svg` | 本项目原创绘制，不复制上游图片素材 |
 | `pygoat.svg` | [PyGoat 固定版本封面素材](https://github.com/adeyosemanputra/pygoat/blob/19d17cc8874861142b330636d068bbde54e86b85/introduction/static/Lab/icons/pygoat.svg) |
 
-`mutillidae.svg` 与 `oa-vuln-labs.svg` 适用根目录 LICENSE。各素材哈希及上游许可状态见[第三方资源清单](../../../THIRD_PARTY_NOTICES.md#靶场卡片封面)。
+`mutillidae.svg` 与 `oa-vuln-labs.svg` 适用根目录 LICENSE。
