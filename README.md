@@ -24,6 +24,8 @@ cd CTF-VulnLab
 powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 ```
 
+在 VS Code 按 `Ctrl+Shift+P`，运行 `Tasks: Run Task`（任务：运行任务），选择 `VulnLab: 启动`，即可通过同一启动流程运行项目。
+
 打开 `http://127.0.0.1:6710/`，使用工作台默认账号 `vulnlab / vulnlab` 登录。选择靶场并启动；首次启动会按需准备运行资源。
 
 ## 支持的靶场

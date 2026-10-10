@@ -1,5 +1,6 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $app = Join-Path $root 'src'

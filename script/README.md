@@ -8,7 +8,7 @@
 | `smoke/` | 需要运行时或服务状态的集成检查 | `cd src; npm run smoke:<name>` |
 | `browser/` | Playwright 浏览器检查及其 Node.js 启动器 | `cd src; npm run test:browser` |
 | `tools/` | 不启动服务的结构、文档和资源清单契约检查 | CI 自动执行 `check_vulnlab_node.mjs` |
-| `run_vulnlab.ps1` | 本地启动入口，保持根 README 中的路径稳定 | `powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1` |
+| `run_vulnlab.ps1` | 本地启动入口；VS Code 任务复用此脚本 | `powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1` 或 `VulnLab: 启动` |
 
 ## Smoke 命令
 

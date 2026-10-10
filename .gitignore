@@ -36,7 +36,8 @@ CLAUDE.md
 .codex/
 .agents/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 docs/
 
 # 操作系统与编辑器元数据
