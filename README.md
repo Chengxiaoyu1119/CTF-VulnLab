@@ -9,12 +9,23 @@
   <img src="https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows x64">
   <img src="https://img.shields.io/badge/NODE.JS-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 22+">
   <img src="https://img.shields.io/badge/LABS-10%20%2B%20OA-ff7f2a?style=flat-square&logo=owasp&logoColor=white" alt="10 个常规靶场与 OA-Vuln-Labs">
+  <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/releases/latest"><img src="https://img.shields.io/github/v/release/Chengxiaoyu1119/CTF-VulnLab?style=flat-square&label=release" alt="Latest release"></a>
   <a href="https://github.com/Chengxiaoyu1119/CTF-VulnLab/actions/workflows/vulnlab-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/CTF-VulnLab/vulnlab-ci.yml?style=flat-square&logo=githubactions&label=CI" alt="VulnLab CI"></a>
 </div>
 
 <p align="center">
+  <a href="#快速开始">🚀 快速开始</a> ·
+  <a href="#核心能力">✨ 核心能力</a> ·
+  <a href="#支持的靶场">🎯 靶场目录</a> ·
+  <a href="#系统结构">🧩 系统结构</a> ·
+  <a href="#启动流程">🔄 启动流程</a> ·
+  <a href="#文档">📚 文档</a>
+</p>
+
+<p align="center">
   <img src=".github/assets/vulnlab-workspace-showcase.png" alt="VulnLab 攻防控制台与靶场工作台" width="100%">
 </p>
+<p align="center"><sub>在同一工作台中启动、访问与管理本地靶场实例。</sub></p>
 
 ## 快速开始
 
@@ -50,33 +61,81 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 | [OWASP PyGoat](https://github.com/adeyosemanputra/pygoat) | Django / OWASP | 注册并登录后进入课程 |
 | OA-Vuln-Labs | 企业 OA · 25 个漏洞点 · 4 条攻击链 | 初始靶场账号 `admin / ZSD@admin2025!` |
 
+## 核心能力
+
+- 🎯 **统一训练目录：** 十个常规 Web 靶场与 OA-Vuln-Labs，按需准备运行资源。
+- 🧩 **自定义导入：** 导入公开 GitHub/GitLab 仓库或本地 ZIP，并按运行模板校验。
+- ⚙️ **独立实例：** 支持启动、访问、续期、停止与过期回收。
+- 🐳 **多服务运行：** 支持 Docker Compose；OA-Vuln-Labs 可选本地模拟或 Docker 原版模式。
+
+## 系统结构
+
+```mermaid
+flowchart LR
+  USER(["🧑‍💻 练习者"]) --> UI["🖥️ Web 工作台<br/>原生 JavaScript / CSS"]
+  UI --> API["⚡ Fastify API"]
+  API --> DB[("🗃️ SQLite<br/>账号 · 配置 · 审计")]
+  API --> PREP["📦 资源准备<br/>固定版本 · SHA-256 校验"]
+  PREP --> ROUTER{"🎛️ 运行配置"}
+  ROUTER -->|本地进程| NATIVE["⚙️ 原生 Provider<br/>PHP · Node.js · Java · Python · OA"]
+  ROUTER -->|多服务| COMPOSE["🐳 Docker Compose"]
+  NATIVE --> LAB["🎯 独立靶场实例"]
+  COMPOSE --> LAB
+  LAB --> BROWSER["🌐 本地练习入口"]
+
+  classDef human fill:#fff4e5,stroke:#c7751b,color:#38220b,stroke-width:1.5px
+  classDef interface fill:#eaf3ff,stroke:#3578c8,color:#152f52,stroke-width:1.5px
+  classDef service fill:#f0edff,stroke:#6656bd,color:#271e55,stroke-width:1.5px
+  classDef data fill:#e8f6ed,stroke:#38885d,color:#153d28,stroke-width:1.5px
+  classDef runtime fill:#fff3d8,stroke:#bd8a26,color:#49350e,stroke-width:1.5px
+  classDef lab fill:#e7f5f3,stroke:#28827a,color:#163b39,stroke-width:1.5px
+
+  class USER human
+  class UI,BROWSER interface
+  class API,PREP,ROUTER service
+  class DB data
+  class NATIVE,COMPOSE runtime
+  class LAB lab
+```
 
 ## 启动流程
 
 ```mermaid
-sequenceDiagram
-    actor U as 练习者
-    participant W as 工作台
-    participant S as 本地服务
-    participant L as 独立靶场
-    U->>W: 选择并启动靶场
-    W->>S: 创建实例
-    S->>S: 校验资源并准备运行时
-    S->>S: 按运行配置选择 Provider
-    S->>L: 启动隔离实例或 Compose 项目
-    L-->>W: 返回本地练习入口
-    U->>W: 停止实例
-    W->>S: 回收请求
-    S->>L: 停止进程并清理资源
+flowchart TD
+  START(["🎯 选择并启动靶场"]) --> PREP["🔎 校验资源<br/>按需准备运行环境"]
+  PREP --> READY{"资源与依赖可用？"}
+  READY -->|否| ERROR["📣 返回失败原因<br/>保留当前详情"]
+  READY -->|是| MODE{"运行方式"}
+  MODE -->|本地进程| LOCAL["⚙️ 启动 Provider"]
+  MODE -->|Docker Compose| DOCKER["🐳 启动独立项目"]
+  LOCAL --> INSTANCE(["🟢 实例就绪<br/>打开入口 · 续期"])
+  DOCKER --> INSTANCE
+  INSTANCE --> ACTION{"下一步操作"}
+  ACTION -->|继续练习 / 续期| INSTANCE
+  ACTION -->|停止或到期| CLEAN["🧹 回收进程、端口、数据库与容器"]
+
+  classDef start fill:#fff4e5,stroke:#c7751b,color:#38220b,stroke-width:1.5px
+  classDef step fill:#eaf3ff,stroke:#3578c8,color:#152f52,stroke-width:1.5px
+  classDef decision fill:#f0edff,stroke:#6656bd,color:#271e55,stroke-width:1.5px
+  classDef success fill:#e8f6ed,stroke:#38885d,color:#153d28,stroke-width:1.5px
+  classDef error fill:#ffe9e7,stroke:#c74f49,color:#4f1916,stroke-width:1.5px
+  classDef cleanup fill:#fcebe6,stroke:#bb6749,color:#512a1c,stroke-width:1.5px
+
+  class START start
+  class PREP,LOCAL,DOCKER step
+  class READY,MODE,ACTION decision
+  class INSTANCE success
+  class ERROR error
+  class CLEAN cleanup
 ```
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [开发与运行手册](src/README.md) | 配置、运行时与验证 |
-| [设计说明](DESIGN.md) | 界面与响应式规则 |
-| [靶场封面来源](src/public/covers/README.md) | 图片来源与维护 |
-| [脚本索引](script/README.md) | 测试、smoke 与工具入口 |
+| 📘 [开发与运行手册](src/README.md) | 配置、运行时与验证 |
+| 🎨 [设计说明](DESIGN.md) | 界面与响应式规则 |
+| 🖼️ [靶场封面来源](src/public/covers/README.md) | 图片来源与维护 |
+| 🧪 [脚本索引](script/README.md) | 测试、smoke 与工具入口 |
 
 <p align="center"><strong>如果这个项目对你有帮助，欢迎在 GitHub 上点亮一个 Star⭐。</strong></p>
