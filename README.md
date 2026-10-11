@@ -28,6 +28,12 @@ powershell -ExecutionPolicy Bypass -File script/run_vulnlab.ps1
 
 打开 `http://127.0.0.1:6710/`，使用工作台默认账号 `vulnlab / vulnlab` 登录。选择靶场并启动；首次启动会按需准备运行资源。
 
+## Windows 便携版
+
+在 [GitHub Releases](https://github.com/Chengxiaoyu1119/CTF-VulnLab/releases) 下载 `CTF-VulnLab.zip`，解压后双击 `CTF-VulnLab\CTF-VulnLab.exe`。启动器会运行本地服务并打开浏览器；按 `Enter` 或 `Ctrl+C` 关闭服务。默认登录账号为 `vulnlab / vulnlab`。
+
+便携包面向 Windows x64，已包含 Node.js、应用生产依赖和固定资源；靶场运行时会在首次使用时按需下载和校验。OA Docker 原版模式还需要本机 Docker Engine。运行数据库和下载的运行时保存在 `%LOCALAPPDATA%\CTF-VulnLab\data`，更新或删除程序目录不会自动清除这些数据。详细内容见包内 `发行说明.md`。
+
 ## 支持的靶场
 
 | 靶场 | 训练方向 | 进入方式 |

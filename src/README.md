@@ -1,6 +1,6 @@
 # VulnLab · 攻防控制台（Node 应用）
 
-这是 VulnLab 当前开发基线的 Node.js / TypeScript 单机应用入口，暂未形成正式发行版。
+这是 VulnLab 的 Node.js / TypeScript 单机应用入口。Windows x64 便携发行版由仓库根目录 `script/release/build_windows_portable.ps1` 构建。
 
 ## 模块边界
 
@@ -122,4 +122,4 @@ npm run smoke:toolchains
 
 ## 构建与发行边界
 
-`npm run build` 仅执行 TypeScript 编译并生成 `dist/`，不生成 EXE。当前阶段继续使用 Git 仓库中的源码运行；便携式 Windows 发行版应作为后续独立阶段，随发行目录提供启动器、Node/runtime、前端资源和可写 `data/`，避免每次启动执行 `npm ci` 或重新下载依赖。
+`npm run build` 只执行 TypeScript 编译并生成 `dist/`。`script/release/build_windows_portable.ps1` 会在单独暂存目录安装生产依赖、组合固定资源与 Node.js、编译 `CTF-VulnLab.exe` 启动器，并生成 `output/release/CTF-VulnLab.zip` 及 SHA-256 文件。发行包将可写数据放在 `%LOCALAPPDATA%\CTF-VulnLab\data`（可由 `VULNLAB_DATA_DIR` 覆盖）；靶场运行时不随基础 ZIP 全量打包，而是在使用时按需准备。包内 `发行说明.md` 说明启动方式、数据位置和运行条件。

@@ -1662,6 +1662,14 @@ const shutdown = async (signal: string) => {
 process.once('SIGINT', () => { void shutdown('SIGINT') })
 process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 
+if (process.env.VULNLAB_LAUNCHER_CONTROL === '1') {
+  process.stdin.once('data', () => {
+    process.stdin.destroy()
+    void shutdown('launcher')
+  })
+  process.stdin.once('end', () => { void shutdown('launcher') })
+}
+
 if (process.env.VULNLAB_NO_LISTEN !== '1') start().catch(error => {
   app.log.error(error)
   database.close()
